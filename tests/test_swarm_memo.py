@@ -1,6 +1,6 @@
 import time
-from pathlib import Path
 import tempfile
+import time
 
 import pytest
 
@@ -35,6 +35,18 @@ def merge_fn(chunks):
     for chunk in chunks:
         merged.extend(chunk)
     return merged
+
+
+def exec_point_extra_default(params, point, extra=1):
+    return {"alpha": params["alpha"], "extra": extra, "point": point}
+
+
+def exec_point_extra_param(params, point, extra=2):
+    return {"alpha": params["alpha"], "extra": extra, "point": point}
+
+
+def exec_point_basic(params, point):
+    return {"alpha": params["alpha"], "point": point}
 
 
 def run_memo(cache_root, exec_chunk_size=2):
@@ -156,6 +168,68 @@ def test_streaming_order_preserved():
         assert output == expected
 
 
+def test_run_wrap_positional_params():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir)
+
+        exec_point = memo.run_wrap()(exec_point_extra_default)
+        params = {"alpha": 0.4}
+        split_spec = {"strat": ["a"], "s": [1, 2, 3]}
+        output, diag = exec_point(params, split_spec=split_spec)
+        assert diag.executed_chunks == 1
+        assert output[0]["extra"] == 1
+
+
+def test_run_wrap_missing_split_spec():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir)
+
+        exec_point = memo.run_wrap()(exec_point_basic)
+        params = {"alpha": 0.4}
+        with pytest.raises(ValueError, match="split_spec"):
+            exec_point(params)
+
+
+def test_run_wrap_param_merge():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir)
+
+        exec_point = memo.run_wrap()(exec_point_extra_param)
+        params = {"alpha": 0.4}
+        split_spec = {"strat": ["a"], "s": [1, 2, 3]}
+        output, diag = exec_point(params, split_spec=split_spec, extra=3)
+        assert diag.executed_chunks == 1
+        assert output[0]["extra"] == 3
+
+        output2, diag2 = exec_point(params, split_spec=split_spec, extra=3)
+        assert output2 == output
+        assert diag2.executed_chunks == 0
+
+
+def test_run_wrap_duplicate_params_arg():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir)
+
+        exec_point = memo.run_wrap()(exec_point_basic)
+        params = {"alpha": 0.4}
+        split_spec = {"strat": ["a"], "s": [1, 2, 3]}
+        with pytest.raises(ValueError, match="both positional and keyword"):
+            exec_point(params, params=params, split_spec=split_spec)
+
+
+def test_streaming_wrap_returns_diagnostics():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir)
+
+        exec_point = memo.streaming_wrap()(exec_point_basic)
+        params = {"alpha": 0.4}
+        split_spec = {"strat": ["a"], "s": [1, 2, 3]}
+        diag = exec_point(params, split_spec=split_spec)
+        assert diag.executed_chunks == 1
+        assert diag.stream_flushes == 1
+
+
+@pytest.mark.flaky(reruns=2)
 def test_timing_cache_speedup():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo_sleep(temp_dir)

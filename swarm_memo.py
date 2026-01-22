@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import hashlib
+import inspect
 import itertools
 import pickle
 import time
@@ -108,6 +109,87 @@ class SwarmMemo:
         self.max_workers = max_workers
         self.axis_order = tuple(axis_order) if axis_order is not None else None
         self.verbose = verbose
+
+    def run_wrap(
+        self, *, params_arg: str = "params", split_arg: str = "split_spec"
+    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
+        """Decorator for running memoized execution with output."""
+        return self._build_wrapper(
+            params_arg=params_arg, split_arg=split_arg, streaming=False
+        )
+
+    def streaming_wrap(
+        self, *, params_arg: str = "params", split_arg: str = "split_spec"
+    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
+        """Decorator for streaming memoized execution to disk only."""
+        return self._build_wrapper(
+            params_arg=params_arg, split_arg=split_arg, streaming=True
+        )
+
+    def _build_wrapper(
+        self, *, params_arg: str, split_arg: str, streaming: bool
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            signature = inspect.signature(func)
+
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                if split_arg not in kwargs:
+                    raise ValueError(f"Missing required keyword argument '{split_arg}'")
+                split_spec = kwargs.pop(split_arg)
+
+                if params_arg in kwargs and args:
+                    raise ValueError(
+                        f"'{params_arg}' passed as both positional and keyword"
+                    )
+
+                bound = signature.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+                if params_arg not in bound.arguments:
+                    raise ValueError(f"Missing required argument '{params_arg}'")
+
+                params = bound.arguments[params_arg]
+                if not isinstance(params, dict):
+                    raise ValueError(f"'{params_arg}' must be a dict")
+                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}
+                merged_params = dict(params)
+                merged_params.update(extras)
+
+                try:
+                    pickle.dumps(func)
+                except Exception as exc:
+                    raise ValueError(
+                        "exec_fn must be a top-level function to work with "
+                        "ProcessPoolExecutor"
+                    ) from exc
+
+                exec_fn = functools.partial(func, **extras)
+                runner = self._clone_with_exec_fn(exec_fn)
+                if streaming:
+                    return runner.run_streaming(merged_params, split_spec)
+                return runner.run(merged_params, split_spec)
+
+            return wrapper
+
+        return decorator
+
+    def _clone_with_exec_fn(
+        self, exec_fn: Callable[[dict[str, Any], Any], Any]
+    ) -> "SwarmMemo":
+        return SwarmMemo(
+            cache_root=self.cache_root,
+            memo_chunk_spec=self.memo_chunk_spec,
+            exec_chunk_size=self.exec_chunk_size,
+            enumerate_points=self.enumerate_points,
+            exec_fn=exec_fn,
+            collate_fn=self.collate_fn,
+            merge_fn=self.merge_fn,
+            chunk_hash_fn=self.chunk_hash_fn,
+            cache_version=self.cache_version,
+            max_workers=self.max_workers,
+            axis_order=self.axis_order,
+            verbose=self.verbose,
+        )
 
     def run(
         self, params: dict[str, Any], split_spec: dict[str, Any]
@@ -299,7 +381,7 @@ def example_enumerate_points(
 
 def example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:
     strat, s = point
-    print("function execution with", point, params)
+    print(point, params)
     time.sleep(5)
     return {"strat": strat, "s": s, "value": len(strat) + s}
 
@@ -318,8 +400,8 @@ def example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]
 if __name__ == "__main__":
     memo = SwarmMemo(
         cache_root="./memo_cache",
-        memo_chunk_spec={"strat": 1, "s": 4},
-        exec_chunk_size=3,
+        memo_chunk_spec={"strat": 1, "s": 3},
+        exec_chunk_size=2,
         enumerate_points=example_enumerate_points,
         exec_fn=example_exec_fn,
         collate_fn=example_collate_fn,
@@ -331,5 +413,4 @@ if __name__ == "__main__":
     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
     output, diag = memo.run(params, split_spec)
     print("Output:", output)
-    # diag = memo.run_streaming(params, split_spec)
     print("Diagnostics:", dataclasses.asdict(diag))
