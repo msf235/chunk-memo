@@ -17,6 +17,8 @@ You want to:
 
 1. Evaluate a function for each point in the grid.
 2. Store results so you can re-run with new values and only compute what is new.
+3. You want to make use of chunking in 1 and 2 for greater efficiency.
+For instance, you may not want to have a file saved for every point on the grid if there are many points, since disk read/write operations to collect function evaluation at all points would become expensive.
 
 swarm-memo does this by breaking the grid into **memo chunks** and caching those
 chunks on disk. If you add new split values, only the new chunks are computed.
