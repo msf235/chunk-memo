@@ -24,7 +24,7 @@ swarm-memo does this by breaking the grid into **memo chunks** and caching those
 chunks on disk. If you add new split values, only the new chunks are computed.
 
 At the same time, swarm-memo breaks the needed computation into parallelized
-**execution chunks**. The key idea is to make the memo chunks and the execution
+**execution chunks**. The key use of this utility is to make the memo chunks and the execution
 chunks play nicely together.
 
 ## Key terms
