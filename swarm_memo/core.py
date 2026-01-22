@@ -6,7 +6,6 @@ import hashlib
 import inspect
 import itertools
 import pickle
-import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
@@ -272,7 +271,6 @@ class SwarmMemo:
         if not points:
             return []
         results: List[Any] = []
-        # breakpoint()
         shard_count = (len(points) + self.exec_chunk_size - 1) // self.exec_chunk_size
         diagnostics.executed_shards += shard_count
         exec_fn = functools.partial(self.exec_fn, params)
@@ -345,10 +343,6 @@ class SwarmMemo:
                     ):
                         size = chunk_sizes[chunk_index]
                         chunk_output = self.collate_fn(buffer[:size])
-                        print(
-                            "writing chunk_output to file: ", chunk_paths[chunk_index]
-                        )
-                        print("buffer was: ", buffer)
                         with open(chunk_paths[chunk_index], "wb") as handle:
                             pickle.dump({"output": chunk_output}, handle, protocol=5)
                         diagnostics.stream_flushes += 1
@@ -367,50 +361,3 @@ class SwarmMemo:
             total_points + self.exec_chunk_size - 1
         ) // self.exec_chunk_size
         return diagnostics
-
-
-def example_enumerate_points(
-    params: dict[str, Any], split_spec: dict[str, Any]
-) -> List[Tuple[str, int]]:
-    points: List[Tuple[str, int]] = []
-    for strat in split_spec["strat"]:
-        for s in split_spec["s"]:
-            points.append((strat, s))
-    return points
-
-
-def example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:
-    strat, s = point
-    print(point, params)
-    time.sleep(5)
-    return {"strat": strat, "s": s, "value": len(strat) + s}
-
-
-def example_collate_fn(outputs: List[dict[str, Any]]) -> List[dict[str, Any]]:
-    return outputs
-
-
-def example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]:
-    merged: List[dict[str, Any]] = []
-    for chunk in chunks:
-        merged.extend(chunk)
-    return merged
-
-
-if __name__ == "__main__":
-    memo = SwarmMemo(
-        cache_root="./memo_cache",
-        memo_chunk_spec={"strat": 1, "s": 3},
-        exec_chunk_size=2,
-        enumerate_points=example_enumerate_points,
-        exec_fn=example_exec_fn,
-        collate_fn=example_collate_fn,
-        merge_fn=example_merge_fn,
-        max_workers=4,
-    )
-
-    params = {"alpha": 0.4}
-    split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-    output, diag = memo.run(params, split_spec)
-    print("Output:", output)
-    print("Diagnostics:", dataclasses.asdict(diag))
