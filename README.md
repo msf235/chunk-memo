@@ -9,15 +9,16 @@ when values change.
 
 ## Core ideas
 
-- **Axis-aware chunking**: chunk sizes are defined per axis (e.g., `strat=1`,  .
-- **`s=3`). Chunks are built by binning each axis list sequentially, then      .
-- **taking the cartesian product of bins Flat cache layout**: each chunk is    .
-- **written as `<chunk_hash>.pkl` under a single `cache_root` directory.       .
-- **Chunk hashes are derived from a stable serialization of `(params,          .
-- **chunk_key, cache_version)` Parallel execution**: point execution uses      .
-- **`ProcessPoolExecutor` with `exec_chunk_size` controlling batching overhead .
-- **Streaming option**: `run_streaming` flushes memo chunks as soon as they are.
-- **complete, writing to disk without returning the full output                .
+- **Axis-aware chunking**: chunk sizes are defined per axis (e.g., `strat=1`,  
+  `s=3`). Chunks are built by binning each axis list sequentially, then      
+  taking the cartesian product of bins Flat cache layout: each chunk is    
+  written as `<chunk_hash>.pkl` under a single `cache_root` directory.       
+  Chunk hashes are derived from a stable serialization of `(params,          
+  chunk_key, cache_version)`.
+  **Parallel execution**: point execution uses `ProcessPoolExecutor` with
+  `exec_chunk_size` controlling batching overhead.
+- **Streaming option**: `run_streaming` flushes memo chunks as soon as they are
+  complete, writing to disk without returning the full output.       
 
 ## Installation
 
