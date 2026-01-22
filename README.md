@@ -1,10 +1,10 @@
 # swarm-memo
 
-swarm-memo is a small utility for running many parameterized “points” in
-parallel chunks, and caching the results in a different set of reusable chunks.
+swarm-memo is a small utility for evaluating a function over input points in
+parallel chunks that tile a space of inputs, and caching the results in a different set of reusable chunks.
 It is designed for experiments where you repeatedly evaluate a function over a grid of values and
-want to avoid recomputing the parts you already ran while also making use of
-parallel divide-and-conquer computation.
+want to avoid recomputing the parts you already ran, while also making use of
+efficient parallel computation.
 
 ## What problem does it solve?
 
