@@ -6,9 +6,9 @@ import hashlib
 import itertools
 import pickle
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 
@@ -20,6 +20,7 @@ class Diagnostics:
     executed_chunks: int = 0
     executed_shards: int = 0
     merges: int = 0
+    stream_flushes: int = 0
 
 
 def _stable_serialize(value: Any) -> str:
@@ -199,6 +200,92 @@ class SwarmMemo:
             )
         return results
 
+    def run_streaming(
+        self, params: dict[str, Any], split_spec: dict[str, Any]
+    ) -> Diagnostics:
+        """Execute missing chunks and flush outputs to disk only."""
+        axis_order = self._resolve_axis_order(split_spec)
+        chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+        diagnostics = Diagnostics(total_chunks=len(chunk_keys))
+
+        stream_points: List[Any] = []
+        chunk_sizes: List[int] = []
+        chunk_paths: List[Path] = []
+
+        for chunk_key in chunk_keys:
+            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
+            path = self.cache_root / f"{chunk_hash}.pkl"
+            if path.exists():
+                diagnostics.cached_chunks += 1
+                continue
+
+            diagnostics.executed_chunks += 1
+            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
+            points = self.enumerate_points(params, chunk_split_spec)
+            if not points:
+                continue
+            stream_points.extend(points)
+            chunk_sizes.append(len(points))
+            chunk_paths.append(path)
+
+        if not stream_points:
+            return diagnostics
+
+        buffer: List[Any] = []
+        chunk_index = 0
+        exec_fn = functools.partial(self.exec_fn, params)
+        next_point_index = 0
+        total_points = len(stream_points)
+        pending: Dict[Any, int] = {}
+        results_by_index: Dict[int, Any] = {}
+        next_flush_index = 0
+
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            while (
+                next_point_index < total_points and len(pending) < self.exec_chunk_size
+            ):
+                future = executor.submit(exec_fn, stream_points[next_point_index])
+                pending[future] = next_point_index
+                next_point_index += 1
+
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    index = pending.pop(future)
+                    results_by_index[index] = future.result()
+
+                while next_flush_index in results_by_index:
+                    buffer.append(results_by_index.pop(next_flush_index))
+                    next_flush_index += 1
+                    while (
+                        chunk_index < len(chunk_sizes)
+                        and len(buffer) >= chunk_sizes[chunk_index]
+                    ):
+                        size = chunk_sizes[chunk_index]
+                        chunk_output = self.collate_fn(buffer[:size])
+                        print(
+                            "writing chunk_output to file: ", chunk_paths[chunk_index]
+                        )
+                        print("buffer was: ", buffer)
+                        with open(chunk_paths[chunk_index], "wb") as handle:
+                            pickle.dump({"output": chunk_output}, handle, protocol=5)
+                        diagnostics.stream_flushes += 1
+                        buffer = buffer[size:]
+                        chunk_index += 1
+
+                while (
+                    next_point_index < total_points
+                    and len(pending) < self.exec_chunk_size
+                ):
+                    future = executor.submit(exec_fn, stream_points[next_point_index])
+                    pending[future] = next_point_index
+                    next_point_index += 1
+
+        diagnostics.executed_shards += (
+            total_points + self.exec_chunk_size - 1
+        ) // self.exec_chunk_size
+        return diagnostics
+
 
 def example_enumerate_points(
     params: dict[str, Any], split_spec: dict[str, Any]
@@ -212,7 +299,7 @@ def example_enumerate_points(
 
 def example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:
     strat, s = point
-    print(point, params)
+    print("function execution with", point, params)
     time.sleep(5)
     return {"strat": strat, "s": s, "value": len(strat) + s}
 
@@ -231,8 +318,8 @@ def example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]
 if __name__ == "__main__":
     memo = SwarmMemo(
         cache_root="./memo_cache",
-        memo_chunk_spec={"strat": 1, "s": 3},
-        exec_chunk_size=2,
+        memo_chunk_spec={"strat": 1, "s": 4},
+        exec_chunk_size=3,
         enumerate_points=example_enumerate_points,
         exec_fn=example_exec_fn,
         collate_fn=example_collate_fn,
@@ -244,4 +331,5 @@ if __name__ == "__main__":
     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
     output, diag = memo.run(params, split_spec)
     print("Output:", output)
+    # diag = memo.run_streaming(params, split_spec)
     print("Diagnostics:", dataclasses.asdict(diag))
