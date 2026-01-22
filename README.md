@@ -30,7 +30,7 @@ chunks play nicely together.
 ## Key terms
 
 - **Point**: one combination of split values (e.g., `("a", 2)` for
-  `strat="a", s=2`).
+  `(strat="a", s=2)`.
 - **Split spec**: a dictionary of lists that define the grid,
   e.g. `{"strat": ["a", "b"], "s": [1, 2, 3]}`.
 - **Memo chunk**: a cached block of points created by chunking each axis list
