@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
+Chunk = Sequence[Any]
+MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[Chunk]]
+PointEnumerator = Callable[[dict[str, Any], dict[str, Any]], Sequence[Any]]
 
 
 @dataclasses.dataclass
@@ -21,6 +24,9 @@ class Diagnostics:
     executed_shards: int = 0
     merges: int = 0
     stream_flushes: int = 0
+    max_stream_buffer: int = 0
+    max_out_of_order: int = 0
+    max_in_memory_results: int = 0
 
 
 def _stable_serialize(value: Any) -> str:
@@ -55,22 +61,17 @@ def _chunk_values(values: Sequence[Any], size: int) -> List[Tuple[Any, ...]]:
     return chunks
 
 
-def _iter_exec_shards(points: Sequence[Any], shard_size: int) -> Iterable[List[Any]]:
-    for start in range(0, len(points), shard_size):
-        end = min(start + shard_size, len(points))
-        yield list(points[start:end])
-
-
 class SwarmMemo:
     def __init__(
         self,
         cache_root: str | Path,
         memo_chunk_spec: dict[str, Any],
         exec_chunk_size: int,
-        enumerate_points: Callable[[dict[str, Any], dict[str, Any]], List[Any]],
         exec_fn: Callable[[dict[str, Any], Any], Any],
         collate_fn: Callable[[List[Any]], Any],
         merge_fn: Callable[[List[Any]], Any],
+        point_enumerator: PointEnumerator | None = None,
+        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_version: str = "v1",
         max_workers: int | None = None,
@@ -83,10 +84,14 @@ class SwarmMemo:
             cache_root: Directory for chunk cache files.
             memo_chunk_spec: Per-axis chunk sizes (e.g., {"strat": 1, "s": 3}).
             exec_chunk_size: Executor batching size for points.
-            enumerate_points: Builds ordered points for a split_spec.
             exec_fn: Executes one point with full params, signature (params, point).
             collate_fn: Combines per-point outputs into a chunk output.
             merge_fn: Combines chunk outputs into the final output.
+            point_enumerator: Optional point enumerator that defines ordering
+                within each memo chunk.
+            memo_chunk_enumerator: Optional chunk enumerator that defines the
+                memo chunk order. This also defines the ordering of points that
+                will be used when building and running execution chunks.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_version: Cache namespace/version tag.
             max_workers: Max process workers for execution.
@@ -99,7 +104,8 @@ class SwarmMemo:
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self.memo_chunk_spec = memo_chunk_spec
         self.exec_chunk_size = exec_chunk_size
-        self.enumerate_points = enumerate_points
+        self.point_enumerator = point_enumerator
+        self.memo_chunk_enumerator = memo_chunk_enumerator
         self.exec_fn = exec_fn
         self.collate_fn = collate_fn
         self.merge_fn = merge_fn
@@ -179,10 +185,11 @@ class SwarmMemo:
             cache_root=self.cache_root,
             memo_chunk_spec=self.memo_chunk_spec,
             exec_chunk_size=self.exec_chunk_size,
-            enumerate_points=self.enumerate_points,
             exec_fn=exec_fn,
             collate_fn=self.collate_fn,
             merge_fn=self.merge_fn,
+            point_enumerator=self.point_enumerator,
+            memo_chunk_enumerator=self.memo_chunk_enumerator,
             chunk_hash_fn=self.chunk_hash_fn,
             cache_version=self.cache_version,
             max_workers=self.max_workers,
@@ -193,15 +200,17 @@ class SwarmMemo:
     def run(
         self, params: dict[str, Any], split_spec: dict[str, Any]
     ) -> Tuple[Any, Diagnostics]:
-        axis_order = self._resolve_axis_order(split_spec)
-        chunk_keys = self._build_chunk_keys(split_spec, axis_order)
-        diagnostics = Diagnostics(total_chunks=len(chunk_keys))
-
         outputs: List[Any] = []
+        chunk_paths: List[Path] = []
+        chunk_sizes: List[int] = []
         all_points: List[Any] = []
-        point_ranges: List[Tuple[ChunkKey, int, int, Path]] = []
 
-        for chunk_key in chunk_keys:
+        chunks = self._build_memo_chunks(params, split_spec)
+        diagnostics = Diagnostics(total_chunks=len(chunks))
+
+        for chunk_key, chunk_points in zip(
+            self._chunk_keys_iter(chunks, split_spec), chunks
+        ):
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
             path = self.cache_root / f"{chunk_hash}.pkl"
             if path.exists():
@@ -211,88 +220,38 @@ class SwarmMemo:
                 continue
 
             diagnostics.executed_chunks += 1
-            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
-            points = self.enumerate_points(params, chunk_split_spec)
-            start = len(all_points)
-            all_points.extend(points)
-            end = len(all_points)
-            point_ranges.append((chunk_key, start, end, path))
+            chunk_paths.append(path)
+            chunk_sizes.append(len(chunk_points))
+            all_points.extend(chunk_points)
 
         if all_points:
             exec_outputs = self._execute_points(params, all_points, diagnostics)
-            for chunk_key, start, end, path in point_ranges:
-                chunk_output = self.collate_fn(exec_outputs[start:end])
+            cursor = 0
+            for size, path in zip(chunk_sizes, chunk_paths):
+                chunk_output = self.collate_fn(exec_outputs[cursor : cursor + size])
                 with open(path, "wb") as handle:
                     pickle.dump({"output": chunk_output}, handle, protocol=5)
                 outputs.append(chunk_output)
+                cursor += size
 
         diagnostics.merges += 1
         merged = self.merge_fn(outputs)
         return merged, diagnostics
 
-    def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
-        if self.axis_order is not None:
-            return self.axis_order
-        return tuple(sorted(split_spec))
-
-    def _build_chunk_keys(
-        self, split_spec: dict[str, Any], axis_order: Sequence[str]
-    ) -> List[ChunkKey]:
-        axis_chunks: List[List[Tuple[Any, ...]]] = []
-        for axis in axis_order:
-            values = split_spec.get(axis)
-            if values is None:
-                raise KeyError(f"Missing axis '{axis}' in split_spec")
-            size = self._resolve_axis_chunk_size(axis)
-            axis_chunks.append(_chunk_values(values, size))
-
-        chunk_keys: List[ChunkKey] = []
-        for product in itertools.product(*axis_chunks):
-            chunk_key = tuple(
-                (axis, tuple(values)) for axis, values in zip(axis_order, product)
-            )
-            chunk_keys.append(chunk_key)
-        return chunk_keys
-
-    def _resolve_axis_chunk_size(self, axis: str) -> int:
-        spec = self.memo_chunk_spec.get(axis)
-        if spec is None:
-            raise KeyError(f"Missing memo_chunk_spec for axis '{axis}'")
-        if isinstance(spec, dict):
-            size = spec.get("size")
-            if size is None:
-                raise KeyError(f"Missing size for axis '{axis}'")
-            return int(size)
-        return int(spec)
-
-    def _execute_points(
-        self, params: dict[str, Any], points: Sequence[Any], diagnostics: Diagnostics
-    ) -> List[Any]:
-        if not points:
-            return []
-        results: List[Any] = []
-        shard_count = (len(points) + self.exec_chunk_size - 1) // self.exec_chunk_size
-        diagnostics.executed_shards += shard_count
-        exec_fn = functools.partial(self.exec_fn, params)
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            results.extend(
-                executor.map(exec_fn, points, chunksize=self.exec_chunk_size)
-            )
-        return results
-
     def run_streaming(
         self, params: dict[str, Any], split_spec: dict[str, Any]
     ) -> Diagnostics:
         """Execute missing chunks and flush outputs to disk only."""
-        axis_order = self._resolve_axis_order(split_spec)
-        chunk_keys = self._build_chunk_keys(split_spec, axis_order)
-        diagnostics = Diagnostics(total_chunks=len(chunk_keys))
-
         stream_points: List[Any] = []
         chunk_sizes: List[int] = []
         chunk_paths: List[Path] = []
 
-        for chunk_key in chunk_keys:
+        chunks = self._build_memo_chunks(params, split_spec)
+        diagnostics = Diagnostics(total_chunks=len(chunks))
+
+        for chunk_key, chunk_points in zip(
+            self._chunk_keys_iter(chunks, split_spec), chunks
+        ):
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
             path = self.cache_root / f"{chunk_hash}.pkl"
             if path.exists():
@@ -300,12 +259,10 @@ class SwarmMemo:
                 continue
 
             diagnostics.executed_chunks += 1
-            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
-            points = self.enumerate_points(params, chunk_split_spec)
-            if not points:
+            if not chunk_points:
                 continue
-            stream_points.extend(points)
-            chunk_sizes.append(len(points))
+            stream_points.extend(chunk_points)
+            chunk_sizes.append(len(chunk_points))
             chunk_paths.append(path)
 
         if not stream_points:
@@ -333,10 +290,31 @@ class SwarmMemo:
                 for future in done:
                     index = pending.pop(future)
                     results_by_index[index] = future.result()
+                    print(
+                        "appending to size "
+                        f"results_by_index={len(results_by_index)} "
+                        f"buffer={len(buffer)}"
+                    )
+                diagnostics.max_out_of_order = max(
+                    diagnostics.max_out_of_order, len(results_by_index)
+                )
 
                 while next_flush_index in results_by_index:
                     buffer.append(results_by_index.pop(next_flush_index))
+                    print(
+                        "flushing to size "
+                        f"results_by_index={len(results_by_index)} "
+                        f"buffer={len(buffer)}"
+                    )
+                    diagnostics.max_stream_buffer = max(
+                        diagnostics.max_stream_buffer, len(buffer)
+                    )
+                    diagnostics.max_in_memory_results = max(
+                        diagnostics.max_in_memory_results,
+                        len(buffer) + len(results_by_index),
+                    )
                     next_flush_index += 1
+
                     while (
                         chunk_index < len(chunk_sizes)
                         and len(buffer) >= chunk_sizes[chunk_index]
@@ -361,3 +339,97 @@ class SwarmMemo:
             total_points + self.exec_chunk_size - 1
         ) // self.exec_chunk_size
         return diagnostics
+
+    def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
+        if self.axis_order is not None:
+            return self.axis_order
+        return tuple(sorted(split_spec))
+
+    def _build_chunk_keys(
+        self, split_spec: dict[str, Any], axis_order: Sequence[str]
+    ) -> List[ChunkKey]:
+        axis_chunks: List[List[Tuple[Any, ...]]] = []
+        for axis in axis_order:
+            values = split_spec.get(axis)
+            if values is None:
+                raise KeyError(f"Missing axis '{axis}' in split_spec")
+            size = self._resolve_axis_chunk_size(axis)
+            axis_chunks.append(_chunk_values(values, size))
+
+        chunk_keys: List[ChunkKey] = []
+        for product in itertools.product(*axis_chunks):
+            chunk_key = tuple(
+                (axis, tuple(values)) for axis, values in zip(axis_order, product)
+            )
+            chunk_keys.append(chunk_key)
+        return chunk_keys
+
+    def _default_point_enumerator(
+        self, params: dict[str, Any], split_spec: dict[str, Any]
+    ) -> List[Any]:
+        axis_order = self._resolve_axis_order(split_spec)
+        values = [split_spec[axis] for axis in axis_order]
+        return [tuple(point) for point in itertools.product(*values)]
+
+    def _build_memo_chunks(
+        self, params: dict[str, Any], split_spec: dict[str, Any]
+    ) -> List[List[Any]]:
+        if self.memo_chunk_enumerator is not None:
+            return [list(chunk) for chunk in self.memo_chunk_enumerator(split_spec)]
+
+        axis_order = self._resolve_axis_order(split_spec)
+        chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+        enumerator = self.point_enumerator or self._default_point_enumerator
+        chunks: List[List[Any]] = []
+        for chunk_key in chunk_keys:
+            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
+            points = list(enumerator(params, chunk_split_spec))
+            chunks.append(points)
+        return chunks
+
+    def _chunk_keys_iter(
+        self, chunks: Sequence[Sequence[Any]], split_spec: dict[str, Any]
+    ) -> Iterable[ChunkKey]:
+        if self.memo_chunk_enumerator is None:
+            axis_order = self._resolve_axis_order(split_spec)
+            return iter(self._build_chunk_keys(split_spec, axis_order))
+
+        return iter(
+            self._chunk_key_from_default_chunk(points, split_spec) for points in chunks
+        )
+
+    def _chunk_key_from_default_chunk(
+        self, points: Sequence[Any], split_spec: dict[str, Any]
+    ) -> ChunkKey:
+        axis_order = self._resolve_axis_order(split_spec)
+        axes: Dict[str, List[Any]] = {axis: [] for axis in axis_order}
+        for point in points:
+            for axis, value in zip(axis_order, point):
+                axes[axis].append(value)
+        return tuple((axis, tuple(axes[axis])) for axis in axis_order)
+
+    def _resolve_axis_chunk_size(self, axis: str) -> int:
+        spec = self.memo_chunk_spec.get(axis)
+        if spec is None:
+            raise KeyError(f"Missing memo_chunk_spec for axis '{axis}'")
+        if isinstance(spec, dict):
+            size = spec.get("size")
+            if size is None:
+                raise KeyError(f"Missing size for axis '{axis}'")
+            return int(size)
+        return int(spec)
+
+    def _execute_points(
+        self, params: dict[str, Any], points: Sequence[Any], diagnostics: Diagnostics
+    ) -> List[Any]:
+        if not points:
+            return []
+        results: List[Any] = []
+        shard_count = (len(points) + self.exec_chunk_size - 1) // self.exec_chunk_size
+        diagnostics.executed_shards += shard_count
+        exec_fn = functools.partial(self.exec_fn, params)
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            results.extend(
+                executor.map(exec_fn, points, chunksize=self.exec_chunk_size)
+            )
+        return results

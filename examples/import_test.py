@@ -30,10 +30,10 @@ def main():
         cache_root="./memo_cache",
         memo_chunk_spec={"strat": 1, "s": 2},
         exec_chunk_size=2,
-        enumerate_points=enumerate_points,
         exec_fn=exec_fn,
         collate_fn=collate_fn,
         merge_fn=merge_fn,
+        point_enumerator=enumerate_points,
     )
 
     params = {"alpha": 0.4}

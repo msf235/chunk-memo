@@ -1,4 +1,5 @@
 from swarm_memo import SwarmMemo
+import subprocess
 
 
 def enumerate_points(params, split_spec):
@@ -25,18 +26,47 @@ def merge_fn(chunks):
     return merged
 
 
-memo = SwarmMemo(
-    cache_root="./memo_cache",
-    memo_chunk_spec={"strat": 1, "s": 3},
-    exec_chunk_size=2,
-    enumerate_points=enumerate_points,
-    exec_fn=exec_fn,
-    collate_fn=collate_fn,
-    merge_fn=merge_fn,
-)
+def main():
+    params = {"alpha": 0.4}
+    split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
-params = {"alpha": 0.4}
-split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-output, diag = memo.run(params, split_spec)
-print("Output:", output)
-print("Diagnostics:", diag)
+    memo = SwarmMemo(
+        cache_root="./memo_run_cache",
+        memo_chunk_spec={"strat": 1, "s": 3},
+        exec_chunk_size=2,
+        exec_fn=exec_fn,
+        collate_fn=collate_fn,
+        merge_fn=merge_fn,
+        point_enumerator=enumerate_points,
+    )
+
+    output, diag = memo.run(params, split_spec)
+    print("Output:", output)
+    print("Diagnostics:", diag)
+
+    memo = SwarmMemo(
+        cache_root="./memo_stream_cache",
+        memo_chunk_spec={"strat": 1, "s": 3},
+        exec_chunk_size=2,
+        exec_fn=exec_fn,
+        collate_fn=collate_fn,
+        merge_fn=merge_fn,
+        point_enumerator=enumerate_points,
+    )
+
+    diag = memo.run_streaming(params, split_spec)
+    # print("Output:", output)
+    result = subprocess.run(
+        ["tree", "./memo_stream_cache"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    print(result.stdout)
+
+    print("Diagnostics:", diag)
+
+
+if __name__ == "__main__":
+    main()
