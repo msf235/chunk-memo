@@ -30,6 +30,8 @@ def main():
     params = {"alpha": 0.4}
     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
+    print("Testing 'run'")
+    print()
     memo = SwarmMemo(
         cache_root="./memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
@@ -44,6 +46,10 @@ def main():
     print("Output:", output)
     print("Diagnostics:", diag)
 
+    print()
+    print()
+    print("Testing 'run_streaming'")
+    print()
     memo = SwarmMemo(
         cache_root="./memo_stream_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
@@ -63,6 +69,7 @@ def main():
         check=False,
     )
 
+    print("Output (files written to disk): ")
     print(result.stdout)
 
     print("Diagnostics:", diag)
