@@ -1,21 +1,18 @@
-from swarm_memo import SwarmMemo
-import subprocess
+from swarm_memo import ChunkMemo
 
 
-def enumerate_points(params, split_spec):
-    points = []
-    for strat in split_spec["strat"]:
-        for s in split_spec["s"]:
-            points.append((strat, s))
-    return points
-
-
-def exec_fn(params, point):
-    strat, s = point
-    return {"strat": strat, "s": s, "value": len(strat) + s}
-
-
-def collate_fn(outputs):
+def exec_fn(params, strat, s):
+    outputs = []
+    for strat_value in strat:
+        for s_value in s:
+            outputs.append(
+                {
+                    "alpha": params["alpha"],
+                    "strat": strat_value,
+                    "s": s_value,
+                    "value": len(strat_value) + s_value,
+                }
+            )
     return outputs
 
 
@@ -30,49 +27,28 @@ def main():
     params = {"alpha": 0.4}
     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
-    print("Testing 'run'")
-    print()
-    memo = SwarmMemo(
+    memo = ChunkMemo(
         cache_root="./memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
-        exec_chunk_size=2,
         exec_fn=exec_fn,
-        collate_fn=collate_fn,
         merge_fn=merge_fn,
-        point_enumerator=enumerate_points,
+        split_spec=split_spec,
     )
 
     output, diag = memo.run(params, split_spec)
     print("Output:", output)
     print("Diagnostics:", diag)
 
-    print()
-    print()
-    print("Testing 'run_streaming'")
-    print()
-    memo = SwarmMemo(
-        cache_root="./memo_stream_cache",
-        memo_chunk_spec={"strat": 1, "s": 3},
-        exec_chunk_size=2,
-        exec_fn=exec_fn,
-        collate_fn=collate_fn,
-        merge_fn=merge_fn,
-        point_enumerator=enumerate_points,
+    memoized_exec = memo.run_wrap()(exec_fn)
+    wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3])
+    print("Wrapped output:", wrapped_output)
+    print("Wrapped diagnostics:", wrapped_diag)
+
+    indexed_output, indexed_diag = memoized_exec(
+        params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}
     )
-
-    diag = memo.run_streaming(params, split_spec)
-    # print("Output:", output)
-    result = subprocess.run(
-        ["tree", "./memo_stream_cache"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    print("Output (files written to disk): ")
-    print(result.stdout)
-
-    print("Diagnostics:", diag)
+    print("Indexed output:", indexed_output)
+    print("Indexed diagnostics:", indexed_diag)
 
 
 if __name__ == "__main__":

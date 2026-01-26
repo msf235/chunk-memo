@@ -1,7 +1,7 @@
 import sys
 import time
 
-from swarm_memo import SwarmMemo as _SwarmMemo
+from swarm_memo import ChunkMemo as _ChunkMemo
 
 
 class _TimestampedWriter:
@@ -32,31 +32,25 @@ class _StartTime:
         self.value = value
 
 
-_ORIGINAL_INIT = _SwarmMemo.__init__
-_ORIGINAL_RUN = _SwarmMemo.run
-_ORIGINAL_RUN_STREAMING = _SwarmMemo.run_streaming
+_ORIGINAL_INIT = _ChunkMemo.__init__
+_ORIGINAL_RUN = _ChunkMemo.run
 
 
-def _wrap_swarm_init(start_time):
+def _wrap_chunk_init(start_time):
     def wrapped_init(self, *args, **kwargs):
         memo_chunk_spec = kwargs.get("memo_chunk_spec")
         if memo_chunk_spec is None and len(args) > 1:
             memo_chunk_spec = args[1]
-        exec_chunk_size = kwargs.get("exec_chunk_size")
-        if exec_chunk_size is None and len(args) > 2:
-            exec_chunk_size = args[2]
         elapsed = time.perf_counter() - start_time
         prefix = f"[{elapsed:8.3f}s] "
         if memo_chunk_spec is not None:
             print(f"{prefix}memo_chunk_spec {memo_chunk_spec}")
-        if exec_chunk_size is not None:
-            print(f"{prefix}exec_chunk_size {exec_chunk_size}")
         return _ORIGINAL_INIT(self, *args, **kwargs)
 
     return wrapped_init
 
 
-def _wrap_swarm_run(start_time):
+def _wrap_chunk_run(start_time):
     def wrapped_run(self, params, split_spec):
         elapsed = time.perf_counter() - start_time
         prefix = f"[{elapsed:8.3f}s] "
@@ -66,28 +60,16 @@ def _wrap_swarm_run(start_time):
     return wrapped_run
 
 
-def _wrap_swarm_run_streaming(start_time):
-    def wrapped_run_streaming(self, params, split_spec):
-        elapsed = time.perf_counter() - start_time
-        prefix = f"[{elapsed:8.3f}s] "
-        print(f"{prefix}split_spec {split_spec}")
-        return _ORIGINAL_RUN_STREAMING(self, params, split_spec)
-
-    return wrapped_run_streaming
-
-
 def pytest_runtest_setup(item):
     item._swarm_test_start = time.perf_counter()
     print(f"\n=== {item.name} ===")
-    _SwarmMemo.__init__ = _wrap_swarm_init(item._swarm_test_start)
-    _SwarmMemo.run = _wrap_swarm_run(item._swarm_test_start)
-    _SwarmMemo.run_streaming = _wrap_swarm_run_streaming(item._swarm_test_start)
+    _ChunkMemo.__init__ = _wrap_chunk_init(item._swarm_test_start)
+    _ChunkMemo.run = _wrap_chunk_run(item._swarm_test_start)
 
 
 def pytest_runtest_teardown(item):
-    _SwarmMemo.__init__ = _ORIGINAL_INIT
-    _SwarmMemo.run = _ORIGINAL_RUN
-    _SwarmMemo.run_streaming = _ORIGINAL_RUN_STREAMING
+    _ChunkMemo.__init__ = _ORIGINAL_INIT
+    _ChunkMemo.run = _ORIGINAL_RUN
     for attr in ("_swarm_stdout", "_swarm_stderr"):
         stream = getattr(item, attr, None)
         if stream is None:

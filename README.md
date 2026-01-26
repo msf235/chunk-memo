@@ -1,10 +1,9 @@
 # swarm-memo
 
-swarm-memo is a small utility for evaluating a function over input points in
-parallel chunks that tile a space of inputs, and caching the results in a different set of reusable chunks.
-It is designed for experiments where you repeatedly evaluate a function over a grid of values and
-want to avoid recomputing the parts you already ran, while also making use of
-efficient parallel computation.
+swarm-memo is a small utility for evaluating a function over chunked blocks of
+input values and caching the results on disk. It is designed for experiments
+where you repeatedly evaluate a function over a grid of values and want to
+avoid recomputing the parts you already ran.
 
 ## What problem does it solve?
 
@@ -23,10 +22,6 @@ For instance, you may not want to have a file saved for every point on the grid 
 swarm-memo does this by breaking the grid into **memo chunks** and caching those
 chunks on disk. If you add new split values, only the new chunks are computed.
 
-At the same time, swarm-memo breaks the needed computation into parallelized
-**execution chunks**. The key use of this utility is to make the memo chunks and the execution
-chunks play nicely together.
-
 ## Key terms
 
 - **Point**: one combination of split values (e.g., `("a", 2)` for
@@ -36,16 +31,11 @@ chunks play nicely together.
 - **Memo chunk**: a cached block of points created by chunking each axis list
   into fixed-size bins and taking the cartesian product of those bins. Each
   memo chunk is written to a single file.
-- **Exec chunk**: the batch size for parallel execution; it controls how many
-  points are grouped per worker batch.
 
 ## Core functionality
 
 - **Chunked Memoization**: Optimally make user of previously cached data. Allow data to be
   saved in reasonably-sized file chunks that partition the split spec values.
-- **Chunked Parallelization**: For data that has not been cached, perform parallel execution. Avoid recomputing cached data
-  while still dividing the remaining computation work into performant chunks.
-- Optional: flush data from memory into the on-disk cache whenever possible, minimizing memory usage. 
 
 ## Installation
 
@@ -58,23 +48,16 @@ pip install -e .
 ## Quick start
 
 ```python
-from swarm_memo import SwarmMemo
+from swarm_memo import ChunkMemo
 
 
-def enumerate_points(params, split_spec):
-    points = []
-    for strat in split_spec["strat"]:
-        for s in split_spec["s"]:
-            points.append((strat, s))
-    return points
-
-
-def exec_fn(params, point):
-    strat, s = point
-    return {"strat": strat, "s": s, "value": len(strat) + s}
-
-
-def collate_fn(outputs):
+def exec_fn(params, strat, s):
+    outputs = []
+    for strat_value in strat:
+        for s_value in s:
+            outputs.append(
+                {"strat": strat_value, "s": s_value, "value": len(strat_value) + s_value}
+            )
     return outputs
 
 
@@ -85,13 +68,10 @@ def merge_fn(chunks):
     return merged
 
 
-memo = SwarmMemo(
+memo = ChunkMemo(
     cache_root="./memo_cache",
     memo_chunk_spec={"strat": 1, "s": 3},
-    exec_chunk_size=2,
-    enumerate_points=enumerate_points,
     exec_fn=exec_fn,
-    collate_fn=collate_fn,
     merge_fn=merge_fn,
 )
 
@@ -104,30 +84,30 @@ print(diag)
 
 ## API overview
 
-### SwarmMemo
+### ChunkMemo
 
 ```python
-SwarmMemo(
+ChunkMemo(
     cache_root: str | Path,
     memo_chunk_spec: dict[str, int | dict],
-    exec_chunk_size: int,
-    enumerate_points: Callable[[dict, dict], list],
-    exec_fn: Callable[[dict, Any], Any],
-    collate_fn: Callable[[list], Any],
-    merge_fn: Callable[[list], Any],
+    exec_fn: Callable[..., Any],
+    merge_fn: Callable[[list], Any] | None = None,
+    memo_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
     cache_version: str = "v1",
-    max_workers: int | None = None,
     axis_order: Sequence[str] | None = None,
+    split_spec: dict[str, Any] | None = None,
     verbose: int = 1,
 )
 ```
 
 Notes:
 - `memo_chunk_spec`: per-axis chunk sizes, e.g. `{"strat": 1, "s": 3}`.
-- `exec_chunk_size`: batching size for the process pool (reduces overhead).
-- `exec_fn(params, point)`: per-point function; must be top-level for
-  multiprocessing.
+- `exec_fn(params, **axes)`: chunk-level function; each axis receives the
+  vector of values for that chunk.
+- `merge_fn` defaults to returning the list of chunk outputs.
+- `split_spec` can be provided to enable wrapper calls without passing a full
+  split spec each time.
 
 ### run
 
@@ -137,15 +117,6 @@ output, diagnostics = memo.run(params, split_spec)
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
 
-### run_streaming
-
-```python
-diagnostics = memo.run_streaming(params, split_spec)
-```
-
-Executes missing chunks and writes each completed chunk to disk as soon as
-possible. No output is returned.
-
 ### Decorator wrappers
 
 ```python
@@ -153,10 +124,14 @@ possible. No output is returned.
 def exec_point(params, point, extra=1):
     ...
 
-output, diag = exec_point(params, split_spec=split_spec, extra=2)
+output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
+# Or use indices to select from split_spec
+# output, diag = exec_point(params, axis_indices={"strat": [0], "s": [0, 1]}, extra=2)
 ```
 
-- `split_spec` must be passed as a keyword argument.
+- The wrapper accepts axis values directly (singletons or lists).
+- You can also pass `axis_indices` (same keys as `split_spec`) with ints, ranges,
+  or slices to select by index.
 - `params` can be positional or keyword.
 - Extra keyword arguments are merged into the memoization params and also passed
   to the exec function.
@@ -177,7 +152,4 @@ python examples/basic.py
 
 ## Notes
 
-- For multiprocessing, the exec function must be a top-level function (not
-  nested inside another function).
-- `run_streaming` preserves point order within each memo chunk while flushing
-  as soon as chunks are complete.
+- The exec function receives axis vectors for the current memo chunk.

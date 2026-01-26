@@ -1,3 +1,3 @@
-from .core import Diagnostics, SwarmMemo
+from .core import ChunkMemo, Diagnostics
 
-__all__ = ["Diagnostics", "SwarmMemo"]
+__all__ = ["ChunkMemo", "Diagnostics"]
