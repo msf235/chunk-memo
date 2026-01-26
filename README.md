@@ -132,6 +132,7 @@ output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
 - The wrapper accepts axis values directly (singletons or lists).
 - You can also pass `axis_indices` (same keys as `split_spec`) with ints, ranges,
   or slices to select by index.
+- `cache_status` returns cached/missing chunk keys and their index ranges.
 - `params` can be positional or keyword.
 - Extra keyword arguments are merged into the memoization params and also passed
   to the exec function.

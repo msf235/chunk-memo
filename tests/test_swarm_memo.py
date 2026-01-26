@@ -183,6 +183,13 @@ def test_run_wrap_param_merge():
         assert indexed_output == output
         assert indexed_diag.executed_chunks == 0
 
+        status = exec_point.cache_status(
+            params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}, extra=3
+        )
+        assert status["total_chunks"] == 1
+        assert status["cached_chunks"]
+        assert isinstance(status["cached_chunk_indices"][0]["s"], slice)
+
 
 def test_run_wrap_duplicate_params_arg():
     with tempfile.TemporaryDirectory() as temp_dir:

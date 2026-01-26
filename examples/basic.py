@@ -50,6 +50,13 @@ def main():
     print("Indexed output:", indexed_output)
     print("Indexed diagnostics:", indexed_diag)
 
+    status = memoized_exec.cache_status(
+        params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}
+    )
+    print("Cache status:", status)
+    print("Cached indices:", status["cached_chunk_indices"])
+    print("Missing indices:", status["missing_chunk_indices"])
+
 
 if __name__ == "__main__":
     main()

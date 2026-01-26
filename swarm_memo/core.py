@@ -140,6 +140,23 @@ class ChunkMemo:
                     merged_params, axis_indices=axis_indices, **axis_inputs
                 )
 
+            def cache_status(
+                params: dict[str, Any],
+                *,
+                axis_indices: Mapping[str, Any] | None = None,
+                **axes: Any,
+            ):
+                axis_names = set(self._split_spec or {})
+                exec_extras = {k: v for k, v in axes.items() if k not in axis_names}
+                merged_params = dict(params)
+                merged_params.update(exec_extras)
+                axis_inputs = {k: v for k, v in axes.items() if k in axis_names}
+                runner = self._clone_with_exec_fn(func)
+                return runner.cache_status(
+                    merged_params, axis_indices=axis_indices, **axis_inputs
+                )
+
+            setattr(wrapper, "cache_status", cache_status)
             return wrapper
 
         return decorator
@@ -157,6 +174,46 @@ class ChunkMemo:
             split_spec=self._split_spec,
             verbose=self.verbose,
         )
+
+    def cache_status(
+        self,
+        params: dict[str, Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> dict[str, Any]:
+        if self._split_spec is None:
+            raise ValueError("split_spec must be set before checking cache status")
+        if axis_indices is not None and axes:
+            raise ValueError("axis_indices cannot be combined with axis values")
+        if axis_indices is not None:
+            split_spec = self._normalize_axis_indices(axis_indices)
+        else:
+            split_spec = self._normalize_axes(axes)
+        index_format = self._infer_index_format(axis_indices)
+        chunk_keys = self._build_chunk_keys_for_axes(split_spec)
+        cached_chunks: List[ChunkKey] = []
+        cached_chunk_indices: List[Dict[str, Any]] = []
+        missing_chunks: List[ChunkKey] = []
+        missing_chunk_indices: List[Dict[str, Any]] = []
+        for chunk_key in chunk_keys:
+            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
+            path = self.cache_root / f"{chunk_hash}.pkl"
+            indices = self._chunk_indices_from_key(chunk_key, index_format)
+            if path.exists():
+                cached_chunks.append(chunk_key)
+                cached_chunk_indices.append(indices)
+            else:
+                missing_chunks.append(chunk_key)
+                missing_chunk_indices.append(indices)
+        return {
+            "axis_values": split_spec,
+            "total_chunks": len(chunk_keys),
+            "cached_chunks": cached_chunks,
+            "cached_chunk_indices": cached_chunk_indices,
+            "missing_chunks": missing_chunks,
+            "missing_chunk_indices": missing_chunk_indices,
+        }
 
     def run(
         self, params: dict[str, Any], split_spec: dict[str, Any]
@@ -301,6 +358,80 @@ class ChunkMemo:
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
         return self._build_chunk_keys_for_axes(self._split_spec)
+
+    def _chunk_indices_from_key(
+        self, chunk_key: ChunkKey, index_format: Mapping[str, str] | None
+    ) -> Dict[str, Any]:
+        if self._axis_index_map is None:
+            raise ValueError("split_spec must be set before checking cache status")
+        indices: Dict[str, Any] = {}
+        for axis, values in chunk_key:
+            axis_map = self._axis_index_map.get(axis)
+            if axis_map is None:
+                raise KeyError(f"Unknown axis '{axis}'")
+            raw_indices = [axis_map[value] for value in values]
+            format_kind = None if index_format is None else index_format.get(axis)
+            indices[axis] = self._format_indices(raw_indices, format_kind)
+        return indices
+
+    def _infer_index_format(
+        self, axis_indices: Mapping[str, Any] | None
+    ) -> Dict[str, str] | None:
+        if axis_indices is None:
+            return None
+        formats: Dict[str, str] = {}
+        for axis, values in axis_indices.items():
+            formats[axis] = self._detect_index_format(values)
+        return formats
+
+    def _detect_index_format(self, values: Any) -> str:
+        if isinstance(values, range):
+            return "range"
+        if isinstance(values, slice):
+            return "slice"
+        if isinstance(values, (list, tuple)):
+            kinds = {self._detect_index_format(value) for value in values}
+            if len(kinds) == 1:
+                return kinds.pop()
+            return "list"
+        if isinstance(values, int):
+            return "int"
+        return "list"
+
+    def _format_indices(self, indices: List[int], format_kind: str | None) -> Any:
+        if format_kind == "int":
+            return indices[:]
+        if format_kind == "range":
+            return self._indices_to_range(indices)
+        if format_kind == "slice":
+            return self._indices_to_slice(indices) or indices[:]
+        return indices[:]
+
+    def _indices_to_range(self, indices: List[int]) -> range | None:
+        if not indices:
+            return range(0, 0)
+        if len(indices) == 1:
+            return range(indices[0], indices[0] + 1)
+        step = indices[1] - indices[0]
+        if step == 0:
+            return None
+        for prev, current in zip(indices, indices[1:]):
+            if current - prev != step:
+                return None
+        return range(indices[0], indices[-1] + step, step)
+
+    def _indices_to_slice(self, indices: List[int]) -> slice | None:
+        if not indices:
+            return slice(0, 0, None)
+        if len(indices) == 1:
+            return slice(indices[0], indices[0] + 1, None)
+        step = indices[1] - indices[0]
+        if step == 0:
+            return None
+        for prev, current in zip(indices, indices[1:]):
+            if current - prev != step:
+                return None
+        return slice(indices[0], indices[-1] + step, step)
 
     def _build_chunk_keys_for_axes(
         self, split_spec: Mapping[str, Sequence[Any]]
