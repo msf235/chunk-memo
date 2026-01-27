@@ -260,17 +260,30 @@ def test_memo_chunk_enumerator_order():
 
 @pytest.mark.flaky(reruns=2)
 def test_timing_cache_speedup():
+    params = {"alpha": 0.4}
+    split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
-        params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-
         start = time.perf_counter()
         memo.run(params, split_spec)
-        first = time.perf_counter() - start
+        cold_time = time.perf_counter() - start
+        print(f"cold_cache_s: {cold_time:0.4f}")
 
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
+        memo.run(params, {"strat": ["a"], "s": [1, 2, 3, 4]})
         start = time.perf_counter()
         memo.run(params, split_spec)
-        second = time.perf_counter() - start
+        half_time = time.perf_counter() - start
+        print(f"half_cache_s: {half_time:0.4f}")
 
-        assert second < first * 0.3
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
+        memo.run(params, split_spec)
+        start = time.perf_counter()
+        memo.run(params, split_spec)
+        warm_time = time.perf_counter() - start
+        print(f"warm_cache_s: {warm_time:0.4f}")
+
+    assert warm_time < half_time < cold_time

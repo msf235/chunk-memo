@@ -1,41 +1,34 @@
 # swarm-memo
 
-swarm-memo is a small utility for evaluating a function over chunked blocks of
-input values and caching the results on disk. It is designed for experiments
-where you repeatedly evaluate a function over a grid of values and want to
-avoid recomputing the parts you already ran.
+swarm-memo provides chunked memoization for grid-style experiments. You define a
+parameter grid (split variables), the library partitions it into reusable memo
+chunks, and cached chunk outputs are reused on subsequent runs. Memoization and
+parallel execution are independent: memoization is in `ChunkMemo`, while a
+parallel wrapper consumes cache metadata and can execute the missing work.
 
 ## What problem does it solve?
 
 Suppose you have:
 
-- **Fixed parameters** (things that do not vary across the grid).
-- **Split variables** (lists of values you want to sweep over).
+- Fixed parameters (values that do not vary across the grid).
+- Split variables (lists of values you want to sweep over).
 
 You want to:
 
-1. Evaluate a function for each point in the grid.
-2. Store results so you can re-run with new values and only compute what is new.
-3. You want to make use of chunking in 1 and 2 for greater efficiency.
-For instance, you may not want to have a file saved for every point on the grid if there are many points, since disk read/write operations to collect function evaluation at all points would become expensive.
+1. Evaluate a function across the grid.
+2. Cache results so subsequent runs only compute what is new.
+3. Chunk outputs into reasonable file sizes, instead of one file per point.
 
-swarm-memo does this by breaking the grid into **memo chunks** and caching those
-chunks on disk. If you add new split values, only the new chunks are computed.
+swarm-memo breaks the grid into memo chunks and stores each chunk on disk. When
+split values change, only the new chunks are computed.
 
-## Key terms
+## Concepts
 
-- **Point**: one combination of split values (e.g., `("a", 2)` for
-  `(strat="a", s=2)`.
-- **Split spec**: a dictionary of lists that define the grid,
-  e.g. `{"strat": ["a", "b"], "s": [1, 2, 3]}`.
-- **Memo chunk**: a cached block of points created by chunking each axis list
-  into fixed-size bins and taking the cartesian product of those bins. Each
-  memo chunk is written to a single file.
-
-## Core functionality
-
-- **Chunked Memoization**: Optimally make user of previously cached data. Allow data to be
-  saved in reasonably-sized file chunks that partition the split spec values.
+- Point: one combination of split values (e.g., `(strat="a", s=2)`).
+- Split spec: a dictionary of lists defining the grid,
+  e.g. `{ "strat": ["a", "b"], "s": [1, 2, 3] }`.
+- Memo chunk: a block of points created by chunking each axis list and taking the
+  cartesian product of those bins. Each memo chunk is written to a single file.
 
 ## Installation
 
@@ -82,6 +75,12 @@ print(output)
 print(diag)
 ```
 
+## Module layout
+
+- `swarm_memo/memo.py`: memoization (ChunkMemo) and cache introspection.
+- `swarm_memo/parallel.py`: parallel wrapper utilities (currently ProcessPool).
+- `swarm_memo/__init__.py`: re-exports public APIs.
+
 ## API overview
 
 ### ChunkMemo
@@ -117,25 +116,85 @@ output, diagnostics = memo.run(params, split_spec)
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
 
-### Decorator wrappers
+### run_wrap (memoized wrapper)
 
 ```python
 @memo.run_wrap()
-def exec_point(params, point, extra=1):
+def exec_point(params, strat, s, extra=1):
     ...
 
 output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
-# Or use indices to select from split_spec
-# output, diag = exec_point(params, axis_indices={"strat": [0], "s": [0, 1]}, extra=2)
+# Or by index
+# output, diag = exec_point(params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}, extra=2)
 ```
 
 - The wrapper accepts axis values directly (singletons or lists).
 - You can also pass `axis_indices` (same keys as `split_spec`) with ints, ranges,
   or slices to select by index.
-- `cache_status` returns cached/missing chunk keys and their index ranges.
-- `params` can be positional or keyword.
-- Extra keyword arguments are merged into the memoization params and also passed
-  to the exec function.
+- Extra keyword arguments are merged into memoization params and also passed to
+  the exec function.
+
+### cache_status
+
+`cache_status` returns a structured view of cached vs missing chunks for a
+selection of axes. It returns both the chunk keys and the corresponding index
+ranges.
+
+```python
+status = exec_point.cache_status(
+    params,
+    axis_indices={"strat": range(0, 1), "s": slice(0, 3)},
+    extra=2,
+)
+
+status["cached_chunks"]
+status["cached_chunk_indices"]
+status["missing_chunks"]
+status["missing_chunk_indices"]
+```
+
+## Parallel wrapper
+
+The parallel wrapper is independent from memoization. It consumes cache metadata
+and delegates missing work to `ProcessPoolExecutor`, while already-cached chunks
+are handled locally.
+
+```python
+from swarm_memo import process_pool_parallel
+
+status = exec_point.cache_status(
+    params,
+    axis_indices={"strat": range(0, 1), "s": slice(0, 3)},
+    extra=2,
+)
+
+parallel_output, parallel_diag = process_pool_parallel(
+    status,
+    exec_fn,
+    params=params,
+)
+```
+
+Parallel wrapper notes:
+- `process_pool_parallel` expects a `cache_status`-shaped dict.
+- Missing chunks are executed in a ProcessPool using chunk indices.
+- Cached chunks are executed locally to return the same nested output shape.
+
+### process_pool_parallel
+
+```python
+process_pool_parallel(
+    cache_status: Mapping[str, Any],
+    exec_fn: Callable[..., Any],
+    *,
+    params: dict[str, Any],
+    max_workers: int | None = None,
+    chunk_indices_to_axes: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
+) -> tuple[list[Any], ParallelDiagnostics]
+```
+
+- `chunk_indices_to_axes` can be used to transform chunk index metadata into the
+  axis values expected by your execution function.
 
 ## Caching behavior
 
@@ -154,3 +213,5 @@ python examples/basic.py
 ## Notes
 
 - The exec function receives axis vectors for the current memo chunk.
+- Memoization and parallel execution are decoupled so you can introduce new
+  executors without changing `ChunkMemo`.

@@ -1,4 +1,4 @@
-from swarm_memo import ChunkMemo
+from swarm_memo import ChunkMemo, process_pool_parallel
 
 
 def exec_fn(params, strat, s):
@@ -56,6 +56,15 @@ def main():
     print("Cache status:", status)
     print("Cached indices:", status["cached_chunk_indices"])
     print("Missing indices:", status["missing_chunk_indices"])
+
+    parallel_output, parallel_diag = process_pool_parallel(
+        status,
+        exec_fn,
+        params=params,
+    )
+    print("Parallel output:", parallel_output)
+    print("Parallel diagnostics:", parallel_diag)
+    breakpoint()
 
 
 if __name__ == "__main__":
