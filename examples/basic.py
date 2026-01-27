@@ -1,4 +1,4 @@
-from swarm_memo import ChunkMemo, process_pool_parallel
+from swarm_memo import ChunkMemo, memo_parallel_run
 
 
 def exec_fn(params, strat, s):
@@ -57,14 +57,37 @@ def main():
     print("Cached indices:", status["cached_chunk_indices"])
     print("Missing indices:", status["missing_chunk_indices"])
 
-    parallel_output, parallel_diag = process_pool_parallel(
-        status,
-        exec_fn,
-        params=params,
+    points = [("aaa", 1), ("bb", 4), ("aaa", 2)]
+    bridge_output, bridge_diag = memo_parallel_run(
+        memo,
+        params,
+        points,
+        cache_status=memo.cache_status(
+            params, strat=split_spec["strat"], s=split_spec["s"]
+        ),
+        map_fn=lambda func, items, **kwargs: [func(point) for point in items],
+        map_fn_kwargs={"chunksize": 1},
     )
-    print("Parallel output:", parallel_output)
-    print("Parallel diagnostics:", parallel_diag)
+    print("Bridge output:", bridge_output)
+    print("Bridge diagnostics:", bridge_diag)
+
+    from concurrent.futures import ProcessPoolExecutor
+
     breakpoint()
+
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        pooled_output, pooled_diag = memo_parallel_run(
+            memo,
+            params,
+            points,
+            cache_status=memo.cache_status(
+                params, strat=split_spec["strat"], s=split_spec["s"]
+            ),
+            map_fn=executor.map,
+            map_fn_kwargs={"chunksize": 1},
+        )
+    print("Bridge pooled output:", pooled_output)
+    print("Bridge pooled diagnostics:", pooled_diag)
 
 
 if __name__ == "__main__":
