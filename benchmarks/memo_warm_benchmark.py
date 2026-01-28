@@ -23,17 +23,16 @@ def run_warm_benchmark(*, n_points, chunk_size, repeats):
         memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"s": chunk_size},
-            exec_fn=exec_fn,
             split_spec=split_spec,
         )
         start = time.perf_counter()
-        memo.run(params, split_spec)
+        memo.run(params, exec_fn)
         cold_time = time.perf_counter() - start
 
         run_times = []
         for _ in range(repeats):
             start = time.perf_counter()
-            memo.run(params, split_spec)
+            memo.run(params, exec_fn)
             run_times.append(time.perf_counter() - start)
 
     return {

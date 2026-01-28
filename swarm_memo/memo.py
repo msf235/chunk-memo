@@ -3,7 +3,9 @@ import functools
 import hashlib
 import inspect
 import itertools
+import os
 import pickle
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
 
@@ -19,6 +21,7 @@ class Diagnostics:
     cached_chunks: int = 0
     executed_chunks: int = 0
     merges: int = 0
+    max_stream_items: int = 0
 
 
 def _stable_serialize(value: Any) -> str:
@@ -53,18 +56,41 @@ def _chunk_values(values: Sequence[Any], size: int) -> List[Tuple[Any, ...]]:
     return chunks
 
 
+def _stream_item_count(output: Any) -> int:
+    if isinstance(output, (list, tuple, dict)):
+        return len(output)
+    return 1
+
+
+def _atomic_write_pickle(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            delete=False,
+            dir=path.parent,
+            prefix=f".{path.name}.",
+        ) as handle:
+            tmp_path = Path(handle.name)
+            pickle.dump(payload, handle, protocol=5)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
+
+
 class ChunkMemo:
     def __init__(
         self,
         cache_root: str | Path,
         memo_chunk_spec: dict[str, Any],
-        exec_fn: Callable[..., Any],
+        split_spec: dict[str, Any],
         merge_fn: MergeFn | None = None,
         memo_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_version: str = "v1",
         axis_order: Sequence[str] | None = None,
-        split_spec: dict[str, Any] | None = None,
         verbose: int = 1,
     ) -> None:
         """Initialize a ChunkMemo runner.
@@ -72,20 +98,18 @@ class ChunkMemo:
         Args:
             cache_root: Directory for chunk cache files.
             memo_chunk_spec: Per-axis chunk sizes (e.g., {"strat": 1, "s": 3}).
-            exec_fn: Executes one memo chunk with params and axis vectors.
             merge_fn: Optional merge function for the list of chunk outputs.
             memo_chunk_enumerator: Optional chunk enumerator that defines the
                 memo chunk order.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order (defaults to lexicographic).
-            split_spec: Optional default split spec for wrapper calls.
+            split_spec: Canonical split spec for the cache.
             verbose: Verbosity flag.
         """
         self.cache_root = Path(cache_root)
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self.memo_chunk_spec = memo_chunk_spec
-        self.exec_fn = exec_fn
         self.merge_fn = merge_fn
         self.memo_chunk_enumerator = memo_chunk_enumerator
         self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash
@@ -94,17 +118,22 @@ class ChunkMemo:
         self.verbose = verbose
         self._split_spec: dict[str, Any] | None = None
         self._axis_index_map: AxisIndexMap | None = None
-        if split_spec is not None:
-            self._set_split_spec(split_spec)
+        self._set_split_spec(split_spec)
 
     def run_wrap(
         self, *, params_arg: str = "params"
     ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
         """Decorator for running memoized execution with output."""
-        return self._build_wrapper(params_arg=params_arg)
+        return self._build_wrapper(params_arg=params_arg, streaming=False)
+
+    def streaming_wrap(
+        self, *, params_arg: str = "params"
+    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
+        """Decorator for streaming memoized execution to disk only."""
+        return self._build_wrapper(params_arg=params_arg, streaming=True)
 
     def _build_wrapper(
-        self, *, params_arg: str
+        self, *, params_arg: str, streaming: bool
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             signature = inspect.signature(func)
@@ -134,9 +163,18 @@ class ChunkMemo:
                 merged_params.update(exec_extras)
 
                 exec_fn = functools.partial(func, **exec_extras)
-                runner = self._clone_with_exec_fn(exec_fn)
-                return runner.run_with_axes(
-                    merged_params, axis_indices=axis_indices, **axis_inputs
+                if streaming:
+                    return self.run_streaming(
+                        merged_params,
+                        exec_fn=exec_fn,
+                        axis_indices=axis_indices,
+                        **axis_inputs,
+                    )
+                return self.run(
+                    merged_params,
+                    exec_fn=exec_fn,
+                    axis_indices=axis_indices,
+                    **axis_inputs,
                 )
 
             def cache_status(
@@ -150,8 +188,7 @@ class ChunkMemo:
                 merged_params = dict(params)
                 merged_params.update(exec_extras)
                 axis_inputs = {k: v for k, v in axes.items() if k in axis_names}
-                runner = self._clone_with_exec_fn(func)
-                return runner.cache_status(
+                return self.cache_status(
                     merged_params, axis_indices=axis_indices, **axis_inputs
                 )
 
@@ -159,20 +196,6 @@ class ChunkMemo:
             return wrapper
 
         return decorator
-
-    def _clone_with_exec_fn(self, exec_fn: Callable[..., Any]) -> "ChunkMemo":
-        return ChunkMemo(
-            cache_root=self.cache_root,
-            memo_chunk_spec=self.memo_chunk_spec,
-            exec_fn=exec_fn,
-            merge_fn=self.merge_fn,
-            memo_chunk_enumerator=self.memo_chunk_enumerator,
-            chunk_hash_fn=self.chunk_hash_fn,
-            cache_version=self.cache_version,
-            axis_order=self.axis_order,
-            split_spec=self._split_spec,
-            verbose=self.verbose,
-        )
 
     def cache_status(
         self,
@@ -216,20 +239,18 @@ class ChunkMemo:
         }
 
     def run(
-        self, params: dict[str, Any], split_spec: dict[str, Any]
-    ) -> Tuple[Any, Diagnostics]:
-        self._set_split_spec(split_spec)
-        return self.run_with_params(params)
-
-    def run_with_axes(
         self,
         params: dict[str, Any],
+        exec_fn: Callable[..., Any],
         *,
         axis_indices: Mapping[str, Any] | None = None,
         **axes: Any,
     ) -> Tuple[Any, Diagnostics]:
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
+        if axis_indices is None and not axes:
+            chunk_keys = self._build_chunk_keys()
+            return self._run_chunks(params, chunk_keys, exec_fn)
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
         if axis_indices is not None:
@@ -240,22 +261,46 @@ class ChunkMemo:
         return self._run_chunks(
             params,
             chunk_keys,
+            exec_fn,
             requested_items_by_chunk=requested_items,
         )
 
-    def run_with_params(self, params: dict[str, Any]) -> Tuple[Any, Diagnostics]:
+    def run_streaming(
+        self,
+        params: dict[str, Any],
+        exec_fn: Callable[..., Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> Diagnostics:
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
-        chunk_keys = self._build_chunk_keys()
-        return self._run_chunks(params, chunk_keys)
+        if axis_indices is None and not axes:
+            chunk_keys = self._build_chunk_keys()
+            return self._run_chunks_streaming(params, chunk_keys, exec_fn)
+        if axis_indices is not None and axes:
+            raise ValueError("axis_indices cannot be combined with axis values")
+        if axis_indices is not None:
+            split_spec = self._normalize_axis_indices(axis_indices)
+        else:
+            split_spec = self._normalize_axes(axes)
+        chunk_keys, requested_items = self._build_chunk_plan_for_axes(split_spec)
+        return self._run_chunks_streaming(
+            params,
+            chunk_keys,
+            exec_fn,
+            requested_items_by_chunk=requested_items,
+        )
 
     def _run_chunks(
         self,
         params: dict[str, Any],
         chunk_keys: Sequence[ChunkKey],
+        exec_fn: Callable[..., Any],
         *,
-        requested_items_by_chunk: Mapping[ChunkKey, List[Tuple[Any, ...]]]
-        | None = None,
+        requested_items_by_chunk: (
+            Mapping[ChunkKey, List[Tuple[Any, ...]]] | None
+        ) = None,
     ) -> Tuple[Any, Diagnostics]:
         outputs: List[Any] = []
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
@@ -291,13 +336,16 @@ class ChunkMemo:
 
             diagnostics.executed_chunks += 1
             chunk_axes = {axis: list(values) for axis, values in chunk_key}
-            chunk_output = self.exec_fn(params, **chunk_axes)
+            chunk_output = exec_fn(params, **chunk_axes)
+            diagnostics.max_stream_items = max(
+                diagnostics.max_stream_items,
+                _stream_item_count(chunk_output),
+            )
             payload = {"output": chunk_output}
             item_map = self._build_item_map(chunk_key, chunk_output)
             if item_map is not None:
                 payload["items"] = item_map
-            with open(path, "wb") as handle:
-                pickle.dump(payload, handle, protocol=5)
+            _atomic_write_pickle(path, payload)
 
             if requested_items_by_chunk is None:
                 if self.verbose >= 1:
@@ -334,6 +382,75 @@ class ChunkMemo:
                 f"total={diagnostics.total_chunks}"
             )
         return merged, diagnostics
+
+    def _run_chunks_streaming(
+        self,
+        params: dict[str, Any],
+        chunk_keys: Sequence[ChunkKey],
+        exec_fn: Callable[..., Any],
+        *,
+        requested_items_by_chunk: Mapping[ChunkKey, List[Tuple[Any, ...]]]
+        | None = None,
+    ) -> Diagnostics:
+        diagnostics = Diagnostics(total_chunks=len(chunk_keys))
+
+        for chunk_key in chunk_keys:
+            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
+            path = self.cache_root / f"{chunk_hash}.pkl"
+            if path.exists():
+                if requested_items_by_chunk is None:
+                    diagnostics.cached_chunks += 1
+                    if self.verbose >= 1:
+                        print(f"[ChunkMemo] load chunk={chunk_key} items=all")
+                    continue
+                with open(path, "rb") as handle:
+                    payload = pickle.load(handle)
+                item_map = payload.get("items")
+                if item_map is None:
+                    item_map = self._build_item_map(chunk_key, payload.get("output"))
+                    if item_map is not None:
+                        payload["items"] = item_map
+                        _atomic_write_pickle(path, payload)
+                if item_map is not None:
+                    diagnostics.cached_chunks += 1
+                    if self.verbose >= 1:
+                        requested_items = requested_items_by_chunk.get(chunk_key)
+                        item_count = (
+                            "all" if requested_items is None else len(requested_items)
+                        )
+                        print(f"[ChunkMemo] load chunk={chunk_key} items={item_count}")
+                    continue
+
+            diagnostics.executed_chunks += 1
+            chunk_axes = {axis: list(values) for axis, values in chunk_key}
+            chunk_output = exec_fn(params, **chunk_axes)
+            diagnostics.max_stream_items = max(
+                diagnostics.max_stream_items,
+                _stream_item_count(chunk_output),
+            )
+            payload = {"output": chunk_output}
+            item_map = self._build_item_map(chunk_key, chunk_output)
+            if item_map is not None:
+                payload["items"] = item_map
+            _atomic_write_pickle(path, payload)
+            if self.verbose >= 1:
+                if requested_items_by_chunk is None:
+                    print(f"[ChunkMemo] run chunk={chunk_key} items=all")
+                else:
+                    requested_items = requested_items_by_chunk.get(chunk_key)
+                    item_count = (
+                        "all" if requested_items is None else len(requested_items)
+                    )
+                    print(f"[ChunkMemo] run chunk={chunk_key} items={item_count}")
+
+        if self.verbose >= 1:
+            print(
+                "[ChunkMemo] summary "
+                f"cached={diagnostics.cached_chunks} "
+                f"executed={diagnostics.executed_chunks} "
+                f"total={diagnostics.total_chunks}"
+            )
+        return diagnostics
 
     def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:

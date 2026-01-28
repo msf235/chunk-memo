@@ -26,13 +26,12 @@ def main():
     memo = ChunkMemo(
         cache_root=output_root / "memo_cache",
         memo_chunk_spec={"strat": 1, "s": 2},
-        exec_fn=exec_fn,
+        split_spec={"strat": ["a", "b"], "s": [1, 2, 3]},
         merge_fn=merge_fn,
     )
 
     params = {"alpha": 0.4}
-    split_spec = {"strat": ["a", "b"], "s": [1, 2, 3]}
-    output, diag = memo.run(params, split_spec)
+    output, diag = memo.run(params, exec_fn)
 
     print("Output:", output)
     print("Diagnostics:", diag)

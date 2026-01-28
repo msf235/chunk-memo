@@ -64,16 +64,15 @@ def merge_fn(chunks):
     return merged
 
 
+params = {"alpha": 0.4}
+split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
 memo = ChunkMemo(
     cache_root="./memo_cache",
     memo_chunk_spec={"strat": 1, "s": 3},
-    exec_fn=exec_fn,
+    split_spec=split_spec,
     merge_fn=merge_fn,
 )
-
-params = {"alpha": 0.4}
-split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-output, diag = memo.run(params, split_spec)
+output, diag = memo.run(params, exec_fn)
 print(output)
 print(diag)
 ```
@@ -92,13 +91,12 @@ print(diag)
 ChunkMemo(
     cache_root: str | Path,
     memo_chunk_spec: dict[str, int | dict],
-    exec_fn: Callable[..., Any],
+    split_spec: dict[str, Any],
     merge_fn: Callable[[list], Any] | None = None,
     memo_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
     cache_version: str = "v1",
     axis_order: Sequence[str] | None = None,
-    split_spec: dict[str, Any] | None = None,
     verbose: int = 1,
 )
 ```
@@ -106,18 +104,32 @@ ChunkMemo(
 Notes:
 - `memo_chunk_spec`: per-axis chunk sizes, e.g. `{"strat": 1, "s": 3}`.
 - `exec_fn(params, **axes)`: chunk-level function; each axis receives the
-  vector of values for that chunk.
+  vector of values for that chunk. Supply it to `run` or use
+  `run_wrap`/`streaming_wrap`.
 - `merge_fn` defaults to returning the list of chunk outputs.
-- `split_spec` can be provided to enable wrapper calls without passing a full
-  split spec each time.
+- `split_spec` defines the canonical grid for cache chunking.
 
 ### run
 
 ```python
-output, diagnostics = memo.run(params, split_spec)
+output, diagnostics = memo.run(params, exec_fn)
+# Or run a subset
+# output, diagnostics = memo.run(params, exec_fn, strat=["a"], s=[1, 2, 3])
+# output, diagnostics = memo.run(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
+
+### run_streaming
+
+```python
+diagnostics = memo.run_streaming(params, exec_fn)
+# Or run a subset
+# diagnostics = memo.run_streaming(params, exec_fn, strat=["a"], s=[1, 2, 3])
+# diagnostics = memo.run_streaming(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+```
+
+Executes missing chunks and flushes them to disk without returning outputs.
 
 ### run_wrap (memoized wrapper)
 
@@ -136,6 +148,18 @@ output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
   or slices to select by index.
 - Extra keyword arguments are merged into memoization params and also passed to
   the exec function.
+
+### streaming_wrap (memoized streaming wrapper)
+
+```python
+@memo.streaming_wrap()
+def exec_point(params, strat, s):
+    ...
+
+diagnostics = exec_point(params, strat=["a"], s=[1, 2, 3])
+```
+
+- Streaming wrappers return diagnostics only and write cache outputs to disk.
 
 ### cache_status
 

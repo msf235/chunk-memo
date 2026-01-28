@@ -31,16 +31,15 @@ def test_memo_parallel_run_returns_requested_points():
         memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            exec_fn=exec_fn,
             split_spec=split_spec,
         )
-        memo.run(params, {"strat": ["a"], "s": [1, 2, 3]})
-        memo._set_split_spec(split_spec)
+        memo.run(params, exec_fn=exec_fn, strat=["a"], s=[1, 2, 3])
 
         status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
         outputs, diag = memo_parallel_run(
             memo,
             [_item_from_index(item, split_spec) for item in items],
+            exec_fn=exec_fn,
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],

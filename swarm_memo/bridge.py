@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple
 
-from .memo import ChunkKey, ChunkMemo, Diagnostics
+from .memo import ChunkKey, ChunkMemo, Diagnostics, _atomic_write_pickle
 
 
 @dataclasses.dataclass
@@ -58,6 +58,7 @@ def _build_item_axis_extractor(
     memo: ChunkMemo,
     cache_status: Mapping[str, Any],
     items: Sequence[Any],
+    exec_fn: Callable[..., Any],
 ) -> Callable[[Any], Tuple[Any, ...]]:
     axis_values = cache_status.get("axis_values")
     if not isinstance(axis_values, Mapping):
@@ -104,7 +105,7 @@ def _build_item_axis_extractor(
 
             return extract
 
-    signature = inspect.signature(memo.exec_fn)
+    signature = inspect.signature(exec_fn)
     param_names = list(signature.parameters)
     if not param_names or param_names[0] != "params":
         raise ValueError("exec_fn must accept 'params' as the first argument")
@@ -180,6 +181,7 @@ def memo_parallel_run(
     memo: ChunkMemo,
     items: Iterable[Any],
     *,
+    exec_fn: Callable[..., Any],
     cache_status: Mapping[str, Any],
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
@@ -207,7 +209,12 @@ def memo_parallel_run(
     item_list = _ensure_iterable(items)
     if not item_list:
         return [], diagnostics
-    axis_extractor = _build_item_axis_extractor(memo, cache_status, item_list)
+    axis_extractor = _build_item_axis_extractor(
+        memo,
+        cache_status,
+        item_list,
+        exec_fn,
+    )
 
     cached_chunk_items = _expand_items_to_chunks(
         item_list,
@@ -274,7 +281,7 @@ def memo_parallel_run(
 
     if missing_items:
         diagnostics.executed_chunks = len(missing_chunk_order)
-        exec_fn = functools.partial(_exec_with_item, memo.exec_fn, params_dict)
+        exec_fn = functools.partial(_exec_with_item, exec_fn, params_dict)
         exec_outputs = list(
             map_fn(
                 exec_fn,
@@ -307,8 +314,7 @@ def memo_parallel_run(
                 payload["items"] = {**payload.get("items", {}), **item_map}
                 if "output" not in payload and chunk_output is not None:
                     payload["output"] = chunk_output
-            with open(path, "wb") as handle:
-                pickle.dump(payload, handle, protocol=5)
+            _atomic_write_pickle(path, payload)
             outputs.append(chunk_output)
             cursor += chunk_size
 

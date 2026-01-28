@@ -36,7 +36,6 @@ def test_memo_parallel_run_caches_missing_points():
         memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            exec_fn=exec_fn,
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             split_spec=split_spec,
         )
@@ -54,6 +53,7 @@ def test_memo_parallel_run_caches_missing_points():
         output, diag = memo_parallel_run(
             memo,
             items,
+            exec_fn=exec_fn,
             cache_status=cache_status,
             collate_fn=collate_fn,
             map_fn_kwargs={"chunksize": 1},
@@ -70,13 +70,12 @@ def test_memo_parallel_run_reuses_partial_chunks():
         memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            exec_fn=exec_fn,
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             split_spec=split_spec,
         )
 
         params = {"alpha": 0.4}
-        memo.run(params, split_spec)
+        memo.run(params, exec_fn)
 
         items = [
             {"strat": "a", "s": 1},
@@ -90,6 +89,7 @@ def test_memo_parallel_run_reuses_partial_chunks():
         output, diag = memo_parallel_run(
             memo,
             items,
+            exec_fn=exec_fn,
             cache_status=cache_status,
             collate_fn=collate_fn,
             map_fn_kwargs={"chunksize": 1},

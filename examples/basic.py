@@ -34,13 +34,12 @@ def main():
     memo = ChunkMemo(
         cache_root=output_root / "memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
-        exec_fn=exec_fn,
-        merge_fn=merge_fn,
         split_spec=split_spec,
+        merge_fn=merge_fn,
         verbose=1,
     )
 
-    output, diag = memo.run(params, split_spec)
+    output, diag = memo.run(params, exec_fn)
     print("Output:", output)
     print("Diagnostics:", diag)
 
@@ -66,6 +65,7 @@ def main():
     bridge_output, bridge_diag = memo_parallel_run(
         memo,
         items,
+        exec_fn=exec_fn,
         cache_status=memo.cache_status(
             params, strat=split_spec["strat"], s=split_spec["s"]
         ),
@@ -81,6 +81,7 @@ def main():
         pooled_output, pooled_diag = memo_parallel_run(
             memo,
             items,
+            exec_fn=exec_fn,
             cache_status=memo.cache_status(
                 params, strat=split_spec["strat"], s=split_spec["s"]
             ),

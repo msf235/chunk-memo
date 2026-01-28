@@ -65,28 +65,25 @@ def exec_point_basic(params, strat, s):
     return outputs
 
 
-def run_memo(
-    cache_root, merge=True, exec_fn_override=None, chunk_spec=None, split_spec=None
-):
+def run_memo(cache_root, *, merge=True, chunk_spec=None, split_spec):
     return ChunkMemo(
         cache_root=cache_root,
         memo_chunk_spec=chunk_spec or {"strat": 1, "s": 3},
-        exec_fn=exec_fn_override or exec_fn,
-        merge_fn=merge_fn if merge else None,
         split_spec=split_spec,
+        merge_fn=merge_fn if merge else None,
     )
 
 
 def test_basic_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-        output, diag = memo.run(params, split_spec)
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        output, diag = memo.run(params, exec_fn_sleep)
         assert output
         assert diag.executed_chunks == 1
 
-        output2, diag2 = memo.run(params, split_spec)
+        output2, diag2 = memo.run(params, exec_fn_sleep)
         assert output2 == output
         assert diag2.cached_chunks == diag2.total_chunks
         assert diag2.executed_chunks == 0
@@ -94,14 +91,15 @@ def test_basic_cache_reuse():
 
 def test_incremental_split_extension():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir)
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-        _, diag = memo.run(params, split_spec)
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        _, diag = memo.run(params, exec_fn)
         assert diag.total_chunks == 1
 
         split_spec = {"strat": ["a"], "s": [1, 2, 3, 4]}
-        _, diag2 = memo.run(params, split_spec)
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        _, diag2 = memo.run(params, exec_fn)
         assert diag2.total_chunks == 2
         assert diag2.cached_chunks == 1
         assert diag2.executed_chunks == 1
@@ -109,32 +107,32 @@ def test_incremental_split_extension():
 
 def test_param_change_invalidates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir)
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-        _, diag = memo.run({"alpha": 0.4}, split_spec)
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        _, diag = memo.run({"alpha": 0.4}, exec_fn)
         assert diag.executed_chunks == 1
 
-        _, diag2 = memo.run({"alpha": 0.5}, split_spec)
+        _, diag2 = memo.run({"alpha": 0.5}, exec_fn)
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 1
 
 
 def test_chunk_count_grid():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir)
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b", "c"], "s": [1, 2, 3, 4]}
-        _, diag = memo.run(params, split_spec)
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        _, diag = memo.run(params, exec_fn)
         assert diag.total_chunks == 6
         assert diag.executed_chunks == 6
 
 
 def test_merge_fn_optional_returns_nested():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir, merge=False)
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a"], "s": [1, 2, 3, 4]}
-        output, diag = memo.run(params, split_spec)
+        memo = run_memo(temp_dir, merge=False, split_spec=split_spec)
+        output, diag = memo.run(params, exec_fn)
         assert diag.total_chunks == 2
         assert isinstance(output, list)
         assert isinstance(output[0], list)
@@ -152,14 +150,16 @@ def test_run_wrap_positional_params():
         assert output[0]["extra"] == 1
 
 
-def test_run_wrap_missing_split_spec():
+def test_run_wrap_executes_with_split_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir)
+        split_spec = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, split_spec=split_spec)
 
         exec_point = memo.run_wrap()(exec_point_basic)
         params = {"alpha": 0.4}
-        with pytest.raises(ValueError, match="split_spec must be set"):
-            exec_point(params)
+        output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
+        assert diag.executed_chunks == 1
+        assert output
 
 
 def test_run_wrap_param_merge():
@@ -240,16 +240,16 @@ def test_memo_chunk_enumerator_order():
         return [chunk[0]["marker"] for chunk in chunks]
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec=memo_chunk_spec,
-            exec_fn=exec_fn_marker,
+            split_spec=split_spec,
             merge_fn=merge_markers,
             memo_chunk_enumerator=memo_chunk_enumerator,
         )
         params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        output, diag = memo.run(params, split_spec)
+        output, diag = memo.run(params, exec_fn_marker)
         assert diag.executed_chunks == 4
         expected = []
         for chunk_key in memo_chunk_enumerator(split_spec):
@@ -264,26 +264,42 @@ def test_timing_cache_speedup():
     split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
+        memo = run_memo(temp_dir, split_spec=split_spec)
         start = time.perf_counter()
-        memo.run(params, split_spec)
+        memo.run(params, exec_fn_sleep)
         cold_time = time.perf_counter() - start
         print(f"cold_cache_s: {cold_time:0.4f}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
-        memo.run(params, {"strat": ["a"], "s": [1, 2, 3, 4]})
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        memo.run(params, exec_fn=exec_fn_sleep, strat=["a"], s=[1, 2, 3, 4])
         start = time.perf_counter()
-        memo.run(params, split_spec)
+        memo.run(params, exec_fn_sleep)
         half_time = time.perf_counter() - start
         print(f"half_cache_s: {half_time:0.4f}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = run_memo(temp_dir, exec_fn_override=exec_fn_sleep)
-        memo.run(params, split_spec)
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        memo.run(params, exec_fn_sleep)
         start = time.perf_counter()
-        memo.run(params, split_spec)
+        memo.run(params, exec_fn_sleep)
         warm_time = time.perf_counter() - start
         print(f"warm_cache_s: {warm_time:0.4f}")
 
     assert warm_time < half_time < cold_time
+
+
+def test_streaming_diagnostics_bound_memory():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        split_spec = {"strat": ["a"], "s": [1, 2, 3, 4, 5]}
+        memo = run_memo(
+            temp_dir,
+            split_spec=split_spec,
+            chunk_spec={"strat": 1, "s": 2},
+        )
+
+        params = {"alpha": 0.4}
+        diag = memo.run_streaming(params, exec_fn)
+
+        assert diag.executed_chunks == 3
+        assert diag.max_stream_items == 2
