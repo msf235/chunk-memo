@@ -37,6 +37,7 @@ def main():
         exec_fn=exec_fn,
         merge_fn=merge_fn,
         split_spec=split_spec,
+        verbose=1,
     )
 
     output, diag = memo.run(params, split_spec)
@@ -44,9 +45,10 @@ def main():
     print("Diagnostics:", diag)
 
     memoized_exec = memo.run_wrap()(exec_fn)
-    wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3])
+    wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3, 4])
     print("Wrapped output:", wrapped_output)
     print("Wrapped diagnostics:", wrapped_diag)
+    breakpoint()
 
     indexed_output, indexed_diag = memoized_exec(
         params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}

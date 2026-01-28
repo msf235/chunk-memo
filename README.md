@@ -1,8 +1,9 @@
 # swarm-memo
 
-swarm-memo provides chunked memoization for grid-style experiments. You define a
+swarm-memo provides sharded memoization for grid-style experiments. You define a
 parameter grid (split variables), the library partitions it into reusable memo
-chunks, and cached chunk outputs are reused on subsequent runs. Memoization and
+chunks for disk efficiency, and cached chunk outputs are reused on subsequent
+runs, including partial reuse for smaller parameter selections. Memoization and
 parallel execution are independent: memoization is in `ChunkMemo`, while a
 parallel wrapper consumes cache metadata and can execute the missing work.
 
@@ -17,7 +18,8 @@ You want to:
 
 1. Evaluate a function across the grid.
 2. Cache results so subsequent runs only compute what is new.
-3. Chunk outputs into reasonable file sizes, instead of one file per point.
+3. Shard outputs into reasonable file sizes, without losing the ability to load
+   arbitrary subsets of parameter values.
 
 swarm-memo breaks the grid into memo chunks and stores each chunk on disk. When
 split values change, only the new chunks are computed.
@@ -28,7 +30,8 @@ split values change, only the new chunks are computed.
 - Split spec: a dictionary of lists defining the grid,
   e.g. `{ "strat": ["a", "b"], "s": [1, 2, 3] }`.
 - Memo chunk: a block of points created by chunking each axis list and taking the
-  cartesian product of those bins. Each memo chunk is written to a single file.
+  cartesian product of those bins. Each memo chunk is written to a single file
+  that can serve partial reads for subsets of points.
 
 ## Installation
 
@@ -199,6 +202,8 @@ process_pool_parallel(
 ## Caching behavior
 
 - Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.
+- Chunks are sharded for disk efficiency, but lookups can return subsets of a
+  chunk when you request fewer axis values.
 - Changing split values creates new chunks automatically.
 - Adding values to a list reuses existing chunks and computes only new ones.
 

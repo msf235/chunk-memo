@@ -236,8 +236,12 @@ class ChunkMemo:
             split_spec = self._normalize_axis_indices(axis_indices)
         else:
             split_spec = self._normalize_axes(axes)
-        chunk_keys = self._build_chunk_keys_for_axes(split_spec)
-        return self._run_chunks(params, chunk_keys)
+        chunk_keys, requested_items = self._build_chunk_plan_for_axes(split_spec)
+        return self._run_chunks(
+            params,
+            chunk_keys,
+            requested_items_by_chunk=requested_items,
+        )
 
     def run_with_params(self, params: dict[str, Any]) -> Tuple[Any, Diagnostics]:
         if self._split_spec is None:
@@ -246,7 +250,12 @@ class ChunkMemo:
         return self._run_chunks(params, chunk_keys)
 
     def _run_chunks(
-        self, params: dict[str, Any], chunk_keys: Sequence[ChunkKey]
+        self,
+        params: dict[str, Any],
+        chunk_keys: Sequence[ChunkKey],
+        *,
+        requested_items_by_chunk: Mapping[ChunkKey, List[Tuple[Any, ...]]]
+        | None = None,
     ) -> Tuple[Any, Diagnostics]:
         outputs: List[Any] = []
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
@@ -255,23 +264,75 @@ class ChunkMemo:
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
             path = self.cache_root / f"{chunk_hash}.pkl"
             if path.exists():
-                diagnostics.cached_chunks += 1
                 with open(path, "rb") as handle:
-                    outputs.append(pickle.load(handle)["output"])
-                continue
+                    payload = pickle.load(handle)
+                requested_items = None
+                if requested_items_by_chunk is not None:
+                    requested_items = requested_items_by_chunk.get(chunk_key)
+                if requested_items is None:
+                    diagnostics.cached_chunks += 1
+                    if self.verbose >= 1:
+                        print(f"[ChunkMemo] load chunk={chunk_key} items=all")
+                    outputs.append(payload["output"])
+                    continue
+                cached_outputs = self._extract_cached_items(
+                    payload,
+                    chunk_key,
+                    requested_items,
+                )
+                if cached_outputs is not None:
+                    diagnostics.cached_chunks += 1
+                    if self.verbose >= 1:
+                        print(
+                            f"[ChunkMemo] load chunk={chunk_key} items={len(requested_items)}"
+                        )
+                    outputs.append(cached_outputs)
+                    continue
 
             diagnostics.executed_chunks += 1
             chunk_axes = {axis: list(values) for axis, values in chunk_key}
             chunk_output = self.exec_fn(params, **chunk_axes)
+            payload = {"output": chunk_output}
+            item_map = self._build_item_map(chunk_key, chunk_output)
+            if item_map is not None:
+                payload["items"] = item_map
             with open(path, "wb") as handle:
-                pickle.dump({"output": chunk_output}, handle, protocol=5)
-            outputs.append(chunk_output)
+                pickle.dump(payload, handle, protocol=5)
+
+            if requested_items_by_chunk is None:
+                if self.verbose >= 1:
+                    print(f"[ChunkMemo] run chunk={chunk_key} items=all")
+                outputs.append(chunk_output)
+            else:
+                requested_items = requested_items_by_chunk.get(chunk_key)
+                if requested_items is None:
+                    if self.verbose >= 1:
+                        print(f"[ChunkMemo] run chunk={chunk_key} items=all")
+                    outputs.append(chunk_output)
+                else:
+                    if self.verbose >= 1:
+                        print(
+                            f"[ChunkMemo] run chunk={chunk_key} items={len(requested_items)}"
+                        )
+                    extracted = self._extract_items_from_map(
+                        item_map,
+                        chunk_key,
+                        requested_items,
+                    )
+                    outputs.append(extracted if extracted is not None else chunk_output)
 
         diagnostics.merges += 1
         if self.merge_fn is not None:
             merged = self.merge_fn(outputs)
         else:
             merged = outputs
+        if self.verbose >= 1:
+            print(
+                "[ChunkMemo] summary "
+                f"cached={diagnostics.cached_chunks} "
+                f"executed={diagnostics.executed_chunks} "
+                f"total={diagnostics.total_chunks}"
+            )
         return merged, diagnostics
 
     def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
@@ -455,6 +516,103 @@ class ChunkMemo:
             )
             chunk_keys.append(chunk_key)
         return chunk_keys
+
+    def _build_chunk_plan_for_axes(
+        self, split_spec: Mapping[str, Sequence[Any]]
+    ) -> Tuple[List[ChunkKey], Dict[ChunkKey, List[Tuple[Any, ...]]]]:
+        if self._split_spec is None or self._axis_index_map is None:
+            raise ValueError("split_spec must be set before running memoized function")
+        axis_order = self._resolve_axis_order(self._split_spec)
+        per_axis_chunks: List[List[dict[str, Any]]] = []
+        for axis in axis_order:
+            requested_values = list(split_spec.get(axis, []))
+            if not requested_values:
+                raise ValueError(f"Missing values for axis '{axis}'")
+            size = self._resolve_axis_chunk_size(axis)
+            full_values = list(self._split_spec[axis])
+            chunk_map: Dict[int, dict[str, Any]] = {}
+            for value in requested_values:
+                index = self._axis_index_map[axis].get(value)
+                if index is None:
+                    raise KeyError(
+                        f"Value '{value}' not found in split_spec for axis '{axis}'"
+                    )
+                chunk_id = index // size
+                chunk = chunk_map.setdefault(
+                    chunk_id, {"values": None, "requested": []}
+                )
+                chunk["requested"].append(value)
+            for chunk_id, chunk in chunk_map.items():
+                start = chunk_id * size
+                end = min(start + size, len(full_values))
+                chunk["values"] = tuple(full_values[start:end])
+            per_axis_chunks.append([chunk_map[idx] for idx in sorted(chunk_map.keys())])
+
+        chunk_keys: List[ChunkKey] = []
+        requested_items: Dict[ChunkKey, List[Tuple[Any, ...]]] = {}
+        for combo in itertools.product(*per_axis_chunks):
+            chunk_key = tuple(
+                (axis, tuple(desc["values"])) for axis, desc in zip(axis_order, combo)
+            )
+            chunk_keys.append(chunk_key)
+            requested_lists = [desc["requested"] for desc in combo]
+            item_values = [
+                tuple(values) for values in itertools.product(*requested_lists)
+            ]
+            requested_items[chunk_key] = item_values
+        return chunk_keys, requested_items
+
+    def _build_item_map(
+        self, chunk_key: ChunkKey, chunk_output: Any
+    ) -> Dict[str, Any] | None:
+        if not isinstance(chunk_output, (list, tuple)):
+            return None
+        axis_values = list(self._iter_chunk_axis_values(chunk_key))
+        if len(axis_values) != len(chunk_output):
+            return None
+        return {
+            self._item_hash(chunk_key, values): output
+            for values, output in zip(axis_values, chunk_output)
+        }
+
+    def _extract_cached_items(
+        self,
+        payload: Mapping[str, Any],
+        chunk_key: ChunkKey,
+        requested_items: List[Tuple[Any, ...]],
+    ) -> List[Any] | None:
+        item_map = payload.get("items")
+        return self._extract_items_from_map(item_map, chunk_key, requested_items)
+
+    def _extract_items_from_map(
+        self,
+        item_map: Mapping[str, Any] | None,
+        chunk_key: ChunkKey,
+        requested_items: List[Tuple[Any, ...]],
+    ) -> List[Any] | None:
+        if item_map is None:
+            return None
+        outputs: List[Any] = []
+        for values in requested_items:
+            item_key = self._item_hash(chunk_key, values)
+            if item_key not in item_map:
+                return None
+            outputs.append(item_map[item_key])
+        return outputs
+
+    def _item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str:
+        payload = {
+            "axis_values": tuple(
+                (axis, value) for (axis, _), value in zip(chunk_key, axis_values)
+            ),
+            "version": self.cache_version,
+        }
+        data = _stable_serialize(payload)
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    def _iter_chunk_axis_values(self, chunk_key: ChunkKey) -> Sequence[Tuple[Any, ...]]:
+        axis_values = [values for _, values in chunk_key]
+        return list(itertools.product(*axis_values))
 
     def _resolve_axis_chunk_size(self, axis: str) -> int:
         spec = self.memo_chunk_spec.get(axis)
