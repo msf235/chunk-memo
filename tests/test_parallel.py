@@ -1,7 +1,8 @@
 import itertools
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 
-from swarm_memo import ChunkMemo, memo_parallel_run
+from swarm_memo import ChunkMemo, memo_parallel_run, memo_parallel_run_streaming
 
 
 def exec_fn(params, strat, s):
@@ -174,6 +175,44 @@ def test_parallel_run_populates_memo_cache():
         output, diag = memo.run(params, exec_fn)
         assert diag.executed_chunks == 0
         assert diag.cached_chunks == diag.total_chunks
+        assert _observed_items(output) == {
+            ("a", 1),
+            ("a", 2),
+            ("a", 3),
+            ("a", 4),
+            ("b", 1),
+            ("b", 2),
+            ("b", 3),
+            ("b", 4),
+        }
+
+
+def test_parallel_run_streaming_populates_cache():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        memo = ChunkMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 2},
+            split_spec=split_spec,
+        )
+
+        items = _item_dicts(split_spec)
+        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        with ProcessPoolExecutor(max_workers=2) as executor:
+            diag = memo_parallel_run_streaming(
+                memo,
+                items,
+                exec_fn=exec_fn,
+                cache_status=status,
+                map_fn=executor.map,
+                map_fn_kwargs={"chunksize": 1},
+            )
+
+        assert diag.executed_chunks == len(status["missing_chunks"])
+        output, diag2 = memo.run(params, exec_fn)
+        assert diag2.executed_chunks == 0
+        assert diag2.cached_chunks == diag2.total_chunks
         assert _observed_items(output) == {
             ("a", 1),
             ("a", 2),

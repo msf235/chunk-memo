@@ -80,7 +80,7 @@ print(diag)
 ## Module layout
 
 - `swarm_memo/memo.py`: memoization (ChunkMemo) and cache introspection.
-- `swarm_memo/parallel.py`: parallel wrapper utilities (currently ProcessPool).
+- `swarm_memo/bridge.py`: parallel wrapper utilities.
 - `swarm_memo/__init__.py`: re-exports public APIs.
 
 ## API overview
@@ -183,11 +183,11 @@ status["missing_chunk_indices"]
 ## Parallel wrapper
 
 The parallel wrapper is independent from memoization. It consumes cache metadata
-and delegates missing work to `ProcessPoolExecutor`, while already-cached chunks
-are handled locally.
+and delegates missing work to a user-supplied map function, while already-cached
+chunks are handled locally.
 
 ```python
-from swarm_memo import process_pool_parallel
+from swarm_memo import memo_parallel_run, memo_parallel_run_streaming
 
 status = exec_point.cache_status(
     params,
@@ -195,33 +195,55 @@ status = exec_point.cache_status(
     extra=2,
 )
 
-parallel_output, parallel_diag = process_pool_parallel(
-    status,
-    exec_fn,
-    params=params,
+parallel_output, parallel_diag = memo_parallel_run(
+    memo,
+    items,
+    exec_fn=exec_fn,
+    cache_status=status,
+)
+
+stream_diag = memo_parallel_run_streaming(
+    memo,
+    items,
+    exec_fn=exec_fn,
+    cache_status=status,
 )
 ```
 
 Parallel wrapper notes:
-- `process_pool_parallel` expects a `cache_status`-shaped dict.
-- Missing chunks are executed in a ProcessPool using chunk indices.
-- Cached chunks are executed locally to return the same nested output shape.
+- `memo_parallel_run` expects a `cache_status`-shaped dict.
+- Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
+- Cached chunks are loaded locally, with partial reuse when `items` is a subset.
 
-### process_pool_parallel
+### memo_parallel_run
 
 ```python
-process_pool_parallel(
-    cache_status: Mapping[str, Any],
-    exec_fn: Callable[..., Any],
+memo_parallel_run(
+    memo: ChunkMemo,
+    items: Iterable[Any],
     *,
-    params: dict[str, Any],
-    max_workers: int | None = None,
-    chunk_indices_to_axes: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
-) -> tuple[list[Any], ParallelDiagnostics]
+    exec_fn: Callable[..., Any],
+    cache_status: Mapping[str, Any],
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[List[Any]], Any] | None = None,
+) -> tuple[Any, Diagnostics]
 ```
 
-- `chunk_indices_to_axes` can be used to transform chunk index metadata into the
-  axis values expected by your execution function.
+### memo_parallel_run_streaming
+
+```python
+memo_parallel_run_streaming(
+    memo: ChunkMemo,
+    items: Iterable[Any],
+    *,
+    exec_fn: Callable[..., Any],
+    cache_status: Mapping[str, Any],
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[List[Any]], Any] | None = None,
+) -> Diagnostics
+```
 
 ## Caching behavior
 
