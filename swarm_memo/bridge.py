@@ -270,6 +270,8 @@ def memo_parallel_run(
             item_outputs.append(item_map[item_key])
         if item_outputs:
             diagnostics.cached_chunks += 1
+            if memo.verbose >= 1:
+                print(f"[ChunkMemo] load chunk={chunk_key} items={len(item_outputs)}")
             outputs.append(collate_fn(item_outputs))
 
     for chunk_key, chunk_items in zip(missing_chunks, missing_chunk_items):
@@ -315,6 +317,8 @@ def memo_parallel_run(
                 if "output" not in payload and chunk_output is not None:
                     payload["output"] = chunk_output
             _atomic_write_pickle(path, payload)
+            if memo.verbose >= 1:
+                print(f"[ChunkMemo] run chunk={chunk_key} items={chunk_size}")
             outputs.append(chunk_output)
             cursor += chunk_size
 
@@ -325,6 +329,13 @@ def memo_parallel_run(
         merged = outputs
     if not merged and item_list:
         merged = exec_outputs if missing_items else []
+    if memo.verbose >= 1:
+        print(
+            "[ChunkMemo] summary "
+            f"cached={diagnostics.cached_chunks} "
+            f"executed={diagnostics.executed_chunks} "
+            f"total={diagnostics.total_chunks}"
+        )
     return merged, diagnostics
 
 
@@ -418,6 +429,8 @@ def memo_parallel_run_streaming(
                 break
         if not missing:
             diagnostics.cached_chunks += 1
+            if memo.verbose >= 1:
+                print(f"[ChunkMemo] load chunk={chunk_key} items={len(chunk_items)}")
 
     for chunk_key, chunk_items in zip(missing_chunks, missing_chunk_items):
         if chunk_items:
@@ -462,6 +475,16 @@ def memo_parallel_run_streaming(
                 if "output" not in payload and chunk_output is not None:
                     payload["output"] = chunk_output
             _atomic_write_pickle(path, payload)
+            if memo.verbose >= 1:
+                print(f"[ChunkMemo] run chunk={chunk_key} items={chunk_size}")
             cursor += chunk_size
+
+    if memo.verbose >= 1:
+        print(
+            "[ChunkMemo] summary "
+            f"cached={diagnostics.cached_chunks} "
+            f"executed={diagnostics.executed_chunks} "
+            f"total={diagnostics.total_chunks}"
+        )
 
     return diagnostics
