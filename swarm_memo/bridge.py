@@ -245,7 +245,7 @@ def memo_parallel_run(
         if not chunk_items:
             continue
         chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
-        path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
+        path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         if not path.exists():
             _register_missing(chunk_key, chunk_items)
             continue
@@ -308,7 +308,7 @@ def memo_parallel_run(
                 chunk_outputs,
             )
             chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
-            path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
+            path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
             if chunk_key in missing_chunks:
                 payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
             else:
@@ -405,7 +405,7 @@ def memo_parallel_run_streaming(
         if not chunk_items:
             continue
         chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
-        path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
+        path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         if not path.exists():
             _register_missing(chunk_key, chunk_items)
             continue
@@ -466,7 +466,7 @@ def memo_parallel_run_streaming(
                 chunk_outputs,
             )
             chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
-            path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
+            path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
             if chunk_key in missing_chunks:
                 payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
             else:

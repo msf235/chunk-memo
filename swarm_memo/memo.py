@@ -13,6 +13,7 @@ ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
 MergeFn = Callable[[List[Any]], Any]
 AxisIndexMap = Dict[str, Dict[Any, int]]
+CachePathFn = Callable[[dict[str, Any], ChunkKey, str, str], Path | str]
 
 
 @dataclasses.dataclass
@@ -89,6 +90,7 @@ class ChunkMemo:
         merge_fn: MergeFn | None = None,
         memo_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
+        cache_path_fn: CachePathFn | None = None,
         cache_version: str = "v1",
         axis_order: Sequence[str] | None = None,
         verbose: int = 1,
@@ -102,6 +104,8 @@ class ChunkMemo:
             memo_chunk_enumerator: Optional chunk enumerator that defines the
                 memo chunk order.
             chunk_hash_fn: Optional override for chunk hashing.
+            cache_path_fn: Optional override for cache file paths. This hook is
+                experimental and not yet thoroughly tested.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order (defaults to lexicographic).
             split_spec: Canonical split spec for the cache.
@@ -113,6 +117,7 @@ class ChunkMemo:
         self.merge_fn = merge_fn
         self.memo_chunk_enumerator = memo_chunk_enumerator
         self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash
+        self.cache_path_fn = cache_path_fn
         self.cache_version = cache_version
         self.axis_order = tuple(axis_order) if axis_order is not None else None
         self.verbose = verbose
@@ -220,7 +225,7 @@ class ChunkMemo:
         missing_chunk_indices: List[Dict[str, Any]] = []
         for chunk_key in chunk_keys:
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
-            path = self.cache_root / f"{chunk_hash}.pkl"
+            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             indices = self._chunk_indices_from_key(chunk_key, index_format)
             if path.exists():
                 cached_chunks.append(chunk_key)
@@ -307,7 +312,7 @@ class ChunkMemo:
 
         for chunk_key in chunk_keys:
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
-            path = self.cache_root / f"{chunk_hash}.pkl"
+            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             if path.exists():
                 with open(path, "rb") as handle:
                     payload = pickle.load(handle)
@@ -396,7 +401,7 @@ class ChunkMemo:
 
         for chunk_key in chunk_keys:
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
-            path = self.cache_root / f"{chunk_hash}.pkl"
+            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             if path.exists():
                 if requested_items_by_chunk is None:
                     diagnostics.cached_chunks += 1
@@ -451,6 +456,17 @@ class ChunkMemo:
                 f"total={diagnostics.total_chunks}"
             )
         return diagnostics
+
+    def _resolve_cache_path(
+        self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
+    ) -> Path:
+        if self.cache_path_fn is None:
+            return self.cache_root / f"{chunk_hash}.pkl"
+        path = self.cache_path_fn(params, chunk_key, self.cache_version, chunk_hash)
+        path_obj = Path(path)
+        if path_obj.is_absolute():
+            return path_obj
+        return self.cache_root / path_obj
 
     def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:

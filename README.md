@@ -95,6 +95,7 @@ ChunkMemo(
     merge_fn: Callable[[list], Any] | None = None,
     memo_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
+    cache_path_fn: Callable[[dict, tuple, str, str], Path | str] | None = None,
     cache_version: str = "v1",
     axis_order: Sequence[str] | None = None,
     verbose: int = 1,
@@ -108,6 +109,8 @@ Notes:
   `run_wrap`/`streaming_wrap`.
 - `merge_fn` defaults to returning the list of chunk outputs.
 - `split_spec` defines the canonical grid for cache chunking.
+- `cache_path_fn` can be used to place cache files in nested directories.
+  This hook is experimental and not yet thoroughly tested.
 
 ### run
 
