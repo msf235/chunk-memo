@@ -1,28 +1,28 @@
 import itertools
 import tempfile
 
-from swarm_memo import ChunkMemo, memoized_map
+from swarm_memo import ChunkMemo, memo_parallel_run
 
 
 def exec_fn(params, strat, s):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        outputs.append({"alpha": params["alpha"], "strat": strat_value, "s": s_value})
-    return outputs
+    if isinstance(strat, (list, tuple)) and isinstance(s, (list, tuple)):
+        outputs = []
+        for strat_value, s_value in itertools.product(strat, s):
+            outputs.append(
+                {"alpha": params["alpha"], "strat": strat_value, "s": s_value}
+            )
+        return outputs
+    return {"alpha": params["alpha"], "strat": strat, "s": s}
 
 
-def index_fn(item):
-    return {"strat": item[0], "s": item[1]}
-
-
-def item_to_axes(item, split_spec):
+def _item_from_index(item, split_spec):
     return {
-        "strat": [split_spec["strat"][item[0]]],
-        "s": [split_spec["s"][item[1]]],
+        "strat": split_spec["strat"][item[0]],
+        "s": split_spec["s"][item[1]],
     }
 
 
-def test_memoized_map_preserves_order():
+def test_memo_parallel_run_returns_requested_points():
     params = {"alpha": 0.4}
     split_spec = {"strat": ["a", "b"], "s": [1, 2, 3]}
     items = [(0, 0), (1, 2), (0, 1), (1, 0)]
@@ -36,23 +36,23 @@ def test_memoized_map_preserves_order():
         )
         memo.run(params, {"strat": ["a"], "s": [1, 2, 3]})
         memo._set_split_spec(split_spec)
-        memoized_exec = memo.run_wrap()(exec_fn)
 
-        status = memoized_exec.cache_status(
-            params, axis_indices={"strat": range(0, 2), "s": slice(0, 3)}
-        )
-        outputs = memoized_map(
-            status,
-            memoized_exec,
-            items,
-            params=params,
-            index_fn=index_fn,
-            item_to_axes=lambda item: item_to_axes(item, split_spec),
-            use_processes=False,
+        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        outputs, diag = memo_parallel_run(
+            memo,
+            [_item_from_index(item, split_spec) for item in items],
+            cache_status=status,
+            map_fn_kwargs={"chunksize": 1},
+            map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
-    expected = [
-        exec_fn(params, strat=[split_spec["strat"][i]], s=[split_spec["s"][j]])
-        for i, j in items
-    ]
-    assert outputs == expected
+    assert diag.executed_chunks == len(status["missing_chunks"])
+    expected = {(split_spec["strat"][i], split_spec["s"][j]) for i, j in items}
+    flattened = []
+    for chunk in outputs:
+        if isinstance(chunk, list):
+            flattened.extend(chunk)
+        else:
+            flattened.append(chunk)
+    observed = {(item["strat"], item["s"]) for item in flattened}
+    assert observed == expected

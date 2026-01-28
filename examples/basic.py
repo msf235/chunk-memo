@@ -48,7 +48,6 @@ def main():
     wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3, 4])
     print("Wrapped output:", wrapped_output)
     print("Wrapped diagnostics:", wrapped_diag)
-    breakpoint()
 
     indexed_output, indexed_diag = memoized_exec(
         params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}

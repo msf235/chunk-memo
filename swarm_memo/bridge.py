@@ -161,6 +161,21 @@ def _expand_items_to_chunks(
     return chunked
 
 
+def _build_item_map_for_chunk(
+    memo: ChunkMemo,
+    chunk_key: ChunkKey,
+    chunk_items: Sequence[Any],
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+    outputs: Sequence[Any],
+) -> dict[str, Any]:
+    item_map: dict[str, Any] = {}
+    for item, output in zip(chunk_items, outputs):
+        axis_values = axis_extractor(item)
+        item_key = memo._item_hash(chunk_key, axis_values)
+        item_map[item_key] = output
+    return item_map
+
+
 def memo_parallel_run(
     memo: ChunkMemo,
     items: Iterable[Any],
@@ -189,31 +204,76 @@ def memo_parallel_run(
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
 
-    for chunk_key in cached_chunks:
-        chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
-        path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
-        if not path.exists():
-            continue
-        diagnostics.cached_chunks += 1
-        with open(path, "rb") as handle:
-            outputs.append(pickle.load(handle)["output"])
-
     item_list = _ensure_iterable(items)
     if not item_list:
         return [], diagnostics
     axis_extractor = _build_item_axis_extractor(memo, cache_status, item_list)
-    missing_items = [
-        item
-        for item in item_list
-        if any(
-            _chunk_key_matches_axes(axis_extractor(item), key) for key in missing_chunks
-        )
-    ]
+
+    cached_chunk_items = _expand_items_to_chunks(
+        item_list,
+        cached_chunks,
+        axis_extractor,
+    )
+    missing_chunk_items = _expand_items_to_chunks(
+        item_list,
+        missing_chunks,
+        axis_extractor,
+    )
+
+    missing_items: List[Any] = []
+    missing_items_by_chunk: dict[ChunkKey, List[Any]] = {}
+    missing_chunk_order: List[ChunkKey] = []
+    cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
+
+    def _register_missing(chunk_key: ChunkKey, items_to_add: List[Any]) -> None:
+        if not items_to_add:
+            return
+        if chunk_key not in missing_items_by_chunk:
+            missing_items_by_chunk[chunk_key] = []
+            missing_chunk_order.append(chunk_key)
+        missing_items_by_chunk[chunk_key].extend(items_to_add)
+        missing_items.extend(items_to_add)
+
+    for chunk_key, chunk_items in zip(cached_chunks, cached_chunk_items):
+        if not chunk_items:
+            continue
+        chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
+        path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
+        if not path.exists():
+            _register_missing(chunk_key, chunk_items)
+            continue
+        with open(path, "rb") as handle:
+            payload = pickle.load(handle)
+        item_map = payload.get("items")
+        if item_map is None:
+            item_map = memo._build_item_map(chunk_key, payload.get("output"))
+        if item_map is None:
+            cached_payloads[chunk_key] = payload
+            _register_missing(chunk_key, chunk_items)
+            continue
+        item_outputs: List[Any] = []
+        for item in chunk_items:
+            axis_values = axis_extractor(item)
+            item_key = memo._item_hash(chunk_key, axis_values)
+            if item_key not in item_map:
+                cached_payloads[chunk_key] = payload
+                _register_missing(chunk_key, chunk_items)
+                item_outputs = []
+                break
+            item_outputs.append(item_map[item_key])
+        if item_outputs:
+            diagnostics.cached_chunks += 1
+            outputs.append(collate_fn(item_outputs))
+
+    for chunk_key, chunk_items in zip(missing_chunks, missing_chunk_items):
+        if chunk_items:
+            _register_missing(chunk_key, chunk_items)
+
     if not missing_items and missing_chunks:
         missing_items = item_list
 
     if missing_items:
-        diagnostics.executed_chunks = len(missing_chunks)
+        diagnostics.executed_chunks = len(missing_chunk_order)
         exec_fn = functools.partial(_exec_with_item, memo.exec_fn, params_dict)
         exec_outputs = list(
             map_fn(
@@ -223,19 +283,32 @@ def memo_parallel_run(
             )
         )
 
-        chunked_items = _expand_items_to_chunks(
-            missing_items,
-            missing_chunks,
-            axis_extractor,
-        )
         cursor = 0
-        for chunk_key, chunk_items in zip(missing_chunks, chunked_items):
+        for chunk_key in missing_chunk_order:
+            chunk_items = missing_items_by_chunk.get(chunk_key, [])
             chunk_size = len(chunk_items)
-            chunk_output = collate_fn(exec_outputs[cursor : cursor + chunk_size])
+            if chunk_size == 0:
+                continue
+            chunk_outputs = exec_outputs[cursor : cursor + chunk_size]
+            chunk_output = collate_fn(chunk_outputs)
+            item_map = _build_item_map_for_chunk(
+                memo,
+                chunk_key,
+                chunk_items,
+                axis_extractor,
+                chunk_outputs,
+            )
             chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
             path = Path(memo.cache_root) / f"{chunk_hash}.pkl"
+            if chunk_key in missing_chunks:
+                payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
+            else:
+                payload = dict(cached_payloads.get(chunk_key, {}))
+                payload["items"] = {**payload.get("items", {}), **item_map}
+                if "output" not in payload and chunk_output is not None:
+                    payload["output"] = chunk_output
             with open(path, "wb") as handle:
-                pickle.dump({"output": chunk_output}, handle, protocol=5)
+                pickle.dump(payload, handle, protocol=5)
             outputs.append(chunk_output)
             cursor += chunk_size
 
