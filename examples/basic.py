@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from swarm_memo import ChunkMemo, memo_parallel_run
 
 
@@ -24,11 +26,13 @@ def merge_fn(chunks):
 
 
 def main():
+    output_root = Path("output")
+    output_root.mkdir(exist_ok=True)
     params = {"alpha": 0.4}
     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
     memo = ChunkMemo(
-        cache_root="./memo_run_cache",
+        cache_root=output_root / "memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
         exec_fn=exec_fn,
         merge_fn=merge_fn,
@@ -57,15 +61,14 @@ def main():
     print("Cached indices:", status["cached_chunk_indices"])
     print("Missing indices:", status["missing_chunk_indices"])
 
-    points = [("aaa", 1), ("bb", 4), ("aaa", 2)]
+    items = [("aaa", 1), ("bb", 4), ("aaa", 2)]
     bridge_output, bridge_diag = memo_parallel_run(
         memo,
-        params,
-        points,
+        items,
         cache_status=memo.cache_status(
             params, strat=split_spec["strat"], s=split_spec["s"]
         ),
-        map_fn=lambda func, items, **kwargs: [func(point) for point in items],
+        map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         map_fn_kwargs={"chunksize": 1},
     )
     print("Bridge output:", bridge_output)
@@ -73,13 +76,10 @@ def main():
 
     from concurrent.futures import ProcessPoolExecutor
 
-    breakpoint()
-
     with ProcessPoolExecutor(max_workers=4) as executor:
         pooled_output, pooled_diag = memo_parallel_run(
             memo,
-            params,
-            points,
+            items,
             cache_status=memo.cache_status(
                 params, strat=split_spec["strat"], s=split_spec["s"]
             ),

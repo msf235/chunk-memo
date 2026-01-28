@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from swarm_memo import ChunkMemo
 
 
@@ -19,8 +21,10 @@ def merge_fn(chunks):
 
 
 def main():
+    output_root = Path("output")
+    output_root.mkdir(exist_ok=True)
     memo = ChunkMemo(
-        cache_root="./memo_cache",
+        cache_root=output_root / "memo_cache",
         memo_chunk_spec={"strat": 1, "s": 2},
         exec_fn=exec_fn,
         merge_fn=merge_fn,

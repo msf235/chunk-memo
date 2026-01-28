@@ -25,19 +25,18 @@ def test_memo_parallel_run_caches_missing_points():
         )
 
         params = {"alpha": 0.4}
-        points = [("a", 1), ("b", 4), ("a", 2)]
+        items = [("a", 1), ("b", 4), ("a", 2)]
         cache_status = memo.cache_status(
             params, strat=split_spec["strat"], s=split_spec["s"]
         )
 
         output, diag = memo_parallel_run(
             memo,
-            params,
-            points,
+            items,
             cache_status=cache_status,
             collate_fn=collate_fn,
             map_fn_kwargs={"chunksize": 1},
-            map_fn=lambda func, items, **kwargs: [func(point) for point in items],
+            map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
         assert diag.executed_chunks == len(cache_status["missing_chunks"])

@@ -206,6 +206,7 @@ class ChunkMemo:
                 missing_chunks.append(chunk_key)
                 missing_chunk_indices.append(indices)
         return {
+            "params": params,
             "axis_values": split_spec,
             "total_chunks": len(chunk_keys),
             "cached_chunks": cached_chunks,
