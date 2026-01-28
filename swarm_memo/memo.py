@@ -6,6 +6,7 @@ import itertools
 import os
 import pickle
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
 
@@ -79,6 +80,28 @@ def _atomic_write_pickle(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if tmp_path is not None and tmp_path.exists():
             tmp_path.unlink()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _build_cache_meta(
+    existing_meta: Mapping[str, Any] | None,
+    chunk_key: ChunkKey,
+    chunk_hash: str,
+    cache_version: str,
+) -> dict[str, Any]:
+    created_at = None if existing_meta is None else existing_meta.get("created_at")
+    if created_at is None:
+        created_at = _now_iso()
+    return {
+        "created_at": created_at,
+        "updated_at": _now_iso(),
+        "chunk_hash": chunk_hash,
+        "cache_version": cache_version,
+        "chunk_key": chunk_key,
+    }
 
 
 class ChunkMemo:
@@ -350,6 +373,16 @@ class ChunkMemo:
             item_map = self._build_item_map(chunk_key, chunk_output)
             if item_map is not None:
                 payload["items"] = item_map
+            existing_meta = None
+            if path.exists():
+                with open(path, "rb") as handle:
+                    existing_meta = pickle.load(handle).get("meta")
+            payload["meta"] = _build_cache_meta(
+                existing_meta,
+                chunk_key,
+                chunk_hash,
+                self.cache_version,
+            )
             _atomic_write_pickle(path, payload)
 
             if requested_items_by_chunk is None:
@@ -437,6 +470,16 @@ class ChunkMemo:
             item_map = self._build_item_map(chunk_key, chunk_output)
             if item_map is not None:
                 payload["items"] = item_map
+            existing_meta = None
+            if path.exists():
+                with open(path, "rb") as handle:
+                    existing_meta = pickle.load(handle).get("meta")
+            payload["meta"] = _build_cache_meta(
+                existing_meta,
+                chunk_key,
+                chunk_hash,
+                self.cache_version,
+            )
             _atomic_write_pickle(path, payload)
             if self.verbose >= 1:
                 if requested_items_by_chunk is None:

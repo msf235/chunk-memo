@@ -6,7 +6,13 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple
 
-from .memo import ChunkKey, ChunkMemo, Diagnostics, _atomic_write_pickle
+from .memo import (
+    ChunkKey,
+    ChunkMemo,
+    Diagnostics,
+    _atomic_write_pickle,
+    _build_cache_meta,
+)
 
 
 @dataclasses.dataclass
@@ -309,6 +315,12 @@ def memo_parallel_run(
             )
             chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
             path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
+            existing_meta = None
+            if chunk_key in cached_payloads:
+                existing_meta = cached_payloads[chunk_key].get("meta")
+            elif path.exists():
+                with open(path, "rb") as handle:
+                    existing_meta = pickle.load(handle).get("meta")
             if chunk_key in missing_chunks:
                 payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
             else:
@@ -316,6 +328,12 @@ def memo_parallel_run(
                 payload["items"] = {**payload.get("items", {}), **item_map}
                 if "output" not in payload and chunk_output is not None:
                     payload["output"] = chunk_output
+            payload["meta"] = _build_cache_meta(
+                existing_meta,
+                chunk_key,
+                chunk_hash,
+                memo.cache_version,
+            )
             _atomic_write_pickle(path, payload)
             if memo.verbose >= 1:
                 print(f"[ChunkMemo] run chunk={chunk_key} items={chunk_size}")
@@ -467,6 +485,12 @@ def memo_parallel_run_streaming(
             )
             chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
             path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
+            existing_meta = None
+            if chunk_key in cached_payloads:
+                existing_meta = cached_payloads[chunk_key].get("meta")
+            elif path.exists():
+                with open(path, "rb") as handle:
+                    existing_meta = pickle.load(handle).get("meta")
             if chunk_key in missing_chunks:
                 payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
             else:
@@ -474,6 +498,12 @@ def memo_parallel_run_streaming(
                 payload["items"] = {**payload.get("items", {}), **item_map}
                 if "output" not in payload and chunk_output is not None:
                     payload["output"] = chunk_output
+            payload["meta"] = _build_cache_meta(
+                existing_meta,
+                chunk_key,
+                chunk_hash,
+                memo.cache_version,
+            )
             _atomic_write_pickle(path, payload)
             if memo.verbose >= 1:
                 print(f"[ChunkMemo] run chunk={chunk_key} items={chunk_size}")

@@ -251,6 +251,7 @@ memo_parallel_run_streaming(
 ## Caching behavior
 
 - Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.
+- Cache files include a `meta` payload with timestamps and chunk metadata.
 - Chunks are sharded for disk efficiency, but lookups can return subsets of a
   chunk when you request fewer axis values.
 - Changing split values creates new chunks automatically.
