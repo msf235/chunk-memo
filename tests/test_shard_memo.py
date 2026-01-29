@@ -210,6 +210,29 @@ def test_run_wrap_duplicate_params_arg():
             )
 
 
+def test_run_axis_indices_range_slice():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        memo = run_memo(temp_dir, split_spec=split_spec)
+        params = {"alpha": 0.4}
+
+        output, diag = memo.run(
+            params,
+            exec_fn,
+            axis_indices={"strat": range(0, 1), "s": slice(1, 3)},
+        )
+        assert diag.executed_chunks == 1
+        observed = {(item["strat"], item["s"]) for item in output}
+        assert observed == {("a", 2), ("a", 3)}
+
+        diag2 = memo.run_streaming(
+            params,
+            exec_fn,
+            axis_indices={"strat": range(0, 1), "s": slice(1, 3)},
+        )
+        assert diag2.executed_chunks == 0
+
+
 def test_memo_chunk_enumerator_order():
     memo_chunk_spec = {"strat": 1, "s": 2}
 

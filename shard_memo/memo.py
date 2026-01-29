@@ -108,20 +108,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _build_cache_meta(
-    existing_meta: Mapping[str, Any] | None,
+def _build_chunk_index_entry(
+    existing_entry: Mapping[str, Any] | None,
     chunk_key: ChunkKey,
-    chunk_hash: str,
-    cache_version: str,
 ) -> dict[str, Any]:
-    created_at = None if existing_meta is None else existing_meta.get("created_at")
+    created_at = None if existing_entry is None else existing_entry.get("created_at")
     if created_at is None:
         created_at = _now_iso()
     return {
         "created_at": created_at,
         "updated_at": _now_iso(),
-        "chunk_hash": chunk_hash,
-        "cache_version": cache_version,
         "chunk_key": chunk_key,
     }
 
@@ -212,13 +208,19 @@ class ShardMemo:
     def run_wrap(
         self, *, params_arg: str = "params"
     ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
-        """Decorator for running memoized execution with output."""
+        """Decorator for running memoized execution with output.
+
+        Supports axis selection by value or by index via axis_indices.
+        """
         return self._build_wrapper(params_arg=params_arg, streaming=False)
 
     def streaming_wrap(
         self, *, params_arg: str = "params"
     ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
-        """Decorator for streaming memoized execution to disk only."""
+        """Decorator for streaming memoized execution to disk only.
+
+        Supports axis selection by value or by index via axis_indices.
+        """
         return self._build_wrapper(params_arg=params_arg, streaming=True)
 
     def _build_wrapper(
@@ -293,6 +295,11 @@ class ShardMemo:
         axis_indices: Mapping[str, Any] | None = None,
         **axes: Any,
     ) -> dict[str, Any]:
+        """Return cached vs missing chunk info for a subset of axes.
+
+        axis_indices selects axes by index (int, slice, range, or list/tuple of
+        those), based on the canonical split spec order.
+        """
         if self._split_spec is None:
             raise ValueError("split_spec must be set before checking cache status")
         if axis_indices is not None and axes:
@@ -335,6 +342,11 @@ class ShardMemo:
         axis_indices: Mapping[str, Any] | None = None,
         **axes: Any,
     ) -> Tuple[Any, Diagnostics]:
+        """Run memoized execution over the canonical grid or a subset.
+
+        axis_indices selects axes by index (int, slice, range, or list/tuple of
+        those), based on the canonical split spec order.
+        """
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
         self.write_metadata(params)
@@ -367,6 +379,11 @@ class ShardMemo:
         axis_indices: Mapping[str, Any] | None = None,
         **axes: Any,
     ) -> Diagnostics:
+        """Run streaming memoized execution without returning outputs.
+
+        axis_indices selects axes by index (int, slice, range, or list/tuple of
+        those), based on the canonical split spec order.
+        """
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
         self.write_metadata(params)
@@ -465,17 +482,11 @@ class ShardMemo:
             item_map = self._build_item_map(chunk_key, chunk_output)
             if item_map is not None:
                 payload["items"] = item_map
-            existing_meta = None
-            if path.exists():
-                with open(path, "rb") as handle:
-                    existing_meta = pickle.load(handle).get("meta")
-            payload["meta"] = _build_cache_meta(
-                existing_meta,
-                chunk_key,
-                chunk_hash,
-                self.cache_version,
-            )
+            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
+            if item_spec is not None:
+                payload["spec"] = item_spec
             _atomic_write_pickle(path, payload)
+            self._update_chunk_index(params, chunk_hash, chunk_key)
 
             if requested_items_by_chunk is None:
                 if self.verbose >= 2:
@@ -586,17 +597,11 @@ class ShardMemo:
             item_map = self._build_item_map(chunk_key, chunk_output)
             if item_map is not None:
                 payload["items"] = item_map
-            existing_meta = None
-            if path.exists():
-                with open(path, "rb") as handle:
-                    existing_meta = pickle.load(handle).get("meta")
-            payload["meta"] = _build_cache_meta(
-                existing_meta,
-                chunk_key,
-                chunk_hash,
-                self.cache_version,
-            )
+            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
+            if item_spec is not None:
+                payload["spec"] = item_spec
             _atomic_write_pickle(path, payload)
+            self._update_chunk_index(params, chunk_hash, chunk_key)
             if self.verbose >= 2:
                 if requested_items_by_chunk is None:
                     print(f"[ShardMemo] run chunk={chunk_key} items=all")
@@ -629,6 +634,33 @@ class ShardMemo:
         if path_obj.is_absolute():
             return path_obj
         return memo_root / path_obj
+
+    def _chunk_index_path(self, params: dict[str, Any]) -> Path:
+        return self._memo_root(params) / "chunks_index.json"
+
+    def _load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        path = self._chunk_index_path(params)
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def _update_chunk_index(
+        self,
+        params: dict[str, Any],
+        chunk_hash: str,
+        chunk_key: ChunkKey,
+    ) -> None:
+        index = self._load_chunk_index(params)
+        entry = _build_chunk_index_entry(index.get(chunk_hash), chunk_key)
+        index[chunk_hash] = entry
+        _atomic_write_json(self._chunk_index_path(params), index)
 
     def _normalized_hash_params(self, params: dict[str, Any]) -> dict[str, Any]:
         if not self._split_spec:
@@ -743,6 +775,7 @@ class ShardMemo:
     def _normalize_axis_indices(
         self, axis_indices: Mapping[str, Any]
     ) -> dict[str, List[Any]]:
+        """Normalize axis_indices into axis values using canonical split order."""
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
         split_spec: dict[str, List[Any]] = {}
@@ -940,6 +973,21 @@ class ShardMemo:
             self._item_hash(chunk_key, values): output
             for values, output in zip(axis_values, chunk_output)
         }
+
+    def _build_item_spec_map(
+        self, chunk_key: ChunkKey, chunk_output: Any
+    ) -> Dict[str, dict[str, Any]] | None:
+        if not isinstance(chunk_output, (list, tuple)):
+            return None
+        axis_values = list(self._iter_chunk_axis_values(chunk_key))
+        if len(axis_values) != len(chunk_output):
+            return None
+        axis_names = [axis for axis, _ in chunk_key]
+        item_spec: Dict[str, dict[str, Any]] = {}
+        for values in axis_values:
+            item_key = self._item_hash(chunk_key, values)
+            item_spec[item_key] = dict(zip(axis_names, values))
+        return item_spec
 
     def _extract_cached_items(
         self,

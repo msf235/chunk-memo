@@ -254,7 +254,9 @@ memo_parallel_run_streaming(
 - Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.
 - Cache files live under a memo directory hashed from params, split spec, and
   chunk spec, with a `metadata.json` file for memo-level context.
-- Cache files include a `meta` payload with timestamps and chunk metadata.
+- Cache files include a `spec` payload keyed by item hash, describing per-item
+  axis values.
+- Chunk-level timestamps live in `chunks_index.json` under the memo directory.
 - Chunks are sharded for disk efficiency, but lookups can return subsets of a
   chunk when you request fewer axis values.
 - Changing split values creates new chunks automatically.
