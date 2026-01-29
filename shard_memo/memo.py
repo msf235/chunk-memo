@@ -3,6 +3,7 @@ import functools
 import hashlib
 import inspect
 import itertools
+import json
 import os
 import pickle
 import tempfile
@@ -84,6 +85,25 @@ def _atomic_write_pickle(path: Path, payload: dict[str, Any]) -> None:
             tmp_path.unlink()
 
 
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            delete=False,
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            encoding="utf-8",
+        ) as handle:
+            tmp_path = Path(handle.name)
+            json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -114,6 +134,35 @@ def _format_progress(
     filled = int(width * processed / total)
     bar = "=" * filled + "-" * (width - filled)
     return f"[ShardMemo] progress {processed}/{total} [{bar}] cached={cached}"
+
+
+def _format_axis_values(values: Any) -> str:
+    if isinstance(values, (list, tuple)):
+        if len(values) <= 4:
+            inner = ", ".join(repr(value) for value in values)
+            return f"[{inner}]"
+        head = ", ".join(repr(value) for value in values[:2])
+        tail = ", ".join(repr(value) for value in values[-2:])
+        return f"[{head}, ..., {tail}]"
+    return repr(values)
+
+
+def _format_params(params: Mapping[str, Any]) -> List[str]:
+    lines = ["[ShardMemo] params:"]
+    if not params:
+        lines.append("  (none)")
+        return lines
+    for key, value in params.items():
+        lines.append(f"  {key}={value!r}")
+    return lines
+
+
+def _format_spec(split_spec: Mapping[str, Any], axis_order: Sequence[str]) -> List[str]:
+    lines = ["[ShardMemo] spec:"]
+    for axis in axis_order:
+        values = split_spec.get(axis)
+        lines.append(f"  {axis}={_format_axis_values(values)}")
+    return lines
 
 
 class ShardMemo:
@@ -259,7 +308,7 @@ class ShardMemo:
         missing_chunks: List[ChunkKey] = []
         missing_chunk_indices: List[Dict[str, Any]] = []
         for chunk_key in chunk_keys:
-            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
+            chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             indices = self._chunk_indices_from_key(chunk_key, index_format)
             if path.exists():
@@ -288,8 +337,11 @@ class ShardMemo:
     ) -> Tuple[Any, Diagnostics]:
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
+        self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
+            if self.verbose == 1:
+                self._print_run_header(params, self._split_spec, chunk_keys)
             return self._run_chunks(params, chunk_keys, exec_fn)
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
@@ -298,6 +350,8 @@ class ShardMemo:
         else:
             split_spec = self._normalize_axes(axes)
         chunk_keys, requested_items = self._build_chunk_plan_for_axes(split_spec)
+        if self.verbose == 1:
+            self._print_run_header(params, split_spec, chunk_keys)
         return self._run_chunks(
             params,
             chunk_keys,
@@ -315,8 +369,11 @@ class ShardMemo:
     ) -> Diagnostics:
         if self._split_spec is None:
             raise ValueError("split_spec must be set before running memoized function")
+        self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
+            if self.verbose == 1:
+                self._print_run_header(params, self._split_spec, chunk_keys)
             return self._run_chunks_streaming(params, chunk_keys, exec_fn)
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
@@ -325,6 +382,8 @@ class ShardMemo:
         else:
             split_spec = self._normalize_axes(axes)
         chunk_keys, requested_items = self._build_chunk_plan_for_axes(split_spec)
+        if self.verbose == 1:
+            self._print_run_header(params, split_spec, chunk_keys)
         return self._run_chunks_streaming(
             params,
             chunk_keys,
@@ -365,7 +424,7 @@ class ShardMemo:
             print(message, end="\n" if final else "\r", flush=True)
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
-            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
+            chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             if path.exists():
                 with open(path, "rb") as handle:
@@ -488,7 +547,7 @@ class ShardMemo:
             print(message, end="\n" if final else "\r", flush=True)
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
-            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
+            chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             if path.exists():
                 if requested_items_by_chunk is None:
@@ -562,13 +621,85 @@ class ShardMemo:
     def _resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
     ) -> Path:
+        memo_root = self._memo_root(params)
         if self.cache_path_fn is None:
-            return self.cache_root / f"{chunk_hash}.pkl"
+            return memo_root / "chunks" / f"{chunk_hash}.pkl"
         path = self.cache_path_fn(params, chunk_key, self.cache_version, chunk_hash)
         path_obj = Path(path)
         if path_obj.is_absolute():
             return path_obj
-        return self.cache_root / path_obj
+        return memo_root / path_obj
+
+    def _normalized_hash_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        if not self._split_spec:
+            return params
+        return {
+            key: value for key, value in params.items() if key not in self._split_spec
+        }
+
+    def _chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
+        normalized = self._normalized_hash_params(params)
+        return self.chunk_hash_fn(normalized, chunk_key, self.cache_version)
+
+    def _memo_hash(self, params: dict[str, Any]) -> str:
+        payload = {
+            "params": self._normalized_hash_params(params),
+            "split_spec": self._split_spec,
+            "memo_chunk_spec": self.memo_chunk_spec,
+            "cache_version": self.cache_version,
+            "axis_order": self.axis_order,
+        }
+        data = _stable_serialize(payload)
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    def _memo_root(self, params: dict[str, Any]) -> Path:
+        return self.cache_root / self._memo_hash(params)
+
+    def write_metadata(self, params: dict[str, Any]) -> Path:
+        memo_root = self._memo_root(params)
+        path = memo_root / "metadata.json"
+        existing_meta = None
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    existing_meta = json.load(handle)
+            except json.JSONDecodeError:
+                existing_meta = None
+        created_at = None if existing_meta is None else existing_meta.get("created_at")
+        if created_at is None:
+            created_at = _now_iso()
+        payload = {
+            "created_at": created_at,
+            "updated_at": _now_iso(),
+            "params": self._normalized_hash_params(params),
+            "split_spec": self._split_spec,
+            "memo_chunk_spec": self.memo_chunk_spec,
+            "cache_version": self.cache_version,
+            "axis_order": self.axis_order,
+            "memo_hash": self._memo_hash(params),
+        }
+        _atomic_write_json(path, payload)
+        return path
+
+    def _print_run_header(
+        self,
+        params: dict[str, Any],
+        split_spec: Mapping[str, Any],
+        chunk_keys: Sequence[ChunkKey],
+    ) -> None:
+        axis_order = self._resolve_axis_order(dict(split_spec))
+        cached_count = 0
+        for chunk_key in chunk_keys:
+            chunk_hash = self._chunk_hash(params, chunk_key)
+            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
+            if path.exists():
+                cached_count += 1
+        execute_count = len(chunk_keys) - cached_count
+        lines = []
+        lines.extend(_format_params(params))
+        lines.extend(_format_spec(split_spec, axis_order))
+        lines.append(f"[ShardMemo] plan: cached={cached_count} execute={execute_count}")
+        print("\n".join(lines))
 
     def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:

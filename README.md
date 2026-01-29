@@ -109,7 +109,8 @@ Notes:
   `run_wrap`/`streaming_wrap`.
 - `merge_fn` defaults to returning the list of chunk outputs.
 - `split_spec` defines the canonical grid for cache chunking.
-- `cache_path_fn` can be used to place cache files in nested directories.
+- `cache_path_fn` can be used to place cache files in nested directories. Paths
+  are resolved under the memo-specific cache directory.
   This hook is experimental and not yet thoroughly tested.
 
 ### run
@@ -251,6 +252,8 @@ memo_parallel_run_streaming(
 ## Caching behavior
 
 - Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.
+- Cache files live under a memo directory hashed from params, split spec, and
+  chunk spec, with a `metadata.json` file for memo-level context.
 - Cache files include a `meta` payload with timestamps and chunk metadata.
 - Chunks are sharded for disk efficiency, but lookups can return subsets of a
   chunk when you request fewer axis values.

@@ -101,8 +101,8 @@ def test_incremental_split_extension():
         memo = run_memo(temp_dir, split_spec=split_spec)
         _, diag2 = memo.run(params, exec_fn)
         assert diag2.total_chunks == 2
-        assert diag2.cached_chunks == 1
-        assert diag2.executed_chunks == 1
+        assert diag2.cached_chunks == 0
+        assert diag2.executed_chunks == 2
 
 
 def test_param_change_invalidates_cache():

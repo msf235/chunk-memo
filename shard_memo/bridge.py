@@ -256,6 +256,37 @@ def _build_item_map_for_chunk(
     return item_map
 
 
+def _format_axis_values(values: Any) -> str:
+    if isinstance(values, (list, tuple)):
+        if len(values) <= 4:
+            inner = ", ".join(repr(value) for value in values)
+            return f"[{inner}]"
+        head = ", ".join(repr(value) for value in values[:2])
+        tail = ", ".join(repr(value) for value in values[-2:])
+        return f"[{head}, ..., {tail}]"
+    return repr(values)
+
+
+def _format_params(params: Mapping[str, Any]) -> List[str]:
+    lines = ["[ShardMemo] params:"]
+    if not params:
+        lines.append("  (none)")
+        return lines
+    for key, value in params.items():
+        lines.append(f"  {key}={value!r}")
+    return lines
+
+
+def _format_spec(
+    axis_values: Mapping[str, Any], axis_order: Sequence[str]
+) -> List[str]:
+    lines = ["[ShardMemo] spec:"]
+    for axis in axis_order:
+        values = axis_values.get(axis)
+        lines.append(f"  {axis}={_format_axis_values(values)}")
+    return lines
+
+
 def memo_parallel_run(
     memo: ShardMemo,
     items: Iterable[Any],
@@ -273,6 +304,7 @@ def memo_parallel_run(
     if not isinstance(params, Mapping):
         raise ValueError("cache_status must include params")
     params_dict: dict[str, Any] = dict(params)
+    memo.write_metadata(params_dict)
 
     cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
     missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
@@ -298,6 +330,18 @@ def memo_parallel_run(
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
+
+    if memo.verbose == 1:
+        axis_values = cache_status.get("axis_values")
+        if isinstance(axis_values, Mapping):
+            axis_order = _resolve_axis_order(memo, axis_values)
+            lines = []
+            lines.extend(_format_params(params_dict))
+            lines.extend(_format_spec(axis_values, axis_order))
+            lines.append(
+                f"[ShardMemo] plan: cached={len(cached_chunks)} execute={len(missing_chunks)}"
+            )
+            print("\n".join(lines))
 
     item_list = _ensure_iterable(items)
     if not item_list:
@@ -346,7 +390,7 @@ def memo_parallel_run(
         if not chunk_items:
             report_progress_main(processed, final=processed == total_chunks)
             continue
-        chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
+        chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         if not path.exists():
             _register_missing(chunk_key, chunk_items)
@@ -435,7 +479,7 @@ def memo_parallel_run(
                 axis_extractor,
                 chunk_outputs,
             )
-            chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
+            chunk_hash = memo._chunk_hash(params_dict, chunk_key)
             path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
             existing_meta = None
             if chunk_key in cached_payloads:
@@ -500,6 +544,7 @@ def memo_parallel_run_streaming(
     if not isinstance(params, Mapping):
         raise ValueError("cache_status must include params")
     params_dict: dict[str, Any] = dict(params)
+    memo.write_metadata(params_dict)
 
     cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
     missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
@@ -523,6 +568,18 @@ def memo_parallel_run_streaming(
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
+
+    if memo.verbose == 1:
+        axis_values = cache_status.get("axis_values")
+        if isinstance(axis_values, Mapping):
+            axis_order = _resolve_axis_order(memo, axis_values)
+            lines = []
+            lines.extend(_format_params(params_dict))
+            lines.extend(_format_spec(axis_values, axis_order))
+            lines.append(
+                f"[ShardMemo] plan: cached={len(cached_chunks)} execute={len(missing_chunks)}"
+            )
+            print("\n".join(lines))
 
     item_list = _ensure_iterable(items)
     if not item_list:
@@ -571,7 +628,7 @@ def memo_parallel_run_streaming(
         if not chunk_items:
             report_progress_streaming(processed, final=processed == total_chunks)
             continue
-        chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
+        chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         if not path.exists():
             _register_missing(chunk_key, chunk_items)
@@ -661,7 +718,7 @@ def memo_parallel_run_streaming(
                 axis_extractor,
                 chunk_outputs,
             )
-            chunk_hash = memo.chunk_hash_fn(params_dict, chunk_key, memo.cache_version)
+            chunk_hash = memo._chunk_hash(params_dict, chunk_key)
             path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
             existing_meta = None
             if chunk_key in cached_payloads:
