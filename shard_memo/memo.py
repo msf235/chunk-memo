@@ -13,6 +13,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
 
+from ._format import (
+    chunk_key_size,
+    format_params,
+    format_rate_eta,
+    format_spec,
+    print_detail,
+    print_progress,
+)
+
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
 MergeFn = Callable[[List[Any]], Any]
@@ -110,6 +119,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _apply_payload_timestamps(
+    payload: dict[str, Any],
+    existing: Mapping[str, Any] | None = None,
+) -> None:
+    now = _now_iso()
+    created_at = None if existing is None else existing.get("created_at")
+    if created_at is None:
+        created_at = now
+    payload["created_at"] = created_at
+    payload["updated_at"] = now
+
+
 def _build_chunk_index_entry(
     existing_entry: Mapping[str, Any] | None,
     chunk_key: ChunkKey,
@@ -132,101 +153,6 @@ def _format_progress(
     filled = int(width * processed / total)
     bar = "=" * filled + "-" * (width - filled)
     return f"[ShardMemo] progress {processed}/{total} [{bar}] cached={cached}"
-
-
-def _format_eta(seconds: float) -> str:
-    if seconds < 0 or not math.isfinite(seconds):
-        return "--:--:--"
-    total = int(seconds)
-    hours = total // 3600
-    minutes = (total % 3600) // 60
-    secs = total % 60
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-
-def _format_rate_eta(
-    label: str,
-    processed: int,
-    total: int,
-    start_time: float,
-    *,
-    rate_processed: int | None = None,
-    rate_total: int | None = None,
-) -> str:
-    elapsed = max(time.monotonic() - start_time, 1e-6)
-    if rate_processed is None:
-        rate_processed = processed
-    if rate_total is None:
-        rate_total = total
-    rate = rate_processed / elapsed
-    percent = 100.0 if total <= 0 else (processed / total * 100.0)
-    remaining = 0 if rate_total <= 0 else max(rate_total - rate_processed, 0)
-    eta = remaining / rate if rate > 0 else float("inf")
-    return (
-        f"[ShardMemo] {label} {processed}/{total} "
-        f"({percent:0.1f}%) rate={rate:0.1f}/s ETA={_format_eta(eta)}"
-    )
-
-
-_progress_state = {"last_len": 0, "last_msg": ""}
-
-
-def _print_progress(message: str, *, final: bool) -> None:
-    if final:
-        print(message, end="\n", flush=True)
-        _progress_state["last_len"] = 0
-        _progress_state["last_msg"] = ""
-        return
-    pad = max(_progress_state["last_len"] - len(message), 0)
-    print(message + (" " * pad), end="\r", flush=True)
-    _progress_state["last_len"] = len(message)
-    _progress_state["last_msg"] = message
-
-
-def _print_detail(message: str) -> None:
-    last_len = _progress_state.get("last_len", 0)
-    last_msg = _progress_state.get("last_msg", "")
-    if last_len:
-        print()
-    print(message)
-    if last_msg:
-        print(last_msg, end="\r", flush=True)
-        _progress_state["last_len"] = len(last_msg)
-
-
-def _chunk_key_size(chunk_key: ChunkKey) -> int:
-    if not chunk_key:
-        return 0
-    return math.prod(len(values) for _, values in chunk_key)
-
-
-def _format_axis_values(values: Any) -> str:
-    if isinstance(values, (list, tuple)):
-        if len(values) <= 4:
-            inner = ", ".join(repr(value) for value in values)
-            return f"[{inner}]"
-        head = ", ".join(repr(value) for value in values[:2])
-        tail = ", ".join(repr(value) for value in values[-2:])
-        return f"[{head}, ..., {tail}]"
-    return repr(values)
-
-
-def _format_params(params: Mapping[str, Any]) -> List[str]:
-    lines = ["[ShardMemo] params:"]
-    if not params:
-        lines.append("  (none)")
-        return lines
-    for key, value in params.items():
-        lines.append(f"  {key}={value!r}")
-    return lines
-
-
-def _format_spec(split_spec: Mapping[str, Any], axis_order: Sequence[str]) -> List[str]:
-    lines = ["[ShardMemo] spec:"]
-    for axis in axis_order:
-        values = split_spec.get(axis)
-        lines.append(f"  {axis}={_format_axis_values(values)}")
-    return lines
 
 
 class ShardMemo:
@@ -509,7 +435,7 @@ class ShardMemo:
         total_chunks = len(chunk_keys)
         progress_step = max(1, total_chunks // 50)
         start_time = time.monotonic()
-        total_items = sum(_chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+        total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
         processed_items = 0
 
         def report_progress(processed: int, final: bool = False) -> None:
@@ -521,28 +447,30 @@ class ShardMemo:
                 and processed != total_chunks
             ):
                 return
-            message = _format_rate_eta(
+            message = format_rate_eta(
                 "planning",
                 processed_items,
                 total_items,
                 start_time,
             )
-            _print_progress(message, final=final)
+            print_progress(message, final=final)
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
             chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
-            processed_items += _chunk_key_size(chunk_key)
+            processed_items += chunk_key_size(chunk_key)
+            existing_payload: Mapping[str, Any] | None = None
             if path.exists():
                 with open(path, "rb") as handle:
                     payload = pickle.load(handle)
+                existing_payload = payload
                 requested_items = None
                 if requested_items_by_chunk is not None:
                     requested_items = requested_items_by_chunk.get(chunk_key)
                 if requested_items is None:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
-                        _print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+                        print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
                     outputs.append(payload["output"])
                     report_progress(processed, final=processed == total_chunks)
                     continue
@@ -554,7 +482,7 @@ class ShardMemo:
                 if cached_outputs is not None:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
-                        _print_detail(
+                        print_detail(
                             f"[ShardMemo] load chunk={chunk_key} items={len(requested_items)}"
                         )
                     outputs.append(cached_outputs)
@@ -575,22 +503,23 @@ class ShardMemo:
             item_spec = self._build_item_spec_map(chunk_key, chunk_output)
             if item_spec is not None:
                 payload["spec"] = item_spec
+            _apply_payload_timestamps(payload, existing=existing_payload)
             _atomic_write_pickle(path, payload)
             self._update_chunk_index(params, chunk_hash, chunk_key)
 
             if requested_items_by_chunk is None:
                 if self.verbose >= 2:
-                    _print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
+                    print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
                 outputs.append(chunk_output)
             else:
                 requested_items = requested_items_by_chunk.get(chunk_key)
                 if requested_items is None:
                     if self.verbose >= 2:
-                        _print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
+                        print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
                     outputs.append(chunk_output)
                 else:
                     if self.verbose >= 2:
-                        _print_detail(
+                        print_detail(
                             f"[ShardMemo] run chunk={chunk_key} items={len(requested_items)}"
                         )
                     extracted = self._extract_items_from_map(
@@ -608,7 +537,7 @@ class ShardMemo:
         else:
             merged = outputs
         if self.verbose >= 2:
-            _print_detail(
+            print_detail(
                 "[ShardMemo] summary "
                 f"cached={diagnostics.cached_chunks} "
                 f"executed={diagnostics.executed_chunks} "
@@ -630,7 +559,7 @@ class ShardMemo:
         total_chunks = len(chunk_keys)
         progress_step = max(1, total_chunks // 50)
         start_time = time.monotonic()
-        total_items = sum(_chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+        total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
         processed_items = 0
 
         def report_progress(processed: int, final: bool = False) -> None:
@@ -642,27 +571,29 @@ class ShardMemo:
                 and processed != total_chunks
             ):
                 return
-            message = _format_rate_eta(
+            message = format_rate_eta(
                 "planning",
                 processed_items,
                 total_items,
                 start_time,
             )
-            _print_progress(message, final=final)
+            print_progress(message, final=final)
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
             chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
-            processed_items += _chunk_key_size(chunk_key)
+            processed_items += chunk_key_size(chunk_key)
+            existing_payload: Mapping[str, Any] | None = None
             if path.exists():
                 if requested_items_by_chunk is None:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
-                        _print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+                        print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
                     report_progress(processed, final=processed == total_chunks)
                     continue
                 with open(path, "rb") as handle:
                     payload = pickle.load(handle)
+                existing_payload = payload
                 item_map = payload.get("items")
                 if item_map is None:
                     item_map = self._build_item_map(chunk_key, payload.get("output"))
@@ -676,7 +607,7 @@ class ShardMemo:
                         item_count = (
                             "all" if requested_items is None else len(requested_items)
                         )
-                        _print_detail(
+                        print_detail(
                             f"[ShardMemo] load chunk={chunk_key} items={item_count}"
                         )
                     report_progress(processed, final=processed == total_chunks)
@@ -696,24 +627,25 @@ class ShardMemo:
             item_spec = self._build_item_spec_map(chunk_key, chunk_output)
             if item_spec is not None:
                 payload["spec"] = item_spec
+            _apply_payload_timestamps(payload, existing=existing_payload)
             _atomic_write_pickle(path, payload)
             self._update_chunk_index(params, chunk_hash, chunk_key)
             if self.verbose >= 2:
                 if requested_items_by_chunk is None:
-                    _print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
+                    print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
                 else:
                     requested_items = requested_items_by_chunk.get(chunk_key)
                     item_count = (
                         "all" if requested_items is None else len(requested_items)
                     )
-                    _print_detail(
+                    print_detail(
                         f"[ShardMemo] run chunk={chunk_key} items={item_count}"
                     )
 
             report_progress(processed, final=processed == total_chunks)
 
         if self.verbose >= 2:
-            _print_detail(
+            print_detail(
                 "[ShardMemo] summary "
                 f"cached={diagnostics.cached_chunks} "
                 f"executed={diagnostics.executed_chunks} "
@@ -830,8 +762,8 @@ class ShardMemo:
                 cached_count += 1
         execute_count = len(chunk_keys) - cached_count
         lines = []
-        lines.extend(_format_params(params))
-        lines.extend(_format_spec(split_spec, axis_order))
+        lines.extend(format_params(params))
+        lines.extend(format_spec(split_spec, axis_order))
         lines.append(f"[ShardMemo] plan: cached={cached_count} execute={execute_count}")
         print("\n".join(lines))
 

@@ -1,5 +1,4 @@
 import itertools
-import itertools
 import tempfile
 import time
 
@@ -7,12 +6,7 @@ import pytest
 
 from shard_memo import ShardMemo
 
-
-def exec_fn(params, strat, s):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        outputs.append({"alpha": params["alpha"], "strat": strat_value, "s": s_value})
-    return outputs
+from .utils import exec_fn_grid
 
 
 def exec_fn_sleep(params, strat, s):
@@ -58,13 +52,6 @@ def exec_point_extra_param(params, strat, s, extra=2):
     return outputs
 
 
-def exec_point_basic(params, strat, s):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        outputs.append({"alpha": params["alpha"], "strat": strat_value, "s": s_value})
-    return outputs
-
-
 def run_memo(cache_root, *, merge=True, chunk_spec=None, split_spec):
     return ShardMemo(
         cache_root=cache_root,
@@ -94,12 +81,12 @@ def test_incremental_split_extension():
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, split_spec=split_spec)
-        _, diag = memo.run(params, exec_fn)
+        _, diag = memo.run(params, exec_fn_grid)
         assert diag.total_chunks == 1
 
         split_spec = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, split_spec=split_spec)
-        _, diag2 = memo.run(params, exec_fn)
+        _, diag2 = memo.run(params, exec_fn_grid)
         assert diag2.total_chunks == 2
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 2
@@ -109,10 +96,10 @@ def test_param_change_invalidates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, split_spec=split_spec)
-        _, diag = memo.run({"alpha": 0.4}, exec_fn)
+        _, diag = memo.run({"alpha": 0.4}, exec_fn_grid)
         assert diag.executed_chunks == 1
 
-        _, diag2 = memo.run({"alpha": 0.5}, exec_fn)
+        _, diag2 = memo.run({"alpha": 0.5}, exec_fn_grid)
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 1
 
@@ -122,7 +109,7 @@ def test_chunk_count_grid():
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b", "c"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, split_spec=split_spec)
-        _, diag = memo.run(params, exec_fn)
+        _, diag = memo.run(params, exec_fn_grid)
         assert diag.total_chunks == 6
         assert diag.executed_chunks == 6
 
@@ -132,7 +119,7 @@ def test_merge_fn_optional_returns_nested():
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, merge=False, split_spec=split_spec)
-        output, diag = memo.run(params, exec_fn)
+        output, diag = memo.run(params, exec_fn_grid)
         assert diag.total_chunks == 2
         assert isinstance(output, list)
         assert isinstance(output[0], list)
@@ -155,7 +142,7 @@ def test_run_wrap_executes_with_split_spec():
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, split_spec=split_spec)
 
-        exec_point = memo.run_wrap()(exec_point_basic)
+        exec_point = memo.run_wrap()(exec_fn_grid)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
@@ -196,7 +183,7 @@ def test_run_wrap_duplicate_params_arg():
         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, split_spec=split_spec)
 
-        exec_point = memo.run_wrap()(exec_point_basic)
+        exec_point = memo.run_wrap()(exec_fn_grid)
         params = {"alpha": 0.4}
         with pytest.raises(ValueError, match="both positional and keyword"):
             exec_point(params, params=params, strat=["a"], s=[1, 2, 3])
@@ -218,7 +205,7 @@ def test_run_axis_indices_range_slice():
 
         output, diag = memo.run(
             params,
-            exec_fn,
+            exec_fn_grid,
             axis_indices={"strat": range(0, 1), "s": slice(1, 3)},
         )
         assert diag.executed_chunks == 1
@@ -227,7 +214,7 @@ def test_run_axis_indices_range_slice():
 
         diag2 = memo.run_streaming(
             params,
-            exec_fn,
+            exec_fn_grid,
             axis_indices={"strat": range(0, 1), "s": slice(1, 3)},
         )
         assert diag2.executed_chunks == 0
@@ -322,7 +309,7 @@ def test_streaming_diagnostics_bound_memory():
         )
 
         params = {"alpha": 0.4}
-        diag = memo.run_streaming(params, exec_fn)
+        diag = memo.run_streaming(params, exec_fn_grid)
 
         assert diag.executed_chunks == 3
         assert diag.max_stream_items == 2
