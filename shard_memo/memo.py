@@ -168,17 +168,30 @@ def _format_rate_eta(
     )
 
 
-_progress_state = {"last_len": 0}
+_progress_state = {"last_len": 0, "last_msg": ""}
 
 
 def _print_progress(message: str, *, final: bool) -> None:
     if final:
         print(message, end="\n", flush=True)
         _progress_state["last_len"] = 0
+        _progress_state["last_msg"] = ""
         return
     pad = max(_progress_state["last_len"] - len(message), 0)
     print(message + (" " * pad), end="\r", flush=True)
     _progress_state["last_len"] = len(message)
+    _progress_state["last_msg"] = message
+
+
+def _print_detail(message: str) -> None:
+    last_len = _progress_state.get("last_len", 0)
+    last_msg = _progress_state.get("last_msg", "")
+    if last_len:
+        print()
+    print(message)
+    if last_msg:
+        print(last_msg, end="\r", flush=True)
+        _progress_state["last_len"] = len(last_msg)
 
 
 def _chunk_key_size(chunk_key: ChunkKey) -> int:
@@ -371,7 +384,7 @@ class ShardMemo:
         chunk_keys = self._build_chunk_keys_for_axes(split_spec)
         chunk_index = self._load_chunk_index(params)
         use_index = bool(chunk_index)
-        if self.profile and self.verbose == 1 and profile_start is not None:
+        if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
                 f"[ShardMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
             )
@@ -393,7 +406,7 @@ class ShardMemo:
             else:
                 missing_chunks.append(chunk_key)
                 missing_chunk_indices.append(indices)
-        if self.profile and self.verbose == 1 and profile_start is not None:
+        if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
                 f"[ShardMemo] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
             )
@@ -529,7 +542,7 @@ class ShardMemo:
                 if requested_items is None:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
-                        print(f"[ShardMemo] load chunk={chunk_key} items=all")
+                        _print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
                     outputs.append(payload["output"])
                     report_progress(processed, final=processed == total_chunks)
                     continue
@@ -541,7 +554,7 @@ class ShardMemo:
                 if cached_outputs is not None:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
-                        print(
+                        _print_detail(
                             f"[ShardMemo] load chunk={chunk_key} items={len(requested_items)}"
                         )
                     outputs.append(cached_outputs)
@@ -567,17 +580,17 @@ class ShardMemo:
 
             if requested_items_by_chunk is None:
                 if self.verbose >= 2:
-                    print(f"[ShardMemo] run chunk={chunk_key} items=all")
+                    _print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
                 outputs.append(chunk_output)
             else:
                 requested_items = requested_items_by_chunk.get(chunk_key)
                 if requested_items is None:
                     if self.verbose >= 2:
-                        print(f"[ShardMemo] run chunk={chunk_key} items=all")
+                        _print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
                     outputs.append(chunk_output)
                 else:
                     if self.verbose >= 2:
-                        print(
+                        _print_detail(
                             f"[ShardMemo] run chunk={chunk_key} items={len(requested_items)}"
                         )
                     extracted = self._extract_items_from_map(
@@ -595,7 +608,7 @@ class ShardMemo:
         else:
             merged = outputs
         if self.verbose >= 2:
-            print(
+            _print_detail(
                 "[ShardMemo] summary "
                 f"cached={diagnostics.cached_chunks} "
                 f"executed={diagnostics.executed_chunks} "
@@ -645,7 +658,7 @@ class ShardMemo:
                 if requested_items_by_chunk is None:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
-                        print(f"[ShardMemo] load chunk={chunk_key} items=all")
+                        _print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
                     report_progress(processed, final=processed == total_chunks)
                     continue
                 with open(path, "rb") as handle:
@@ -663,7 +676,9 @@ class ShardMemo:
                         item_count = (
                             "all" if requested_items is None else len(requested_items)
                         )
-                        print(f"[ShardMemo] load chunk={chunk_key} items={item_count}")
+                        _print_detail(
+                            f"[ShardMemo] load chunk={chunk_key} items={item_count}"
+                        )
                     report_progress(processed, final=processed == total_chunks)
                     continue
 
@@ -685,18 +700,20 @@ class ShardMemo:
             self._update_chunk_index(params, chunk_hash, chunk_key)
             if self.verbose >= 2:
                 if requested_items_by_chunk is None:
-                    print(f"[ShardMemo] run chunk={chunk_key} items=all")
+                    _print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
                 else:
                     requested_items = requested_items_by_chunk.get(chunk_key)
                     item_count = (
                         "all" if requested_items is None else len(requested_items)
                     )
-                    print(f"[ShardMemo] run chunk={chunk_key} items={item_count}")
+                    _print_detail(
+                        f"[ShardMemo] run chunk={chunk_key} items={item_count}"
+                    )
 
             report_progress(processed, final=processed == total_chunks)
 
         if self.verbose >= 2:
-            print(
+            _print_detail(
                 "[ShardMemo] summary "
                 f"cached={diagnostics.cached_chunks} "
                 f"executed={diagnostics.executed_chunks} "
