@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import inspect
+import math
 import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -162,6 +163,12 @@ def _chunk_key_matches_axes(axis_values: Tuple[Any, ...], chunk_key: ChunkKey) -
     return True
 
 
+def _chunk_key_size(chunk_key: ChunkKey) -> int:
+    if not chunk_key:
+        return 0
+    return math.prod(len(values) for _, values in chunk_key)
+
+
 def _expand_items_to_chunks_slow(
     items: Sequence[Any],
     chunk_keys: Sequence[ChunkKey],
@@ -317,6 +324,14 @@ def memo_parallel_run(
 
     cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
     missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
+    chunk_index = memo._load_chunk_index(params_dict)
+    use_index = bool(chunk_index)
+    chunk_index = memo._load_chunk_index(params_dict)
+    use_index = bool(chunk_index)
+    chunk_index = memo._load_chunk_index(params_dict)
+    use_index = bool(chunk_index)
+    chunk_index = memo._load_chunk_index(params_dict)
+    use_index = bool(chunk_index)
 
     outputs: List[Any] = []
     exec_outputs: List[Any] = []
@@ -339,6 +354,16 @@ def memo_parallel_run(
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
+
+    profile_start = time.monotonic()
+
+    profile_start = time.monotonic()
+
+    profile_start = time.monotonic()
+
+    profile_start = time.monotonic()
+
+    profile_start = time.monotonic()
 
     if memo.verbose == 1:
         axis_values = cache_status.get("axis_values")
@@ -399,6 +424,7 @@ def memo_parallel_run(
         if not chunk_items:
             report_progress_main(processed, final=processed == total_chunks)
             continue
+        full_chunk = len(chunk_items) == _chunk_key_size(chunk_key)
         chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         if not path.exists():
@@ -406,6 +432,13 @@ def memo_parallel_run(
             continue
         with open(path, "rb") as handle:
             payload = pickle.load(handle)
+        if full_chunk:
+            diagnostics.cached_chunks += 1
+            if memo.verbose >= 2:
+                print(f"[ShardMemo] load chunk={chunk_key} items=all")
+            outputs.append(payload["output"])
+            report_progress_main(processed, final=processed == total_chunks)
+            continue
         item_map = payload.get("items")
         if item_map is None:
             item_map = memo._build_item_map(chunk_key, payload.get("output"))
@@ -550,6 +583,7 @@ def memo_parallel_run_streaming(
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[List[Any]], Any] | None = None,
 ) -> Diagnostics:
+    profile_start = time.monotonic()
     if map_fn is None:
         map_fn = _progress_map_fn if memo.verbose == 1 else _default_map_fn
 
@@ -558,13 +592,21 @@ def memo_parallel_run_streaming(
         raise ValueError("cache_status must include params")
     params_dict: dict[str, Any] = dict(params)
     memo.write_metadata(params_dict)
+    if memo.verbose == 1:
+        print(f"[ShardMemo] profile metadata_s={time.monotonic() - profile_start:0.3f}")
 
     cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
     missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
+    chunk_index = memo._load_chunk_index(params_dict)
+    use_index = bool(chunk_index)
 
     diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
     total_chunks = diagnostics.total_chunks
     progress_step = max(1, total_chunks // 50)
+    if memo.verbose == 1:
+        print(
+            f"[ShardMemo] profile cache_status_s={time.monotonic() - profile_start:0.3f}"
+        )
 
     def report_progress_streaming(processed: int, final: bool = False) -> None:
         if memo.verbose != 1:
@@ -582,6 +624,8 @@ def memo_parallel_run_streaming(
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
 
+    profile_start = time.monotonic()
+
     if memo.verbose == 1:
         axis_values = cache_status.get("axis_values")
         if isinstance(axis_values, Mapping):
@@ -597,12 +641,20 @@ def memo_parallel_run_streaming(
     item_list = _ensure_iterable(items)
     if not item_list:
         return diagnostics
+    if memo.verbose == 1:
+        print(
+            f"[ShardMemo] profile items_list_s={time.monotonic() - profile_start:0.3f}"
+        )
     axis_extractor = _build_item_axis_extractor(
         memo,
         cache_status,
         item_list,
         exec_fn,
     )
+    if memo.verbose == 1:
+        print(
+            f"[ShardMemo] profile axis_extractor_s={time.monotonic() - profile_start:0.3f}"
+        )
 
     cached_chunk_items = _expand_items_to_chunks_fast(
         memo,
@@ -618,6 +670,10 @@ def memo_parallel_run_streaming(
         missing_chunks,
         axis_extractor,
     )
+    if memo.verbose == 1:
+        print(
+            f"[ShardMemo] profile expand_chunks_s={time.monotonic() - profile_start:0.3f}"
+        )
 
     missing_items: List[Any] = []
     missing_item_keys: List[ChunkKey] = []
@@ -641,11 +697,23 @@ def memo_parallel_run_streaming(
         if not chunk_items:
             report_progress_streaming(processed, final=processed == total_chunks)
             continue
+        full_chunk = len(chunk_items) == _chunk_key_size(chunk_key)
         chunk_hash = memo._chunk_hash(params_dict, chunk_key)
-        path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
-        if not path.exists():
+        if use_index:
+            exists = chunk_hash in chunk_index
+        else:
+            path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
+            exists = path.exists()
+        if not exists:
             _register_missing(chunk_key, chunk_items)
             continue
+        if full_chunk:
+            diagnostics.cached_chunks += 1
+            if memo.verbose >= 2:
+                print(f"[ShardMemo] load chunk={chunk_key} items=all")
+            report_progress_streaming(processed, final=processed == total_chunks)
+            continue
+        path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         with open(path, "rb") as handle:
             payload = pickle.load(handle)
         item_map = payload.get("items")
@@ -669,6 +737,10 @@ def memo_parallel_run_streaming(
             if memo.verbose >= 2:
                 print(f"[ShardMemo] load chunk={chunk_key} items={len(chunk_items)}")
         report_progress_streaming(processed, final=processed == total_chunks)
+    if memo.verbose == 1:
+        print(
+            f"[ShardMemo] profile cached_scan_s={time.monotonic() - profile_start:0.3f}"
+        )
 
     base_index = len(cached_chunks)
     for offset, (chunk_key, chunk_items) in enumerate(
@@ -679,6 +751,10 @@ def memo_parallel_run_streaming(
         report_progress_streaming(
             base_index + offset,
             final=(base_index + offset) == total_chunks,
+        )
+    if memo.verbose == 1:
+        print(
+            f"[ShardMemo] profile missing_map_s={time.monotonic() - profile_start:0.3f}"
         )
 
     if not missing_items and missing_chunks:
@@ -705,7 +781,7 @@ def memo_parallel_run_streaming(
             if memo.verbose == 1 and (now - last_report) >= report_interval:
                 cached_total = diagnostics.cached_chunks + diagnostics.stream_flushes
                 message = (
-                    f"[ShardMemo] exec_chunks {diagnostics.stream_flushes}/{diagnostics.executed_chunks} "
+                    f"[ShardMemo] exec_chunks {cached_total}/{diagnostics.total_chunks} "
                     f"cached={cached_total}"
                 )
                 print(message, end="\r", flush=True)
@@ -758,7 +834,7 @@ def memo_parallel_run_streaming(
         if memo.verbose == 1:
             cached_total = diagnostics.cached_chunks + diagnostics.stream_flushes
             message = (
-                f"[ShardMemo] exec_chunks {diagnostics.stream_flushes}/{diagnostics.executed_chunks} "
+                f"[ShardMemo] exec_chunks {cached_total}/{diagnostics.total_chunks} "
                 f"cached={cached_total}"
             )
             print(message, end="\n", flush=True)

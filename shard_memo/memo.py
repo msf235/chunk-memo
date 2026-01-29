@@ -7,6 +7,7 @@ import json
 import os
 import pickle
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
@@ -300,6 +301,7 @@ class ShardMemo:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order.
         """
+        profile_start = time.monotonic()
         if self._split_spec is None:
             raise ValueError("split_spec must be set before checking cache status")
         if axis_indices is not None and axes:
@@ -310,20 +312,34 @@ class ShardMemo:
             split_spec = self._normalize_axes(axes)
         index_format = self._infer_index_format(axis_indices)
         chunk_keys = self._build_chunk_keys_for_axes(split_spec)
+        chunk_index = self._load_chunk_index(params)
+        use_index = bool(chunk_index)
+        if self.verbose == 1:
+            print(
+                f"[ShardMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
+            )
         cached_chunks: List[ChunkKey] = []
         cached_chunk_indices: List[Dict[str, Any]] = []
         missing_chunks: List[ChunkKey] = []
         missing_chunk_indices: List[Dict[str, Any]] = []
         for chunk_key in chunk_keys:
             chunk_hash = self._chunk_hash(params, chunk_key)
-            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             indices = self._chunk_indices_from_key(chunk_key, index_format)
-            if path.exists():
+            if use_index:
+                exists = chunk_hash in chunk_index
+            else:
+                path = self._resolve_cache_path(params, chunk_key, chunk_hash)
+                exists = path.exists()
+            if exists:
                 cached_chunks.append(chunk_key)
                 cached_chunk_indices.append(indices)
             else:
                 missing_chunks.append(chunk_key)
                 missing_chunk_indices.append(indices)
+        if self.verbose == 1:
+            print(
+                f"[ShardMemo] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
+            )
         return {
             "params": params,
             "axis_values": split_spec,
@@ -720,11 +736,15 @@ class ShardMemo:
         chunk_keys: Sequence[ChunkKey],
     ) -> None:
         axis_order = self._resolve_axis_order(dict(split_spec))
+        chunk_index = self._load_chunk_index(params)
+        use_index = bool(chunk_index)
         cached_count = 0
         for chunk_key in chunk_keys:
             chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
-            if path.exists():
+            if (use_index and chunk_hash in chunk_index) or (
+                not use_index and path.exists()
+            ):
                 cached_count += 1
         execute_count = len(chunk_keys) - cached_count
         lines = []
