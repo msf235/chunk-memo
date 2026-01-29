@@ -36,6 +36,7 @@ def _default_map_fn(
 ) -> List[Any]:
     max_workers = kwargs.get("max_workers")
     chunksize = kwargs.get("chunksize")
+    print(kwargs)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         if chunksize is None:
             return list(executor.map(func, items))
@@ -167,6 +168,53 @@ def _chunk_key_size(chunk_key: ChunkKey) -> int:
     if not chunk_key:
         return 0
     return math.prod(len(values) for _, values in chunk_key)
+
+
+def _format_eta(seconds: float) -> str:
+    if seconds < 0 or not math.isfinite(seconds):
+        return "--:--:--"
+    total = int(seconds)
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _format_rate_eta(
+    label: str,
+    processed: int,
+    total: int,
+    start_time: float,
+    *,
+    rate_processed: int | None = None,
+    rate_total: int | None = None,
+) -> str:
+    elapsed = max(time.monotonic() - start_time, 1e-6)
+    if rate_processed is None:
+        rate_processed = processed
+    if rate_total is None:
+        rate_total = total
+    rate = rate_processed / elapsed
+    percent = 100.0 if total <= 0 else (processed / total * 100.0)
+    remaining = 0 if rate_total <= 0 else max(rate_total - rate_processed, 0)
+    eta = remaining / rate if rate > 0 else float("inf")
+    return (
+        f"[ShardMemo] {label} {processed}/{total} "
+        f"({percent:0.1f}%) rate={rate:0.1f}/s ETA={_format_eta(eta)}"
+    )
+
+
+_progress_state = {"last_len": 0}
+
+
+def _print_progress(message: str, *, final: bool) -> None:
+    if final:
+        print(message, end="\n", flush=True)
+        _progress_state["last_len"] = 0
+        return
+    pad = max(_progress_state["last_len"] - len(message), 0)
+    print(message + (" " * pad), end="\r", flush=True)
+    _progress_state["last_len"] = len(message)
 
 
 def _expand_items_to_chunks_slow(
@@ -326,12 +374,6 @@ def memo_parallel_run(
     missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
     chunk_index = memo._load_chunk_index(params_dict)
     use_index = bool(chunk_index)
-    chunk_index = memo._load_chunk_index(params_dict)
-    use_index = bool(chunk_index)
-    chunk_index = memo._load_chunk_index(params_dict)
-    use_index = bool(chunk_index)
-    chunk_index = memo._load_chunk_index(params_dict)
-    use_index = bool(chunk_index)
 
     outputs: List[Any] = []
     exec_outputs: List[Any] = []
@@ -339,31 +381,10 @@ def memo_parallel_run(
     total_chunks = diagnostics.total_chunks
     progress_step = max(1, total_chunks // 50)
 
-    def report_progress_main(processed: int, final: bool = False) -> None:
-        if memo.verbose != 1:
-            return
-        if not final and processed % progress_step != 0 and processed != total_chunks:
-            return
-        message = (
-            f"[ShardMemo] planning {processed}/{total_chunks} "
-            f"cached={diagnostics.cached_chunks}"
-        )
-        print(message, end="\n" if final else "\r", flush=True)
-
     if collate_fn is None:
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
-
-    profile_start = time.monotonic()
-
-    profile_start = time.monotonic()
-
-    profile_start = time.monotonic()
-
-    profile_start = time.monotonic()
-
-    profile_start = time.monotonic()
 
     if memo.verbose == 1:
         axis_values = cache_status.get("axis_values")
@@ -380,6 +401,23 @@ def memo_parallel_run(
     item_list = _ensure_iterable(items)
     if not item_list:
         return [], diagnostics
+    total_items = len(item_list)
+    planning_start = time.monotonic()
+    processed_items = 0
+
+    def report_progress_main(processed: int, final: bool = False) -> None:
+        if memo.verbose != 1:
+            return
+        if not final and processed % progress_step != 0 and processed != total_chunks:
+            return
+        message = _format_rate_eta(
+            "planning",
+            processed_items,
+            total_items,
+            planning_start,
+        )
+        _print_progress(message, final=final)
+
     axis_extractor = _build_item_axis_extractor(
         memo,
         cache_status,
@@ -401,7 +439,6 @@ def memo_parallel_run(
         missing_chunks,
         axis_extractor,
     )
-
     missing_items: List[Any] = []
     missing_item_keys: List[ChunkKey] = []
     missing_items_by_chunk: dict[ChunkKey, List[Any]] = {}
@@ -424,6 +461,7 @@ def memo_parallel_run(
         if not chunk_items:
             report_progress_main(processed, final=processed == total_chunks)
             continue
+        processed_items += len(chunk_items)
         full_chunk = len(chunk_items) == _chunk_key_size(chunk_key)
         chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
@@ -469,6 +507,7 @@ def memo_parallel_run(
     ):
         if chunk_items:
             _register_missing(chunk_key, chunk_items)
+        processed_items += len(chunk_items)
         report_progress_main(
             base_index + offset,
             final=(base_index + offset) == total_chunks,
@@ -486,34 +525,37 @@ def memo_parallel_run(
             **map_fn_kwargs,
         )
         exec_outputs = []
-        total_chunks = len(missing_chunk_order)
-        completed_chunks = 0
-        chunk_counts: dict[ChunkKey, int] = {}
-        expected_counts = {
-            chunk_key: len(items) for chunk_key, items in missing_items_by_chunk.items()
-        }
+        total_items_all = len(item_list)
+        cached_items_total = total_items_all - len(missing_items)
+        exec_start = time.monotonic()
         last_report = time.monotonic()
         report_interval = 2.0
         for index, result in enumerate(exec_iter, start=1):
             exec_outputs.append(result)
             now = time.monotonic()
-            chunk_key = missing_item_keys[index - 1]
-            chunk_counts[chunk_key] = chunk_counts.get(chunk_key, 0) + 1
-            if chunk_counts[chunk_key] == expected_counts[chunk_key]:
-                completed_chunks += 1
             if memo.verbose == 1 and (now - last_report) >= report_interval:
-                message = (
-                    f"[ShardMemo] exec_chunks {completed_chunks}/{total_chunks} "
-                    f"cached={diagnostics.cached_chunks}"
+                processed_items = cached_items_total + index
+                message = _format_rate_eta(
+                    "exec_items",
+                    processed_items,
+                    total_items_all,
+                    exec_start,
+                    rate_processed=index,
+                    rate_total=len(missing_items),
                 )
-                print(message, end="\r", flush=True)
+                _print_progress(message, final=False)
                 last_report = now
         if memo.verbose == 1:
-            message = (
-                f"[ShardMemo] exec_chunks {completed_chunks}/{total_chunks} "
-                f"cached={diagnostics.cached_chunks}"
+            processed_items = cached_items_total + len(missing_items)
+            message = _format_rate_eta(
+                "exec_items",
+                processed_items,
+                total_items_all,
+                exec_start,
+                rate_processed=len(missing_items),
+                rate_total=len(missing_items),
             )
-            print(message, end="\n", flush=True)
+            _print_progress(message, final=True)
 
         cursor = 0
         for chunk_key in missing_chunk_order:
@@ -583,7 +625,7 @@ def memo_parallel_run_streaming(
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[List[Any]], Any] | None = None,
 ) -> Diagnostics:
-    profile_start = time.monotonic()
+    profile_start = time.monotonic() if memo.profile else None
     if map_fn is None:
         map_fn = _progress_map_fn if memo.verbose == 1 else _default_map_fn
 
@@ -592,7 +634,7 @@ def memo_parallel_run_streaming(
         raise ValueError("cache_status must include params")
     params_dict: dict[str, Any] = dict(params)
     memo.write_metadata(params_dict)
-    if memo.verbose == 1:
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(f"[ShardMemo] profile metadata_s={time.monotonic() - profile_start:0.3f}")
 
     cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
@@ -603,7 +645,7 @@ def memo_parallel_run_streaming(
     diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
     total_chunks = diagnostics.total_chunks
     progress_step = max(1, total_chunks // 50)
-    if memo.verbose == 1:
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile cache_status_s={time.monotonic() - profile_start:0.3f}"
         )
@@ -613,18 +655,20 @@ def memo_parallel_run_streaming(
             return
         if not final and processed % progress_step != 0 and processed != total_chunks:
             return
-        message = (
-            f"[ShardMemo] planning {processed}/{total_chunks} "
-            f"cached={diagnostics.cached_chunks}"
+        message = _format_rate_eta(
+            "planning",
+            processed_items,
+            total_items,
+            planning_start,
         )
-        print(message, end="\n" if final else "\r", flush=True)
+        _print_progress(message, final=final)
 
     if collate_fn is None:
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
     if map_fn_kwargs is None:
         map_fn_kwargs = {}
 
-    profile_start = time.monotonic()
+    # reuse profile_start for subsequent timings
 
     if memo.verbose == 1:
         axis_values = cache_status.get("axis_values")
@@ -641,7 +685,10 @@ def memo_parallel_run_streaming(
     item_list = _ensure_iterable(items)
     if not item_list:
         return diagnostics
-    if memo.verbose == 1:
+    total_items = len(item_list)
+    planning_start = time.monotonic()
+    processed_items = 0
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile items_list_s={time.monotonic() - profile_start:0.3f}"
         )
@@ -651,7 +698,7 @@ def memo_parallel_run_streaming(
         item_list,
         exec_fn,
     )
-    if memo.verbose == 1:
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile axis_extractor_s={time.monotonic() - profile_start:0.3f}"
         )
@@ -670,7 +717,7 @@ def memo_parallel_run_streaming(
         missing_chunks,
         axis_extractor,
     )
-    if memo.verbose == 1:
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile expand_chunks_s={time.monotonic() - profile_start:0.3f}"
         )
@@ -697,6 +744,7 @@ def memo_parallel_run_streaming(
         if not chunk_items:
             report_progress_streaming(processed, final=processed == total_chunks)
             continue
+        processed_items += len(chunk_items)
         full_chunk = len(chunk_items) == _chunk_key_size(chunk_key)
         chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         if use_index:
@@ -737,7 +785,7 @@ def memo_parallel_run_streaming(
             if memo.verbose >= 2:
                 print(f"[ShardMemo] load chunk={chunk_key} items={len(chunk_items)}")
         report_progress_streaming(processed, final=processed == total_chunks)
-    if memo.verbose == 1:
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile cached_scan_s={time.monotonic() - profile_start:0.3f}"
         )
@@ -748,11 +796,12 @@ def memo_parallel_run_streaming(
     ):
         if chunk_items:
             _register_missing(chunk_key, chunk_items)
+        processed_items += len(chunk_items)
         report_progress_streaming(
             base_index + offset,
             final=(base_index + offset) == total_chunks,
         )
-    if memo.verbose == 1:
+    if memo.profile and memo.verbose == 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile missing_map_s={time.monotonic() - profile_start:0.3f}"
         )
@@ -768,7 +817,9 @@ def memo_parallel_run_streaming(
             missing_items,
             **map_fn_kwargs,
         )
-        total_items = len(missing_items)
+        total_items_all = len(item_list)
+        cached_items_total = total_items_all - len(missing_items)
+        exec_start = time.monotonic()
         expected_counts = {
             chunk_key: len(items) for chunk_key, items in missing_items_by_chunk.items()
         }
@@ -780,11 +831,16 @@ def memo_parallel_run_streaming(
             now = time.monotonic()
             if memo.verbose == 1 and (now - last_report) >= report_interval:
                 cached_total = diagnostics.cached_chunks + diagnostics.stream_flushes
-                message = (
-                    f"[ShardMemo] exec_chunks {cached_total}/{diagnostics.total_chunks} "
-                    f"cached={cached_total}"
+                processed_items_exec = cached_items_total + index
+                message = _format_rate_eta(
+                    "exec_items",
+                    processed_items_exec,
+                    total_items_all,
+                    exec_start,
+                    rate_processed=index,
+                    rate_total=len(missing_items),
                 )
-                print(message, end="\r", flush=True)
+                _print_progress(message, final=False)
                 last_report = now
 
             chunk_key = missing_item_keys[index - 1]
@@ -833,11 +889,16 @@ def memo_parallel_run_streaming(
 
         if memo.verbose == 1:
             cached_total = diagnostics.cached_chunks + diagnostics.stream_flushes
-            message = (
-                f"[ShardMemo] exec_chunks {cached_total}/{diagnostics.total_chunks} "
-                f"cached={cached_total}"
+            processed_items_exec = cached_items_total + len(missing_items)
+            message = _format_rate_eta(
+                "exec_items",
+                processed_items_exec,
+                total_items_all,
+                exec_start,
+                rate_processed=len(missing_items),
+                rate_total=len(missing_items),
             )
-            print(message, end="\n", flush=True)
+            _print_progress(message, final=True)
 
     if memo.verbose >= 1:
         print(f"[ShardMemo] stream_mem_max items={diagnostics.max_parallel_items}")

@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import itertools
 import json
+import math
 import os
 import pickle
 import tempfile
@@ -133,6 +134,59 @@ def _format_progress(
     return f"[ShardMemo] progress {processed}/{total} [{bar}] cached={cached}"
 
 
+def _format_eta(seconds: float) -> str:
+    if seconds < 0 or not math.isfinite(seconds):
+        return "--:--:--"
+    total = int(seconds)
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _format_rate_eta(
+    label: str,
+    processed: int,
+    total: int,
+    start_time: float,
+    *,
+    rate_processed: int | None = None,
+    rate_total: int | None = None,
+) -> str:
+    elapsed = max(time.monotonic() - start_time, 1e-6)
+    if rate_processed is None:
+        rate_processed = processed
+    if rate_total is None:
+        rate_total = total
+    rate = rate_processed / elapsed
+    percent = 100.0 if total <= 0 else (processed / total * 100.0)
+    remaining = 0 if rate_total <= 0 else max(rate_total - rate_processed, 0)
+    eta = remaining / rate if rate > 0 else float("inf")
+    return (
+        f"[ShardMemo] {label} {processed}/{total} "
+        f"({percent:0.1f}%) rate={rate:0.1f}/s ETA={_format_eta(eta)}"
+    )
+
+
+_progress_state = {"last_len": 0}
+
+
+def _print_progress(message: str, *, final: bool) -> None:
+    if final:
+        print(message, end="\n", flush=True)
+        _progress_state["last_len"] = 0
+        return
+    pad = max(_progress_state["last_len"] - len(message), 0)
+    print(message + (" " * pad), end="\r", flush=True)
+    _progress_state["last_len"] = len(message)
+
+
+def _chunk_key_size(chunk_key: ChunkKey) -> int:
+    if not chunk_key:
+        return 0
+    return math.prod(len(values) for _, values in chunk_key)
+
+
 def _format_axis_values(values: Any) -> str:
     if isinstance(values, (list, tuple)):
         if len(values) <= 4:
@@ -175,6 +229,7 @@ class ShardMemo:
         cache_version: str = "v1",
         axis_order: Sequence[str] | None = None,
         verbose: int = 1,
+        profile: bool = False,
     ) -> None:
         """Initialize a ShardMemo runner.
 
@@ -191,6 +246,7 @@ class ShardMemo:
             axis_order: Axis iteration order (defaults to lexicographic).
             split_spec: Canonical split spec for the cache.
             verbose: Verbosity flag.
+            profile: Enable profiling output.
         """
         self.cache_root = Path(cache_root)
         self.cache_root.mkdir(parents=True, exist_ok=True)
@@ -202,6 +258,7 @@ class ShardMemo:
         self.cache_version = cache_version
         self.axis_order = tuple(axis_order) if axis_order is not None else None
         self.verbose = verbose
+        self.profile = profile
         self._split_spec: dict[str, Any] | None = None
         self._axis_index_map: AxisIndexMap | None = None
         self._set_split_spec(split_spec)
@@ -301,7 +358,7 @@ class ShardMemo:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order.
         """
-        profile_start = time.monotonic()
+        profile_start = time.monotonic() if self.profile else None
         if self._split_spec is None:
             raise ValueError("split_spec must be set before checking cache status")
         if axis_indices is not None and axes:
@@ -314,7 +371,7 @@ class ShardMemo:
         chunk_keys = self._build_chunk_keys_for_axes(split_spec)
         chunk_index = self._load_chunk_index(params)
         use_index = bool(chunk_index)
-        if self.verbose == 1:
+        if self.profile and self.verbose == 1 and profile_start is not None:
             print(
                 f"[ShardMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
             )
@@ -336,7 +393,7 @@ class ShardMemo:
             else:
                 missing_chunks.append(chunk_key)
                 missing_chunk_indices.append(indices)
-        if self.verbose == 1:
+        if self.profile and self.verbose == 1 and profile_start is not None:
             print(
                 f"[ShardMemo] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
             )
@@ -438,6 +495,9 @@ class ShardMemo:
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
         total_chunks = len(chunk_keys)
         progress_step = max(1, total_chunks // 50)
+        start_time = time.monotonic()
+        total_items = sum(_chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+        processed_items = 0
 
         def report_progress(processed: int, final: bool = False) -> None:
             if self.verbose != 1:
@@ -448,17 +508,18 @@ class ShardMemo:
                 and processed != total_chunks
             ):
                 return
-            message = _format_progress(
-                processed,
-                total_chunks,
-                diagnostics.cached_chunks,
-                diagnostics.executed_chunks,
+            message = _format_rate_eta(
+                "planning",
+                processed_items,
+                total_items,
+                start_time,
             )
-            print(message, end="\n" if final else "\r", flush=True)
+            _print_progress(message, final=final)
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
             chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
+            processed_items += _chunk_key_size(chunk_key)
             if path.exists():
                 with open(path, "rb") as handle:
                     payload = pickle.load(handle)
@@ -555,6 +616,9 @@ class ShardMemo:
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
         total_chunks = len(chunk_keys)
         progress_step = max(1, total_chunks // 50)
+        start_time = time.monotonic()
+        total_items = sum(_chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+        processed_items = 0
 
         def report_progress(processed: int, final: bool = False) -> None:
             if self.verbose != 1:
@@ -565,17 +629,18 @@ class ShardMemo:
                 and processed != total_chunks
             ):
                 return
-            message = _format_progress(
-                processed,
-                total_chunks,
-                diagnostics.cached_chunks,
-                diagnostics.executed_chunks,
+            message = _format_rate_eta(
+                "planning",
+                processed_items,
+                total_items,
+                start_time,
             )
-            print(message, end="\n" if final else "\r", flush=True)
+            _print_progress(message, final=final)
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
             chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
+            processed_items += _chunk_key_size(chunk_key)
             if path.exists():
                 if requested_items_by_chunk is None:
                     diagnostics.cached_chunks += 1
