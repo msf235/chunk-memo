@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from swarm_memo import ChunkMemo
+from shard_memo import ShardMemo
 
 
 def exec_fn(params, strat, s):
@@ -23,7 +23,7 @@ def merge_fn(chunks):
 def main():
     output_root = Path("output")
     output_root.mkdir(exist_ok=True)
-    memo = ChunkMemo(
+    memo = ShardMemo(
         cache_root=output_root / "memo_cache",
         memo_chunk_spec={"strat": 1, "s": 2},
         split_spec={"strat": ["a", "b"], "s": [1, 2, 3]},

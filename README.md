@@ -1,10 +1,10 @@
-# swarm-memo
+# shard-memo
 
-swarm-memo provides sharded memoization for grid-style experiments. You define a
+shard-memo provides sharded memoization for grid-style experiments. You define a
 parameter grid (split variables), the library partitions it into reusable memo
 chunks for disk efficiency, and cached chunk outputs are reused on subsequent
 runs, including partial reuse for smaller parameter selections. Memoization and
-parallel execution are independent: memoization is in `ChunkMemo`, while a
+parallel execution are independent: memoization is in `ShardMemo`, while a
 parallel wrapper consumes cache metadata and can execute the missing work.
 
 ## What problem does it solve?
@@ -21,7 +21,7 @@ You want to:
 3. Shard outputs into reasonable file sizes, without losing the ability to load
    arbitrary subsets of parameter values.
 
-swarm-memo breaks the grid into memo chunks and stores each chunk on disk. When
+shard-memo breaks the grid into memo chunks and stores each chunk on disk. When
 split values change, only the new chunks are computed.
 
 ## Concepts
@@ -44,7 +44,7 @@ pip install -e .
 ## Quick start
 
 ```python
-from swarm_memo import ChunkMemo
+from shard_memo import ShardMemo
 
 
 def exec_fn(params, strat, s):
@@ -66,7 +66,7 @@ def merge_fn(chunks):
 
 params = {"alpha": 0.4}
 split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-memo = ChunkMemo(
+memo = ShardMemo(
     cache_root="./memo_cache",
     memo_chunk_spec={"strat": 1, "s": 3},
     split_spec=split_spec,
@@ -79,16 +79,16 @@ print(diag)
 
 ## Module layout
 
-- `swarm_memo/memo.py`: memoization (ChunkMemo) and cache introspection.
-- `swarm_memo/bridge.py`: parallel wrapper utilities.
-- `swarm_memo/__init__.py`: re-exports public APIs.
+- `shard_memo/memo.py`: memoization (ShardMemo) and cache introspection.
+- `shard_memo/bridge.py`: parallel wrapper utilities.
+- `shard_memo/__init__.py`: re-exports public APIs.
 
 ## API overview
 
-### ChunkMemo
+### ShardMemo
 
 ```python
-ChunkMemo(
+ShardMemo(
     cache_root: str | Path,
     memo_chunk_spec: dict[str, int | dict],
     split_spec: dict[str, Any],
@@ -190,7 +190,7 @@ and delegates missing work to a user-supplied map function, while already-cached
 chunks are handled locally.
 
 ```python
-from swarm_memo import memo_parallel_run, memo_parallel_run_streaming
+from shard_memo import memo_parallel_run, memo_parallel_run_streaming
 
 status = exec_point.cache_status(
     params,
@@ -222,7 +222,7 @@ Parallel wrapper notes:
 
 ```python
 memo_parallel_run(
-    memo: ChunkMemo,
+    memo: ShardMemo,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -237,7 +237,7 @@ memo_parallel_run(
 
 ```python
 memo_parallel_run_streaming(
-    memo: ChunkMemo,
+    memo: ShardMemo,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -269,4 +269,4 @@ python examples/basic.py
 
 - The exec function receives axis vectors for the current memo chunk.
 - Memoization and parallel execution are decoupled so you can introduce new
-  executors without changing `ChunkMemo`.
+  executors without changing `ShardMemo`.

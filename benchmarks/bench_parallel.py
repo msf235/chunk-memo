@@ -3,7 +3,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from swarm_memo import ChunkMemo, memo_parallel_run
+from shard_memo import ShardMemo, memo_parallel_run
 
 
 def exec_fn(params, s):
@@ -18,7 +18,7 @@ def exec_fn(params, s):
 
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     split_spec = {"s": list(range(n_points))}
-    memo = ChunkMemo(
+    memo = ShardMemo(
         cache_root=str(root),
         memo_chunk_spec={"s": 100},
         split_spec=split_spec,
@@ -58,7 +58,7 @@ def main():
 
     print("Benchmark: n_points=10000, sleep=0.005s (varying exec_chunk_size)")
     print("max_workers=8, scenarios: cold/half/warm")
-    root = Path("/tmp/swarm_memo_bench")
+    root = Path("/tmp/shard_memo_bench")
     if root.exists():
         for child in root.iterdir():
             if child.is_file():

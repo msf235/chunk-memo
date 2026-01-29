@@ -2,7 +2,7 @@ import itertools
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 
-from swarm_memo import ChunkMemo, memo_parallel_run, memo_parallel_run_streaming
+from shard_memo import ShardMemo, memo_parallel_run, memo_parallel_run_streaming
 
 
 def exec_fn(params, strat, s):
@@ -37,7 +37,7 @@ def test_memo_parallel_run_missing_only():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             split_spec=split_spec,
@@ -72,7 +72,7 @@ def test_memo_parallel_run_with_memoized_cache_status():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             split_spec=split_spec,
@@ -110,7 +110,7 @@ def test_memo_parallel_run_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             split_spec=split_spec,
@@ -155,7 +155,7 @@ def test_parallel_run_populates_memo_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             split_spec=split_spec,
@@ -191,7 +191,7 @@ def test_parallel_run_streaming_populates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             split_spec=split_spec,

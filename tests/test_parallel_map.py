@@ -1,7 +1,7 @@
 import itertools
 import tempfile
 
-from swarm_memo import ChunkMemo, memo_parallel_run
+from shard_memo import ShardMemo, memo_parallel_run
 
 
 def exec_fn(params, strat, s):
@@ -28,7 +28,7 @@ def test_memo_parallel_run_returns_requested_points():
     items = [(0, 0), (1, 2), (0, 1), (1, 0)]
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             split_spec=split_spec,

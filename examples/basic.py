@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from swarm_memo import ChunkMemo, memo_parallel_run
+from shard_memo import ShardMemo, memo_parallel_run
 
 
 def exec_fn(params, strat, s):
@@ -31,7 +31,7 @@ def main():
     params = {"alpha": 0.4}
     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
-    memo = ChunkMemo(
+    memo = ShardMemo(
         cache_root=output_root / "memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
         split_spec=split_spec,

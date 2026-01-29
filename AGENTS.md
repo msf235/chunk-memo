@@ -5,8 +5,8 @@
 - Keep changes minimal, focused, and aligned with existing style.
 
 ## Repository Overview
-- Project: swarm-memo (Python >= 3.10).
-- Core package: `swarm_memo/`.
+- Project: shard-memo (Python >= 3.10).
+- Core package: `shard_memo/`.
 - Tests: `tests/`.
 - Examples: `examples/`.
 - Benchmarks: `benchmarks/`.
@@ -27,8 +27,8 @@
 
 ### Test Suite
 - Full suite: `pytest`
-- Single test file: `pytest tests/test_swarm_memo.py`
-- Single test by node id: `pytest tests/test_swarm_memo.py::test_basic_cache_reuse`
+- Single test file: `pytest tests/test_shard_memo.py`
+- Single test by node id: `pytest tests/test_shard_memo.py::test_basic_cache_reuse`
 - With keyword filter: `pytest -k "cache_reuse"`
 - Markers: `flaky` marker is defined in `pyproject.toml`.
 
@@ -70,7 +70,7 @@
 - Use descriptive names (e.g., `memo_chunk_spec`, `exec_chunk_size`).
 
 ### Public APIs
-- The public API is exported from `swarm_memo/__init__.py`.
+- The public API is exported from `shard_memo/__init__.py`.
 - Keep backwards compatibility in public names and signatures.
 - Update README examples if public API changes.
 
@@ -108,12 +108,12 @@
 
 ## File-Specific Guidance
 
-### `swarm_memo/core.py`
+### `shard_memo/core.py`
 - Core logic and API entry points.
-- Preserve method signatures on `ChunkMemo` unless necessary.
+- Preserve method signatures on `ShardMemo` unless necessary.
 - Maintain deterministic ordering and chunk behavior.
 
-### `tests/test_swarm_memo.py`
+### `tests/test_shard_memo.py`
 - Tests are written in a straightforward, functional style.
 - Follow existing patterns for new tests.
 

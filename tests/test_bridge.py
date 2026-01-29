@@ -1,7 +1,7 @@
 import itertools
 import tempfile
 
-from swarm_memo import ChunkMemo, memo_parallel_run
+from shard_memo import ShardMemo, memo_parallel_run
 
 
 def exec_fn(params, strat, s):
@@ -33,7 +33,7 @@ def _flatten_outputs(outputs):
 def test_memo_parallel_run_caches_missing_points():
     with tempfile.TemporaryDirectory() as temp_dir:
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
@@ -67,7 +67,7 @@ def test_memo_parallel_run_caches_missing_points():
 def test_memo_parallel_run_reuses_partial_chunks():
     with tempfile.TemporaryDirectory() as temp_dir:
         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
