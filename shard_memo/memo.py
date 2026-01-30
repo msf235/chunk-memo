@@ -478,6 +478,8 @@ class ShardMemo:
         total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
         processed_items = 0
 
+        collate_fn = self.merge_fn if self.merge_fn is not None else lambda chunk: chunk
+
         def report_progress(processed: int, final: bool = False) -> None:
             if self.verbose != 1:
                 return
@@ -525,7 +527,7 @@ class ShardMemo:
                         print_detail(
                             f"[ShardMemo] load chunk={chunk_key} items={len(requested_items)}"
                         )
-                    outputs.append(cached_outputs)
+                    outputs.append(collate_fn([cached_outputs]))
                     report_progress(processed, final=processed == total_chunks)
                     continue
 
@@ -559,7 +561,11 @@ class ShardMemo:
                         chunk_key,
                         requested_items,
                     )
-                    outputs.append(extracted if extracted is not None else chunk_output)
+                    outputs.append(
+                        collate_fn([extracted])
+                        if extracted is not None
+                        else chunk_output
+                    )
 
             report_progress(processed, final=processed == total_chunks)
 
@@ -783,9 +789,11 @@ class ShardMemo:
         lines = []
         lines.extend(format_params(params))
         lines.extend(format_spec(axis_values, axis_order))
+        lines.append(f"[ShardMemo] cache_root: {self.cache_root}")
         lines.append(f"[ShardMemo] memo_chunk_spec: {self.memo_chunk_spec}")
+        lines.append(f"[ShardMemo] cache_version: {self.cache_version}")
+        lines.append(f"[ShardMemo] axis_order: {self.axis_order}")
         lines.append(f"[ShardMemo] plan: cached={cached_count} execute={execute_count}")
-        print("\n".join(lines))
 
     def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:
