@@ -65,6 +65,14 @@ def default_chunk_hash(
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def _normalized_params_for_hash(
+    params: dict[str, Any], axis_values: dict[str, Any]
+) -> dict[str, Any]:
+    if not axis_values:
+        return params
+    return {key: value for key, value in params.items() if key not in axis_values}
+
+
 def _chunk_values(values: Sequence[Any], size: int) -> list[Tuple[Any, ...]]:
     if size <= 0:
         raise ValueError("chunk size must be > 0")
@@ -1368,6 +1376,238 @@ class ShardMemo:
             if has_all_intersections and overlap_dict:
                 overlapping.append({**cache, "overlap": overlap_dict})
         return overlapping
+
+    @classmethod
+    def auto_load(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any],
+        axis_values: dict[str, Any] | None = None,
+        memo_chunk_spec: dict[str, Any] | None = None,
+        merge_fn: MergeFn | None = None,
+        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
+        cache_path_fn: CachePathFn | None = None,
+        cache_version: str = "v1",
+        axis_order: Sequence[str] | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
+    ) -> "ShardMemo":
+        """Smart load that finds an existing cache or creates a new one.
+
+        Finds caches matching the given params. If axis_values is provided,
+        requires exact match. If axis_values is None, requires exactly one
+        cache matching params (otherwise raises ambiguity error).
+
+        When creating a new cache with axis_values, if memo_chunk_spec is
+        not provided, uses chunk size 1 for all axes as default.
+
+        Args:
+            cache_root: Directory for caches.
+            params: Params dict (axis values excluded).
+            axis_values: Optional axis_values dict. If provided, requires
+                exact match. If None, finds caches with matching params
+                (must be exactly 1 match, or raises ValueError).
+            memo_chunk_spec: Optional chunk spec. Required when creating
+                a new cache with axis_values. Defaults to size 1 for
+                all axes.
+            merge_fn: Optional merge function.
+            memo_chunk_enumerator: Optional chunk enumerator.
+            chunk_hash_fn: Optional override for chunk hashing.
+            cache_path_fn: Optional override for cache file paths.
+            cache_version: Cache namespace/version tag.
+            axis_order: Axis iteration order.
+            verbose: Verbosity flag.
+            profile: Enable profiling output.
+            exclusive: If True, error when creating a cache with same
+                params and axis_values as another cache.
+            warn_on_overlap: If True, warn when caches overlap.
+
+        Returns:
+            A ShardMemo instance ready for execution.
+
+        Raises:
+            ValueError: If multiple caches match (ambiguous) or if axis_values
+                provided without matching cache and axis_names missing from
+                memo_chunk_spec.
+        """
+        cache_root = Path(cache_root)
+        normalized_params = _normalized_params_for_hash(params, {})
+
+        if axis_values is not None:
+            exact_match_caches = cls.find_compatible_caches(
+                cache_root,
+                params=normalized_params,
+                axis_values=axis_values,
+            )
+            if len(exact_match_caches) == 1:
+                cache = exact_match_caches[0]
+                return cls.load_from_cache(
+                    cache_root=cache_root,
+                    memo_hash=cache["memo_hash"],
+                    merge_fn=merge_fn,
+                    memo_chunk_enumerator=memo_chunk_enumerator,
+                    chunk_hash_fn=chunk_hash_fn,
+                    cache_path_fn=cache_path_fn,
+                    verbose=verbose,
+                    profile=profile,
+                    exclusive=exclusive,
+                    warn_on_overlap=warn_on_overlap,
+                )
+            if len(exact_match_caches) > 1:
+                matches = [c["memo_hash"] for c in exact_match_caches]
+                raise ValueError(
+                    f"Ambiguous: {len(exact_match_caches)} caches match to exact params and axis_values. "
+                    f"Matching hashes: {matches}. "
+                    f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
+                )
+            if memo_chunk_spec is None:
+                memo_chunk_spec = {
+                    axis: len(axis_values[axis])
+                    if isinstance(axis_values[axis], (list, tuple))
+                    else 1
+                    for axis in axis_values
+                }
+            return cls(
+                cache_root=cache_root,
+                memo_chunk_spec=memo_chunk_spec,
+                axis_values=axis_values,
+                merge_fn=merge_fn,
+                memo_chunk_enumerator=memo_chunk_enumerator,
+                chunk_hash_fn=chunk_hash_fn,
+                cache_path_fn=cache_path_fn,
+                cache_version=cache_version,
+                axis_order=axis_order,
+                verbose=verbose,
+                profile=profile,
+                exclusive=exclusive,
+                warn_on_overlap=warn_on_overlap,
+            )
+            if len(exact_match_caches) == 1:
+                cache = exact_match_caches[0]
+                return cls.load_from_cache(
+                    cache_root=cache_root,
+                    memo_hash=cache["memo_hash"],
+                    merge_fn=merge_fn,
+                    memo_chunk_enumerator=memo_chunk_enumerator,
+                    chunk_hash_fn=chunk_hash_fn,
+                    cache_path_fn=cache_path_fn,
+                    verbose=verbose,
+                    profile=profile,
+                    exclusive=exclusive,
+                    warn_on_overlap=warn_on_overlap,
+                )
+            if len(exact_match_caches) > 1:
+                matches = [c["memo_hash"] for c in exact_match_caches]
+                raise ValueError(
+                    f"Ambiguous: {len(exact_match_caches)} caches match to exact params and axis_values. "
+                    f"Matching hashes: {matches}. "
+                    f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
+                )
+            memo_chunk_spec = axis_values.get("_memo_chunk_spec", {})
+            clean_axis_values = {
+                k: v for k, v in axis_values.items() if k != "_memo_chunk_spec"
+            }
+            return cls(
+                cache_root=cache_root,
+                memo_chunk_spec=memo_chunk_spec,
+                axis_values=clean_axis_values,
+                merge_fn=merge_fn,
+                memo_chunk_enumerator=memo_chunk_enumerator,
+                chunk_hash_fn=chunk_hash_fn,
+                cache_path_fn=cache_path_fn,
+                cache_version=cache_version,
+                axis_order=axis_order,
+                verbose=verbose,
+                profile=profile,
+                exclusive=exclusive,
+                warn_on_overlap=warn_on_overlap,
+            )
+            if len(exact_match_caches) == 1:
+                cache = exact_match_caches[0]
+                return cls.load_from_cache(
+                    cache_root=cache_root,
+                    memo_hash=cache["memo_hash"],
+                    merge_fn=merge_fn,
+                    memo_chunk_enumerator=memo_chunk_enumerator,
+                    chunk_hash_fn=chunk_hash_fn,
+                    cache_path_fn=cache_path_fn,
+                    verbose=verbose,
+                    profile=profile,
+                    exclusive=exclusive,
+                    warn_on_overlap=warn_on_overlap,
+                )
+            if len(exact_match_caches) > 1:
+                matches = [c["memo_hash"] for c in exact_match_caches]
+                raise ValueError(
+                    f"Ambiguous: {len(exact_match_caches)} caches match the exact params and axis_values. "
+                    f"Matching hashes: {matches}. "
+                    f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
+                )
+            return cls(
+                cache_root=cache_root,
+                memo_chunk_spec={},
+                axis_values={},
+                merge_fn=merge_fn,
+                memo_chunk_enumerator=memo_chunk_enumerator,
+                chunk_hash_fn=chunk_hash_fn,
+                cache_path_fn=cache_path_fn,
+                cache_version=cache_version,
+                axis_order=axis_order,
+                verbose=verbose,
+                profile=profile,
+                exclusive=exclusive,
+                warn_on_overlap=warn_on_overlap,
+            )
+
+        matching_caches = cls.find_compatible_caches(
+            cache_root,
+            params=normalized_params,
+        )
+        if len(matching_caches) == 1:
+            cache = matching_caches[0]
+            metadata = cache.get("metadata", {})
+            existing_axis_values = metadata.get("axis_values", {})
+            return cls.load_from_cache(
+                cache_root=cache_root,
+                memo_hash=cache["memo_hash"],
+                merge_fn=merge_fn,
+                memo_chunk_enumerator=memo_chunk_enumerator,
+                chunk_hash_fn=chunk_hash_fn,
+                cache_path_fn=cache_path_fn,
+                verbose=verbose,
+                profile=profile,
+                exclusive=exclusive,
+                warn_on_overlap=warn_on_overlap,
+            )
+        if len(matching_caches) > 1:
+            matches = [
+                f"{c['memo_hash']} (axis_values={c.get('metadata', {}).get('axis_values')})"
+                for c in matching_caches
+            ]
+            raise ValueError(
+                f"Ambiguous: {len(matching_caches)} caches match the given params. "
+                f"Use axis_values parameter to disambiguate, or use one of "
+                f"ShardMemo.load_from_cache() to pick a specific cache.\n"
+                f"Matches:\n  " + "\n  ".join(matches)
+            )
+        return cls(
+            cache_root=cache_root,
+            memo_chunk_spec={},
+            axis_values={},
+            merge_fn=merge_fn,
+            memo_chunk_enumerator=memo_chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            cache_path_fn=cache_path_fn,
+            cache_version=cache_version,
+            axis_order=axis_order,
+            verbose=verbose,
+            profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
+        )
 
     @classmethod
     def load_from_cache(

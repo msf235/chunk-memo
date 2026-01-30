@@ -571,3 +571,113 @@ def test_find_overlapping_caches():
             {"strat": ["a"], "s": [1, 2, 3]},
         )
         assert len(different_params) == 0
+
+
+def test_auto_load_no_existing_creates_new():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ShardMemo.auto_load(temp_dir, params)
+        output, diag = memo.run(params, exec_fn_singleton)
+
+        assert output == [{"value": 0.8}]
+        assert diag.executed_chunks == 1
+
+
+def test_auto_load_finds_singleton():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo1 = ShardMemo.create_singleton(temp_dir, params)
+        output1, diag1 = memo1.run(params, exec_fn_singleton)
+
+        memo2 = ShardMemo.auto_load(temp_dir, params)
+        output2, diag2 = memo2.run(params, exec_fn_singleton)
+
+        assert output1 == output2
+        assert diag2.cached_chunks == 1
+        assert diag2.executed_chunks == 0
+
+
+def test_auto_load_with_axis_values_exact():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        chunk_spec = {"strat": 1, "s": 3}
+        memo1 = run_memo(temp_dir, axis_values=axis_values, chunk_spec=chunk_spec)
+        params = {"alpha": 0.4}
+        output1, diag1 = memo1.run(params, exec_fn_grid)
+
+        memo2 = ShardMemo.auto_load(
+            temp_dir, params, axis_values=axis_values, merge_fn=merge_fn
+        )
+        output2, diag2 = memo2.run(params, exec_fn_grid)
+
+        assert output1 == output2
+        assert diag2.cached_chunks == 1
+        assert diag2.executed_chunks == 0
+
+
+def test_auto_load_ambiguous_no_axis_values():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo1 = ShardMemo.create_singleton(temp_dir, params)
+        memo1.run(params, exec_fn_singleton)
+
+        memo2 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 1},
+            axis_values={"strat": ["a", "b"], "s": [1, 2]},
+            merge_fn=merge_fn,
+        )
+        memo2.run(params, exec_fn_grid)
+
+        with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
+            ShardMemo.auto_load(temp_dir, params)
+
+
+def test_auto_load_ambiguous_with_axis_values():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        params = {"alpha": 0.4}
+        memo1 = run_memo(
+            temp_dir, axis_values=axis_values, chunk_spec={"strat": 1, "s": 3}
+        )
+        memo1.run(params, exec_fn_grid)
+
+        memo2 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 2, "s": 3},
+            axis_values=axis_values,
+            merge_fn=merge_fn,
+        )
+        memo2.run(params, exec_fn_grid)
+
+        with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
+            ShardMemo.auto_load(temp_dir, params, axis_values=axis_values)
+
+
+def test_auto_load_with_memo_chunk_spec():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        params = {"alpha": 0.4}
+        memo = ShardMemo.auto_load(
+            temp_dir,
+            params,
+            axis_values=axis_values,
+            memo_chunk_spec={"strat": 1, "s": 2},
+            merge_fn=merge_fn,
+        )
+        output, diag = memo.run(params, exec_fn_grid)
+
+        assert output
+        assert diag.total_chunks == 2
+        assert diag.executed_chunks == 2
+
+
+def test_auto_load_default_chunk_spec():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        params = {"alpha": 0.4}
+        memo = ShardMemo.auto_load(temp_dir, params, axis_values=axis_values)
+        output, diag = memo.run(params, exec_fn_grid)
+
+        assert output
+        assert diag.total_chunks == 1
