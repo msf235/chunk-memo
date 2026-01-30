@@ -796,30 +796,69 @@ class ShardMemo:
             if metadata is None:
                 continue
             meta_params = metadata.get("params", {})
-            if _stable_serialize(meta_params) != _stable_serialize(normalized_params):
-                continue
             meta_axis_values = metadata.get("axis_values", {})
 
-            if _stable_serialize(meta_axis_values) == _stable_serialize(
-                self._axis_values
-            ):
+            if self._is_superset_compatible(metadata, normalized_params, self._axis_values):
                 if self.exclusive:
-                    raise ValueError(
-                        f"Cache with same params and axis_values already exists: {cache['memo_hash']}. "
-                        f"Use a different cache_version or cache_root, or set exclusive=False."
-                    )
+                    if meta_axis_values == self._axis_values:
+                        raise ValueError(
+                            f"Cache with same params and axis_values already exists: {cache['memo_hash']}. "
+                            f"Use a different cache_version or cache_root, or set exclusive=False."
+                        )
+                    else:
+                        raise ValueError(
+                            f"Cannot create subset cache: a superset cache already exists: {cache['memo_hash']}. "
+                            f"Superset cache has axis_values={meta_axis_values}, "
+                            f"requested has axis_values={self._axis_values}. "
+                            f"Use the existing superset cache, or set exclusive=False."
+                        )
                 continue
+
+            if self.exclusive:
+                constrained_meta = {}
+                for axis_name, axis_vals in meta_axis_values.items():
+                    if isinstance(axis_vals, (list, tuple)) and len(axis_vals) == 1:
+                        constrained_meta[axis_name] = axis_vals[0]
+
+                merged_meta_params = {**meta_params, **constrained_meta}
+
+                if merged_meta_params == normalized_params:
+                    constrained_meta_axis_values = {
+                        k: v for k, v in meta_axis_values.items() if k not in constrained_meta
+                    }
+                    if constrained_meta_axis_values.keys() <= self._axis_values.keys():
+                        for axis_name in constrained_meta_axis_values:
+                            meta_vals = (
+                                set(constrained_meta_axis_values[axis_name])
+                                if isinstance(constrained_meta_axis_values[axis_name], (list, tuple))
+                                else {constrained_meta_axis_values[axis_name]}
+                            )
+                            new_vals = (
+                                set(self._axis_values[axis_name])
+                                if isinstance(self._axis_values[axis_name], (list, tuple))
+                                else {self._axis_values[axis_name]}
+                            )
+                            if not meta_vals.issubset(new_vals):
+                                break
+                        else:
+                            raise ValueError(
+                                f"Cannot create superset cache: a subset cache already exists: {cache['memo_hash']}. "
+                                f"Subset cache has axis_values={meta_axis_values}, "
+                                f"requested has axis_values={self._axis_values}. "
+                                f"Use the existing subset cache, or set exclusive=False."
+                            )
+
+
 
             if self.warn_on_overlap and meta_axis_values and self._axis_values:
                 overlap = self._detect_axis_overlap(meta_axis_values, self._axis_values)
                 if overlap:
                     warnings.warn(
-                        f"Cache overlap detected: {cache['memo_hash']} has axis_values={meta_axis_values}, "
+                        f"Cache overlap detected: {cache["memo_hash"]} has axis_values={meta_axis_values}, "
                         f"current has axis_values={self._axis_values}. Overlap: {overlap}. "
                         f"Consider using exclusive=True to prevent accidental conflicts.",
                         stacklevel=2,
                     )
-
     def _detect_axis_overlap(
         self, axis_values_a: dict[str, Any], axis_values_b: dict[str, Any]
     ) -> dict[str, list[Any]] | None:
@@ -1258,6 +1297,55 @@ class ShardMemo:
         return caches
 
     @classmethod
+    def _is_superset_compatible(
+        cls,
+        cache_metadata: dict[str, Any],
+        req_params: dict[str, Any],
+        req_axis_values: dict[str, Any],
+    ) -> bool:
+        """Check if an existing cache is a superset of the requested configuration.
+
+        A cache is a superset if:
+        - All requested axes are present in the cache's axes
+        - All requested params are either in cache's params OR
+          represented as axes in the cache with matching values
+
+        Returns:
+            True if the cache is a superset and compatible, False otherwise.
+        """
+        meta_params = cache_metadata.get("params", {})
+        meta_axis_values = cache_metadata.get("axis_values", {})
+        req_axis_set = set(req_axis_values.keys())
+        meta_axis_set = set(meta_axis_values.keys())
+
+        if not req_axis_set.issubset(meta_axis_set):
+            return False
+
+        for param, req_value in req_params.items():
+            if param in meta_params:
+                if _stable_serialize(meta_params[param]) != _stable_serialize(
+                    req_value
+                ):
+                    return False
+            elif param in meta_axis_values:
+                meta_vals = (
+                    set(meta_axis_values[param])
+                    if isinstance(meta_axis_values[param], (list, tuple))
+                    else {meta_axis_values[param]}
+                )
+                req_vals = (
+                    set(req_value)
+                    if isinstance(req_value, (list, tuple))
+                    else {req_value}
+                )
+                if not req_vals.issubset(meta_vals):
+                    return False
+            else:
+                return False
+
+        return True
+
+    @classmethod
     def find_compatible_caches(
         cls,
         cache_root: str | Path,
@@ -1266,12 +1354,15 @@ class ShardMemo:
         memo_chunk_spec: dict[str, Any] | None = None,
         cache_version: str | None = None,
         axis_order: Sequence[str] | None = None,
+        allow_superset: bool = False,
     ) -> list[dict[str, Any]]:
         """Find caches compatible with the given criteria.
 
         Matching rules:
         - If a criterion is provided, it must match exactly.
         - If a criterion is None (omitted), it is ignored (wildcard).
+        - If allow_superset is True with params and axis_values provided,
+          also finds caches that are supersets (contain all requested data).
 
         Returns a list of compatible cache entries, each containing:
         - memo_hash: The unique hash of the cache
@@ -1285,9 +1376,21 @@ class ShardMemo:
             memo_chunk_spec: Optional memo_chunk_spec dict to match.
             cache_version: Optional cache_version string to match.
             axis_order: Optional axis_order sequence to match.
+            allow_superset: If True, find superset caches when params and
+                axis_values are both provided.
         """
         all_caches = cls.discover_caches(cache_root)
         compatible: list[dict[str, Any]] = []
+
+        if allow_superset and params is not None and axis_values is not None:
+            for cache in all_caches:
+                metadata = cache.get("metadata")
+                if metadata is None:
+                    continue
+                if cls._is_superset_compatible(metadata, params, axis_values):
+                    compatible.append(cache)
+            return compatible
+
         for cache in all_caches:
             metadata = cache.get("metadata")
             if metadata is None:
@@ -1394,12 +1497,15 @@ class ShardMemo:
         profile: bool = False,
         exclusive: bool = False,
         warn_on_overlap: bool = False,
+        allow_superset: bool = False,
     ) -> "ShardMemo":
         """Smart load that finds an existing cache or creates a new one.
 
-        Finds caches matching the given params. If axis_values is provided,
-        requires exact match. If axis_values is None, requires exactly one
-        cache matching params (otherwise raises ambiguity error).
+        Finds caches matching the given params. If axis_values is provided:
+        - When allow_superset=False: requires exact match
+        - When allow_superset=True: finds exact matches or superset caches
+        If axis_values is None, requires exactly one cache matching params
+        (otherwise raises ambiguity error).
 
         When creating a new cache with axis_values, if memo_chunk_spec is
         not provided, uses chunk size 1 for all axes as default.
@@ -1407,9 +1513,10 @@ class ShardMemo:
         Args:
             cache_root: Directory for caches.
             params: Params dict (axis values excluded).
-            axis_values: Optional axis_values dict. If provided, requires
-                exact match. If None, finds caches with matching params
-                (must be exactly 1 match, or raises ValueError).
+            axis_values: Optional axis_values dict. If provided:
+                - With allow_superset=False: requires exact match
+                - With allow_superset=True: finds exact or superset matches
+                - If None: finds caches with matching params (must be exactly 1)
             memo_chunk_spec: Optional chunk spec. Required when creating
                 a new cache with axis_values. Defaults to size 1 for
                 all axes.
@@ -1422,28 +1529,40 @@ class ShardMemo:
             verbose: Verbosity flag.
             profile: Enable profiling output.
             exclusive: If True, error when creating a cache with same
-                params and axis_values as another cache.
+                params and axis_values as another cache, or when creating
+                a subset/superset of an existing cache.
             warn_on_overlap: If True, warn when caches overlap.
+            allow_superset: If True with axis_values, find superset caches
+                that contain all requested data.
 
         Returns:
             A ShardMemo instance ready for execution.
 
         Raises:
-            ValueError: If multiple caches match (ambiguous) or if axis_values
+            ValueError: If multiple caches match (ambiguous), if axis_values
                 provided without matching cache and axis_names missing from
-                memo_chunk_spec.
+                memo_chunk_spec, or if multiple superset caches match.
         """
         cache_root = Path(cache_root)
         normalized_params = _normalized_params_for_hash(params, {})
 
         if axis_values is not None:
-            exact_match_caches = cls.find_compatible_caches(
-                cache_root,
-                params=normalized_params,
-                axis_values=axis_values,
-            )
-            if len(exact_match_caches) == 1:
-                cache = exact_match_caches[0]
+            if allow_superset:
+                compatible_caches = cls.find_compatible_caches(
+                    cache_root,
+                    params=normalized_params,
+                    axis_values=axis_values,
+                    allow_superset=True,
+                )
+            else:
+                compatible_caches = cls.find_compatible_caches(
+                    cache_root,
+                    params=normalized_params,
+                    axis_values=axis_values,
+                )
+
+            if len(compatible_caches) == 1:
+                cache = compatible_caches[0]
                 return cls.load_from_cache(
                     cache_root=cache_root,
                     memo_hash=cache["memo_hash"],
@@ -1456,10 +1575,13 @@ class ShardMemo:
                     exclusive=exclusive,
                     warn_on_overlap=warn_on_overlap,
                 )
-            if len(exact_match_caches) > 1:
-                matches = [c["memo_hash"] for c in exact_match_caches]
+            if len(compatible_caches) > 1:
+                matches = [
+                    f"{c['memo_hash']} (axis_values={c.get('metadata', {}).get('axis_values')})"
+                    for c in compatible_caches
+                ]
                 raise ValueError(
-                    f"Ambiguous: {len(exact_match_caches)} caches match to exact params and axis_values. "
+                    f"Ambiguous: {len(compatible_caches)} caches match the given criteria. "
                     f"Matching hashes: {matches}. "
                     f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
                 )
@@ -1485,82 +1607,6 @@ class ShardMemo:
                 exclusive=exclusive,
                 warn_on_overlap=warn_on_overlap,
             )
-            if len(exact_match_caches) == 1:
-                cache = exact_match_caches[0]
-                return cls.load_from_cache(
-                    cache_root=cache_root,
-                    memo_hash=cache["memo_hash"],
-                    merge_fn=merge_fn,
-                    memo_chunk_enumerator=memo_chunk_enumerator,
-                    chunk_hash_fn=chunk_hash_fn,
-                    cache_path_fn=cache_path_fn,
-                    verbose=verbose,
-                    profile=profile,
-                    exclusive=exclusive,
-                    warn_on_overlap=warn_on_overlap,
-                )
-            if len(exact_match_caches) > 1:
-                matches = [c["memo_hash"] for c in exact_match_caches]
-                raise ValueError(
-                    f"Ambiguous: {len(exact_match_caches)} caches match to exact params and axis_values. "
-                    f"Matching hashes: {matches}. "
-                    f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
-                )
-            memo_chunk_spec = axis_values.get("_memo_chunk_spec", {})
-            clean_axis_values = {
-                k: v for k, v in axis_values.items() if k != "_memo_chunk_spec"
-            }
-            return cls(
-                cache_root=cache_root,
-                memo_chunk_spec=memo_chunk_spec,
-                axis_values=clean_axis_values,
-                merge_fn=merge_fn,
-                memo_chunk_enumerator=memo_chunk_enumerator,
-                chunk_hash_fn=chunk_hash_fn,
-                cache_path_fn=cache_path_fn,
-                cache_version=cache_version,
-                axis_order=axis_order,
-                verbose=verbose,
-                profile=profile,
-                exclusive=exclusive,
-                warn_on_overlap=warn_on_overlap,
-            )
-            if len(exact_match_caches) == 1:
-                cache = exact_match_caches[0]
-                return cls.load_from_cache(
-                    cache_root=cache_root,
-                    memo_hash=cache["memo_hash"],
-                    merge_fn=merge_fn,
-                    memo_chunk_enumerator=memo_chunk_enumerator,
-                    chunk_hash_fn=chunk_hash_fn,
-                    cache_path_fn=cache_path_fn,
-                    verbose=verbose,
-                    profile=profile,
-                    exclusive=exclusive,
-                    warn_on_overlap=warn_on_overlap,
-                )
-            if len(exact_match_caches) > 1:
-                matches = [c["memo_hash"] for c in exact_match_caches]
-                raise ValueError(
-                    f"Ambiguous: {len(exact_match_caches)} caches match the exact params and axis_values. "
-                    f"Matching hashes: {matches}. "
-                    f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
-                )
-            return cls(
-                cache_root=cache_root,
-                memo_chunk_spec={},
-                axis_values={},
-                merge_fn=merge_fn,
-                memo_chunk_enumerator=memo_chunk_enumerator,
-                chunk_hash_fn=chunk_hash_fn,
-                cache_path_fn=cache_path_fn,
-                cache_version=cache_version,
-                axis_order=axis_order,
-                verbose=verbose,
-                profile=profile,
-                exclusive=exclusive,
-                warn_on_overlap=warn_on_overlap,
-            )
 
         matching_caches = cls.find_compatible_caches(
             cache_root,
@@ -1568,8 +1614,6 @@ class ShardMemo:
         )
         if len(matching_caches) == 1:
             cache = matching_caches[0]
-            metadata = cache.get("metadata", {})
-            existing_axis_values = metadata.get("axis_values", {})
             return cls.load_from_cache(
                 cache_root=cache_root,
                 memo_hash=cache["memo_hash"],
