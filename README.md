@@ -81,7 +81,7 @@ print(diag)
 
 - `shard_memo/memo.py`: memoization (ShardMemo) and cache introspection.
 - `shard_memo/bridge.py`: parallel wrapper utilities.
-- `shard_memo/__init__.py`: re-exports public APIs.
+- `shard_memo/__init__.py`: re-exports public APIs, including `auto_load()`.
 
 ## API overview
 
@@ -99,19 +99,25 @@ ShardMemo(
     cache_version: str = "v1",
     axis_order: Sequence[str] | None = None,
     verbose: int = 1,
+    exclusive: bool = False,
+    warn_on_overlap: bool = False,
 )
 ```
 
 Notes:
 - `memo_chunk_spec`: per-axis chunk sizes, e.g. `{"strat": 1, "s": 3}`.
-- `exec_fn(params, **axes)`: chunk-level function; each axis receives the
+- `exec_fn(params, **axes)`: chunk-level function; each axis receives a
   vector of values for that chunk. Supply it to `run` or use
   `run_wrap`/`streaming_wrap`.
-- `merge_fn` defaults to returning the list of chunk outputs.
+- `merge_fn` defaults to returning a list of chunk outputs.
 - `axis_values` defines the canonical grid for cache chunking.
 - `cache_path_fn` can be used to place cache files in nested directories. Paths
-  are resolved under the memo-specific cache directory.
+  are resolved under a memo-specific cache directory.
   This hook is experimental and not yet thoroughly tested.
+- `exclusive`: if True, error when creating a cache with same `params` and
+  `axis_values` as an existing cache (different `memo_chunk_spec` still conflicts).
+- `warn_on_overlap`: if True, warn when caches have same `params` but partially
+  overlapping `axis_values`.
 
 ### run
 
@@ -184,11 +190,134 @@ status["missing_chunks"]
 status["missing_chunk_indices"]
 ```
 
+### Class methods (cache introspection)
+
+#### discover_caches
+
+```python
+caches = ShardMemo.discover_caches(cache_root)
+```
+
+Lists all existing caches in `cache_root`. Returns a list of dictionaries with:
+- `memo_hash`: The unique hash of the cache
+- `path`: Path to the cache directory
+- `metadata`: Full metadata dict if available, `None` otherwise
+
+#### find_compatible_caches
+
+```python
+caches = ShardMemo.find_compatible_caches(
+    cache_root,
+    params=params_dict,
+    axis_values=axis_values_dict,
+    memo_chunk_spec=chunk_spec_dict,
+    cache_version="v1",
+    axis_order=None,
+)
+```
+
+Find caches compatible with the given criteria. Matching rules:
+- If a criterion is provided, it must match exactly.
+- If a criterion is omitted (`None`), it acts as a wildcard.
+
+Returns a list of compatible cache entries (same structure as `discover_caches`).
+
+#### find_overlapping_caches
+
+```python
+overlaps = ShardMemo.find_overlapping_caches(
+    cache_root,
+    params=params_dict,
+    axis_values=axis_values_dict,
+)
+```
+
+Find caches that overlap with the given `params` and `axis_values`. Overlap means:
+- Same `params`
+- All shared axes have intersecting values
+
+Returns a list of overlapping cache entries with an additional `overlap` key containing a dict of axis names to overlapping values.
+
+#### load_from_cache
+
+```python
+memo = ShardMemo.load_from_cache(
+    cache_root,
+    memo_hash="abc123...",
+    merge_fn=merge_fn,
+    verbose=1,
+    exclusive=False,
+    warn_on_overlap=False,
+)
+```
+
+Load a `ShardMemo` instance from an existing cache by its hash. Raises `FileNotFoundError` if the cache doesn't exist, or `ValueError` if metadata is invalid.
+
+#### create_singleton
+
+```python
+memo = ShardMemo.create_singleton(
+    cache_root,
+    params=params_dict,
+    merge_fn=merge_fn,
+    exclusive=False,
+    warn_on_overlap=False,
+)
+```
+
+Create a singleton cache with no axes (empty `axis_values`). Useful for memoizing functions that depend only on `params`, not on split variables. Creates a cache with `memo_chunk_spec={}` and `axis_values={}`.
+
+#### auto_load (ShardMemo classmethod)
+
+```python
+memo = ShardMemo.auto_load(
+    cache_root,
+    params=params_dict,
+    axis_values=axis_values_dict,
+    memo_chunk_spec=chunk_spec_dict,
+    merge_fn=merge_fn,
+    exclusive=False,
+    warn_on_overlap=False,
+)
+```
+
+Streamlined memoization that finds or creates a cache. Behavior:
+- If `axis_values` is provided: finds an exact match (same `params` + `axis_values`), or creates a new cache with the specified (or default) `memo_chunk_spec`.
+- If `axis_values` is not provided: finds caches with matching `params`. Requires exactly 1 match, or raises `ValueError` (ambiguous).
+- When creating a new cache without `memo_chunk_spec`, defaults to chunk size 1 for all axes.
+
 ## Parallel wrapper
 
 The parallel wrapper is independent from memoization. It consumes cache metadata
 and delegates missing work to a user-supplied map function, while already-cached
 chunks are handled locally.
+
+## Streamlined memoization
+
+### auto_load (module function)
+
+```python
+from shard_memo import auto_load
+
+memo = auto_load(
+    cache_root="cache_dir",
+    params=params_dict,
+    axis_values=axis_values_dict,
+    memo_chunk_spec=chunk_spec_dict,
+    merge_fn=merge_fn,
+    exclusive=False,
+    warn_on_overlap=False,
+)
+```
+
+Convenience wrapper for `ShardMemo.auto_load()`. Automatically finds an existing
+cache or creates a new one based on your `params` and `axis_values`.
+
+Use cases:
+- Quick start: let the library find or create the appropriate cache
+- Exclusive workflow: prevent duplicate caches with `exclusive=True`
+- Flexible chunking: `auto_load` handles different `memo_chunk_spec` values
+  for the same data
 
 ```python
 from shard_memo import memo_parallel_run, memo_parallel_run_streaming
