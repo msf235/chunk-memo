@@ -222,6 +222,20 @@ class ShardMemo:
         """
         return self._build_wrapper(params_arg=params_arg, streaming=True)
 
+    def _prepare_params_and_extras(
+        self,
+        params: dict[str, Any],
+        bound_args: Mapping[str, Any],
+        params_arg: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        axis_names = set(self._axis_values or {})
+        extras = {k: v for k, v in bound_args.items() if k != params_arg}
+        axis_inputs = {k: v for k, v in extras.items() if k in axis_names}
+        exec_extras = {k: v for k, v in extras.items() if k not in axis_names}
+        merged_params = dict(params)
+        merged_params.update(exec_extras)
+        return merged_params, exec_extras, axis_inputs
+
     def _build_wrapper(
         self, *, params_arg: str, streaming: bool
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -244,13 +258,10 @@ class ShardMemo:
                 params = bound.arguments[params_arg]
                 if not isinstance(params, dict):
                     raise ValueError(f"'{params_arg}' must be a dict")
-                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}
 
-                axis_names = set(self._axis_values or {})
-                axis_inputs = {k: v for k, v in extras.items() if k in axis_names}
-                exec_extras = {k: v for k, v in extras.items() if k not in axis_names}
-                merged_params = dict(params)
-                merged_params.update(exec_extras)
+                merged_params, exec_extras, axis_inputs = (
+                    self._prepare_params_and_extras(params, bound.arguments, params_arg)
+                )
 
                 exec_fn = functools.partial(func, **exec_extras)
                 if streaming:
@@ -273,11 +284,9 @@ class ShardMemo:
                 axis_indices: Mapping[str, Any] | None = None,
                 **axes: Any,
             ):
-                axis_names = set(self._axis_values or {})
-                exec_extras = {k: v for k, v in axes.items() if k not in axis_names}
-                merged_params = dict(params)
-                merged_params.update(exec_extras)
-                axis_inputs = {k: v for k, v in axes.items() if k in axis_names}
+                merged_params, _, axis_inputs = self._prepare_params_and_extras(
+                    params, axes, params_arg
+                )
                 return self.cache_status(
                     merged_params, axis_indices=axis_indices, **axis_inputs
                 )

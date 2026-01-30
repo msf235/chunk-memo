@@ -22,6 +22,41 @@ PROGRESS_REPORT_DIVISOR = 50
 EXEC_REPORT_INTERVAL_SECONDS = 2.0
 
 
+def _save_chunk_payload(
+    memo: ShardMemo,
+    params_dict: dict[str, Any],
+    chunk_key: ChunkKey,
+    chunk_items: list[Any],
+    chunk_output: Any,
+    axis_extractor: Callable[[Any], tuple[Any, ...]],
+    item_map: dict[str, Any] | None,
+    cached_payloads: dict[ChunkKey, Mapping[str, Any]],
+    diagnostics: Diagnostics,
+    chunk_hash: str,
+    path: Path,
+    missing_chunks: list[ChunkKey],
+    spec_fn: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if chunk_key in missing_chunks:
+        payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
+    else:
+        existing = cached_payloads.get(chunk_key, {})
+        payload: dict[str, Any] = dict(existing)
+        existing_items = existing.get("items", {})
+        payload["items"] = {**existing_items, **item_map}
+        if "output" not in payload and chunk_output is not None:
+            payload["output"] = chunk_output
+    _apply_payload_timestamps(
+        payload,
+        existing=cached_payloads.get(chunk_key),
+    )
+    if spec_fn is not None:
+        payload["spec"] = spec_fn()
+    _atomic_write_pickle(path, payload)
+    memo._update_chunk_index(params_dict, chunk_hash, chunk_key)
+    return payload
+
+
 @dataclasses.dataclass
 class BridgeDiagnostics:
     total_chunks: int = 0
@@ -314,8 +349,6 @@ def memo_parallel_run(
 
     cached_chunks: list[ChunkKey] = list(cache_status.get("cached_chunks", []))
     missing_chunks: list[ChunkKey] = list(cache_status.get("missing_chunks", []))
-    chunk_index = memo._load_chunk_index(params_dict)
-    use_index = bool(chunk_index)
 
     outputs: list[Any] = []
     exec_outputs: list[Any] = []
@@ -382,7 +415,6 @@ def memo_parallel_run(
         axis_extractor,
     )
     missing_items: list[Any] = []
-    missing_item_keys: list[ChunkKey] = []
     missing_items_by_chunk: dict[ChunkKey, list[Any]] = {}
     missing_chunk_order: list[ChunkKey] = []
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
@@ -395,7 +427,6 @@ def memo_parallel_run(
             missing_chunk_order.append(chunk_key)
         missing_items_by_chunk[chunk_key].extend(items_to_add)
         missing_items.extend(items_to_add)
-        missing_item_keys.extend([chunk_key] * len(items_to_add))
 
     for processed, (chunk_key, chunk_items) in enumerate(
         zip(cached_chunks, cached_chunk_items), start=1
@@ -518,25 +549,26 @@ def memo_parallel_run(
             )
             chunk_hash = memo._chunk_hash(params_dict, chunk_key)
             path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
-            if chunk_key in missing_chunks:
-                payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
-            else:
-                payload = dict(cached_payloads.get(chunk_key, {}))
-                payload["items"] = {**payload.get("items", {}), **item_map}
-                if "output" not in payload and chunk_output is not None:
-                    payload["output"] = chunk_output
-            _apply_payload_timestamps(
-                payload,
-                existing=cached_payloads.get(chunk_key),
-            )
-            payload["spec"] = _build_item_spec_for_chunk(
+            _save_chunk_payload(
                 memo,
+                params_dict,
                 chunk_key,
                 chunk_items,
+                chunk_output,
                 axis_extractor,
+                item_map,
+                cached_payloads,
+                diagnostics,
+                chunk_hash,
+                path,
+                missing_chunks,
+                lambda: _build_item_spec_for_chunk(
+                    memo,
+                    chunk_key,
+                    chunk_items,
+                    axis_extractor,
+                ),
             )
-            _atomic_write_pickle(path, payload)
-            memo._update_chunk_index(params_dict, chunk_hash, chunk_key)
             if memo.verbose >= 2:
                 print_detail(f"[ShardMemo] run chunk={chunk_key} items={chunk_size}")
             outputs.append(chunk_output)
@@ -816,25 +848,26 @@ def memo_parallel_run_streaming(
             )
             chunk_hash = memo._chunk_hash(params_dict, chunk_key)
             path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
-            if chunk_key in missing_chunks:
-                payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
-            else:
-                payload = dict(cached_payloads.get(chunk_key, {}))
-                payload["items"] = {**payload.get("items", {}), **item_map}
-                if "output" not in payload and chunk_output is not None:
-                    payload["output"] = chunk_output
-            _apply_payload_timestamps(
-                payload,
-                existing=cached_payloads.get(chunk_key),
-            )
-            payload["spec"] = _build_item_spec_for_chunk(
+            _save_chunk_payload(
                 memo,
+                params_dict,
                 chunk_key,
                 chunk_items,
+                chunk_output,
                 axis_extractor,
+                item_map,
+                cached_payloads,
+                diagnostics,
+                chunk_hash,
+                path,
+                missing_chunks,
+                lambda: _build_item_spec_for_chunk(
+                    memo,
+                    chunk_key,
+                    chunk_items,
+                    axis_extractor,
+                ),
             )
-            _atomic_write_pickle(path, payload)
-            memo._update_chunk_index(params_dict, chunk_hash, chunk_key)
             diagnostics.stream_flushes += 1
             if memo.verbose >= 2:
                 print_detail(
