@@ -116,7 +116,7 @@ class SwarmMemo:
         self.verbose = verbose
 
     def run_wrap(
-        self, *, params_arg: str = "params", split_arg: str = "split_spec"
+        self, *, params_arg: str = "params", split_arg: str = "axis_values"
     ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
         """Decorator for running memoized execution with output."""
         return self._build_wrapper(
@@ -124,7 +124,7 @@ class SwarmMemo:
         )
 
     def streaming_wrap(
-        self, *, params_arg: str = "params", split_arg: str = "split_spec"
+        self, *, params_arg: str = "params", split_arg: str = "axis_values"
     ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
         """Decorator for streaming memoized execution to disk only."""
         return self._build_wrapper(
@@ -141,7 +141,7 @@ class SwarmMemo:
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 if split_arg not in kwargs:
                     raise ValueError(f"Missing required keyword argument '{split_arg}'")
-                split_spec = kwargs.pop(split_arg)
+                axis_values = kwargs.pop(split_arg)
 
                 if params_arg in kwargs and args:
                     raise ValueError(
@@ -171,8 +171,8 @@ class SwarmMemo:
                 exec_fn = functools.partial(func, **extras)
                 runner = self._clone_with_exec_fn(exec_fn)
                 if streaming:
-                    return runner.run_streaming(merged_params, split_spec)
-                return runner.run(merged_params, split_spec)
+                    return runner.run_streaming(merged_params, axis_values)
+                return runner.run(merged_params, axis_values)
 
             return wrapper
 
@@ -198,18 +198,18 @@ class SwarmMemo:
         )
 
     def run(
-        self, params: dict[str, Any], split_spec: dict[str, Any]
+        self, params: dict[str, Any], axis_values: dict[str, Any]
     ) -> Tuple[Any, Diagnostics]:
         outputs: List[Any] = []
         chunk_paths: List[Path] = []
         chunk_sizes: List[int] = []
         all_points: List[Any] = []
 
-        chunks = self._build_memo_chunks(params, split_spec)
+        chunks = self._build_memo_chunks(params, axis_values)
         diagnostics = Diagnostics(total_chunks=len(chunks))
 
         for chunk_key, chunk_points in zip(
-            self._chunk_keys_iter(chunks, split_spec), chunks
+            self._chunk_keys_iter(chunks, axis_values), chunks
         ):
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
             path = self.cache_root / f"{chunk_hash}.pkl"
@@ -239,18 +239,18 @@ class SwarmMemo:
         return merged, diagnostics
 
     def run_streaming(
-        self, params: dict[str, Any], split_spec: dict[str, Any]
+        self, params: dict[str, Any], axis_values: dict[str, Any]
     ) -> Diagnostics:
         """Execute missing chunks and flush outputs to disk only."""
         stream_points: List[Any] = []
         chunk_sizes: List[int] = []
         chunk_paths: List[Path] = []
 
-        chunks = self._build_memo_chunks(params, split_spec)
+        chunks = self._build_memo_chunks(params, axis_values)
         diagnostics = Diagnostics(total_chunks=len(chunks))
 
         for chunk_key, chunk_points in zip(
-            self._chunk_keys_iter(chunks, split_spec), chunks
+            self._chunk_keys_iter(chunks, axis_values), chunks
         ):
             chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)
             path = self.cache_root / f"{chunk_hash}.pkl"
@@ -340,19 +340,19 @@ class SwarmMemo:
         ) // self.exec_chunk_size
         return diagnostics
 
-    def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
+    def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:
             return self.axis_order
-        return tuple(sorted(split_spec))
+        return tuple(sorted(axis_values))
 
     def _build_chunk_keys(
-        self, split_spec: dict[str, Any], axis_order: Sequence[str]
+        self, axis_values: dict[str, Any], axis_order: Sequence[str]
     ) -> List[ChunkKey]:
         axis_chunks: List[List[Tuple[Any, ...]]] = []
         for axis in axis_order:
-            values = split_spec.get(axis)
+            values = axis_values.get(axis)
             if values is None:
-                raise KeyError(f"Missing axis '{axis}' in split_spec")
+                raise KeyError(f"Missing axis '{axis}' in axis_values")
             size = self._resolve_axis_chunk_size(axis)
             axis_chunks.append(_chunk_values(values, size))
 
@@ -365,43 +365,43 @@ class SwarmMemo:
         return chunk_keys
 
     def _default_point_enumerator(
-        self, params: dict[str, Any], split_spec: dict[str, Any]
+        self, params: dict[str, Any], axis_values: dict[str, Any]
     ) -> List[Any]:
-        axis_order = self._resolve_axis_order(split_spec)
-        values = [split_spec[axis] for axis in axis_order]
+        axis_order = self._resolve_axis_order(axis_values)
+        values = [axis_values[axis] for axis in axis_order]
         return [tuple(point) for point in itertools.product(*values)]
 
     def _build_memo_chunks(
-        self, params: dict[str, Any], split_spec: dict[str, Any]
+        self, params: dict[str, Any], axis_values: dict[str, Any]
     ) -> List[List[Any]]:
         if self.memo_chunk_enumerator is not None:
-            return [list(chunk) for chunk in self.memo_chunk_enumerator(split_spec)]
+            return [list(chunk) for chunk in self.memo_chunk_enumerator(axis_values)]
 
-        axis_order = self._resolve_axis_order(split_spec)
-        chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+        axis_order = self._resolve_axis_order(axis_values)
+        chunk_keys = self._build_chunk_keys(axis_values, axis_order)
         enumerator = self.point_enumerator or self._default_point_enumerator
         chunks: List[List[Any]] = []
         for chunk_key in chunk_keys:
-            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
-            points = list(enumerator(params, chunk_split_spec))
+            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}
+            points = list(enumerator(params, chunk_axis_values))
             chunks.append(points)
         return chunks
 
     def _chunk_keys_iter(
-        self, chunks: Sequence[Sequence[Any]], split_spec: dict[str, Any]
+        self, chunks: Sequence[Sequence[Any]], axis_values: dict[str, Any]
     ) -> Iterable[ChunkKey]:
         if self.memo_chunk_enumerator is None:
-            axis_order = self._resolve_axis_order(split_spec)
-            return iter(self._build_chunk_keys(split_spec, axis_order))
+            axis_order = self._resolve_axis_order(axis_values)
+            return iter(self._build_chunk_keys(axis_values, axis_order))
 
         return iter(
-            self._chunk_key_from_default_chunk(points, split_spec) for points in chunks
+            self._chunk_key_from_default_chunk(points, axis_values) for points in chunks
         )
 
     def _chunk_key_from_default_chunk(
-        self, points: Sequence[Any], split_spec: dict[str, Any]
+        self, points: Sequence[Any], axis_values: dict[str, Any]
     ) -> ChunkKey:
-        axis_order = self._resolve_axis_order(split_spec)
+        axis_order = self._resolve_axis_order(axis_values)
         axes: Dict[str, List[Any]] = {axis: [] for axis in axis_order}
         for point in points:
             for axis, value in zip(axis_order, point):

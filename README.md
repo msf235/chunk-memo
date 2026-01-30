@@ -65,11 +65,11 @@ def merge_fn(chunks):
 
 
 params = {"alpha": 0.4}
-split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
+axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
 memo = ShardMemo(
     cache_root="./memo_cache",
     memo_chunk_spec={"strat": 1, "s": 3},
-    split_spec=split_spec,
+    axis_values=axis_values,
     merge_fn=merge_fn,
 )
 output, diag = memo.run(params, exec_fn)
@@ -91,7 +91,7 @@ print(diag)
 ShardMemo(
     cache_root: str | Path,
     memo_chunk_spec: dict[str, int | dict],
-    split_spec: dict[str, Any],
+    axis_values: dict[str, Any],
     merge_fn: Callable[[list], Any] | None = None,
     memo_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
@@ -108,7 +108,7 @@ Notes:
   vector of values for that chunk. Supply it to `run` or use
   `run_wrap`/`streaming_wrap`.
 - `merge_fn` defaults to returning the list of chunk outputs.
-- `split_spec` defines the canonical grid for cache chunking.
+- `axis_values` defines the canonical grid for cache chunking.
 - `cache_path_fn` can be used to place cache files in nested directories. Paths
   are resolved under the memo-specific cache directory.
   This hook is experimental and not yet thoroughly tested.
@@ -148,7 +148,7 @@ output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
 ```
 
 - The wrapper accepts axis values directly (singletons or lists).
-- You can also pass `axis_indices` (same keys as `split_spec`) with ints, ranges,
+- You can also pass `axis_indices` (same keys as `axis_values`) with ints, ranges,
   or slices to select by index.
 - Extra keyword arguments are merged into memoization params and also passed to
   the exec function.

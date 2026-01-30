@@ -29,12 +29,12 @@ def main():
     output_root = Path("output")
     output_root.mkdir(exist_ok=True)
     params = {"alpha": 0.4}
-    split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
+    axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
     memo = ShardMemo(
         cache_root=output_root / "memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
-        split_spec=split_spec,
+        axis_values=axis_values,
         merge_fn=merge_fn,
         verbose=1,
     )
@@ -67,7 +67,7 @@ def main():
         items,
         exec_fn=exec_fn,
         cache_status=memo.cache_status(
-            params, strat=split_spec["strat"], s=split_spec["s"]
+            params, strat=axis_values["strat"], s=axis_values["s"]
         ),
         map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         map_fn_kwargs={"chunksize": 1},
@@ -83,7 +83,7 @@ def main():
             items,
             exec_fn=exec_fn,
             cache_status=memo.cache_status(
-                params, strat=split_spec["strat"], s=split_spec["s"]
+                params, strat=axis_values["strat"], s=axis_values["s"]
             ),
             map_fn=executor.map,
             map_fn_kwargs={"chunksize": 1},

@@ -9,15 +9,15 @@ from .utils import exec_fn_grid, item_dicts, observed_items
 def test_memo_parallel_run_missing_only():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
 
-        items = item_dicts(split_spec)
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        items = item_dicts(axis_values)
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         outputs, diag = memo_parallel_run(
             memo,
             items,
@@ -44,16 +44,16 @@ def test_memo_parallel_run_missing_only():
 def test_memo_parallel_run_with_memoized_cache_status():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
         memo.run(params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3, 4])
 
-        items = item_dicts(split_spec)
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        items = item_dicts(axis_values)
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         outputs, diag = memo_parallel_run(
             memo,
             items,
@@ -82,15 +82,15 @@ def test_memo_parallel_run_with_memoized_cache_status():
 def test_memo_parallel_run_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
 
-        items = item_dicts(split_spec)
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        items = item_dicts(axis_values)
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         memo_parallel_run(
             memo,
             items,
@@ -100,7 +100,7 @@ def test_memo_parallel_run_cache_reuse():
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         outputs, diag = memo_parallel_run(
             memo,
             items,
@@ -127,15 +127,15 @@ def test_memo_parallel_run_cache_reuse():
 def test_parallel_run_populates_memo_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
 
-        items = item_dicts(split_spec)
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        items = item_dicts(axis_values)
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         memo_parallel_run(
             memo,
             items,
@@ -163,15 +163,15 @@ def test_parallel_run_populates_memo_cache():
 def test_parallel_run_streaming_populates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
 
-        items = item_dicts(split_spec)
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        items = item_dicts(axis_values)
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         with ProcessPoolExecutor(max_workers=2) as executor:
             diag = memo_parallel_run_streaming(
                 memo,

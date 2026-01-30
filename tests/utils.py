@@ -13,10 +13,10 @@ def exec_fn_grid(params: dict[str, Any], strat: Any, s: Any) -> Any:
     return {"alpha": params["alpha"], "strat": strat, "s": s}
 
 
-def item_dicts(split_spec: dict[str, list[Any]]) -> list[dict[str, Any]]:
+def item_dicts(axis_values: dict[str, list[Any]]) -> list[dict[str, Any]]:
     return [
         {"strat": strat, "s": s}
-        for strat, s in itertools.product(split_spec["strat"], split_spec["s"])
+        for strat, s in itertools.product(axis_values["strat"], axis_values["s"])
     ]
 
 
@@ -35,9 +35,9 @@ def observed_items(outputs: list[Any]) -> set[tuple[Any, Any]]:
 
 
 def item_from_index(
-    item: tuple[int, int], split_spec: dict[str, list[Any]]
+    item: tuple[int, int], axis_values: dict[str, list[Any]]
 ) -> dict[str, Any]:
     return {
-        "strat": split_spec["strat"][item[0]],
-        "s": split_spec["s"][item[1]],
+        "strat": axis_values["strat"][item[0]],
+        "s": axis_values["s"][item[1]],
     }

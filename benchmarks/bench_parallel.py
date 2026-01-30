@@ -17,11 +17,11 @@ def exec_fn(params, s):
 
 
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
-    split_spec = {"s": list(range(n_points))}
+    axis_values = {"s": list(range(n_points))}
     memo = ShardMemo(
         cache_root=str(root),
         memo_chunk_spec={"s": 100},
-        split_spec=split_spec,
+        axis_values=axis_values,
     )
 
     params = {"sleep_s": sleep_s}
@@ -29,14 +29,14 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
         memo.run(
             params,
             exec_fn=exec_fn,
-            s=split_spec["s"][: n_points // 2],
+            s=axis_values["s"][: n_points // 2],
         )
     elif scenario == "warm":
         memo.run(params, exec_fn)
 
-    status = memo.cache_status(params, s=split_spec["s"])
+    status = memo.cache_status(params, s=axis_values["s"])
 
-    items = [{"s": value} for value in split_spec["s"]]
+    items = [{"s": value} for value in axis_values["s"]]
     start = time.perf_counter()
     with ProcessPoolExecutor(max_workers=8) as executor:
         memo_parallel_run(

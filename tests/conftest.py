@@ -54,8 +54,8 @@ def _wrap_chunk_run(start_time):
     def wrapped_run(self, params, exec_fn, *args, **kwargs):
         elapsed = time.perf_counter() - start_time
         prefix = f"[{elapsed:8.3f}s] "
-        split_spec = getattr(self, "_split_spec", None)
-        print(f"{prefix}split_spec {split_spec}")
+        axis_values = getattr(self, "_axis_values", None)
+        print(f"{prefix}axis_values {axis_values}")
         return _ORIGINAL_RUN(self, params, exec_fn, *args, **kwargs)
 
     return wrapped_run

@@ -12,12 +12,12 @@ def collate_fn(outputs):
 
 def test_memo_parallel_run_caches_missing_points():
     with tempfile.TemporaryDirectory() as temp_dir:
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
 
         params = {"alpha": 0.4}
@@ -27,7 +27,7 @@ def test_memo_parallel_run_caches_missing_points():
             {"strat": "a", "s": 2},
         ]
         cache_status = memo.cache_status(
-            params, strat=split_spec["strat"], s=split_spec["s"]
+            params, strat=axis_values["strat"], s=axis_values["s"]
         )
 
         output, diag = memo_parallel_run(
@@ -46,12 +46,12 @@ def test_memo_parallel_run_caches_missing_points():
 
 def test_memo_parallel_run_reuses_partial_chunks():
     with tempfile.TemporaryDirectory() as temp_dir:
-        split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
 
         params = {"alpha": 0.4}
@@ -63,7 +63,7 @@ def test_memo_parallel_run_reuses_partial_chunks():
             {"strat": "b", "s": 2},
         ]
         cache_status = memo.cache_status(
-            params, strat=split_spec["strat"], s=split_spec["s"]
+            params, strat=axis_values["strat"], s=axis_values["s"]
         )
 
         output, diag = memo_parallel_run(
