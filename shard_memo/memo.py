@@ -420,6 +420,35 @@ class ShardMemo:
             requested_items_by_chunk=requested_items,
         )
 
+    def _execute_and_save_chunk(
+        self,
+        params: dict[str, Any],
+        chunk_key: ChunkKey,
+        exec_fn: Callable[..., Any],
+        path: Path,
+        chunk_hash: str,
+        diagnostics: Diagnostics,
+        existing_payload: Mapping[str, Any] | None = None,
+    ) -> tuple[Any, dict[str, Any] | None]:
+        diagnostics.executed_chunks += 1
+        chunk_axes = {axis: list(values) for axis, values in chunk_key}
+        chunk_output = exec_fn(params, **chunk_axes)
+        diagnostics.max_stream_items = max(
+            diagnostics.max_stream_items,
+            _stream_item_count(chunk_output),
+        )
+        payload = {"output": chunk_output}
+        item_map = self._build_item_map(chunk_key, chunk_output)
+        if item_map is not None:
+            payload["items"] = item_map
+        item_spec = self._build_item_spec_map(chunk_key, chunk_output)
+        if item_spec is not None:
+            payload["spec"] = item_spec
+        _apply_payload_timestamps(payload, existing=existing_payload)
+        _atomic_write_pickle(path, payload)
+        self._update_chunk_index(params, chunk_hash, chunk_key)
+        return chunk_output, item_map
+
     def _run_chunks(
         self,
         params: dict[str, Any],
@@ -489,23 +518,15 @@ class ShardMemo:
                     report_progress(processed, final=processed == total_chunks)
                     continue
 
-            diagnostics.executed_chunks += 1
-            chunk_axes = {axis: list(values) for axis, values in chunk_key}
-            chunk_output = exec_fn(params, **chunk_axes)
-            diagnostics.max_stream_items = max(
-                diagnostics.max_stream_items,
-                _stream_item_count(chunk_output),
+            chunk_output, item_map = self._execute_and_save_chunk(
+                params,
+                chunk_key,
+                exec_fn,
+                path,
+                chunk_hash,
+                diagnostics,
+                existing_payload,
             )
-            payload = {"output": chunk_output}
-            item_map = self._build_item_map(chunk_key, chunk_output)
-            if item_map is not None:
-                payload["items"] = item_map
-            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
-            if item_spec is not None:
-                payload["spec"] = item_spec
-            _apply_payload_timestamps(payload, existing=existing_payload)
-            _atomic_write_pickle(path, payload)
-            self._update_chunk_index(params, chunk_hash, chunk_key)
 
             if requested_items_by_chunk is None:
                 if self.verbose >= 2:
@@ -613,23 +634,10 @@ class ShardMemo:
                     report_progress(processed, final=processed == total_chunks)
                     continue
 
-            diagnostics.executed_chunks += 1
-            chunk_axes = {axis: list(values) for axis, values in chunk_key}
-            chunk_output = exec_fn(params, **chunk_axes)
-            diagnostics.max_stream_items = max(
-                diagnostics.max_stream_items,
-                _stream_item_count(chunk_output),
+            chunk_output, item_map = self._execute_and_save_chunk(
+                params, chunk_key, exec_fn, path, chunk_hash, diagnostics, None
             )
-            payload = {"output": chunk_output}
-            item_map = self._build_item_map(chunk_key, chunk_output)
-            if item_map is not None:
-                payload["items"] = item_map
-            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
-            if item_spec is not None:
-                payload["spec"] = item_spec
-            _apply_payload_timestamps(payload, existing=existing_payload)
-            _atomic_write_pickle(path, payload)
-            self._update_chunk_index(params, chunk_hash, chunk_key)
+
             if self.verbose >= 2:
                 if requested_items_by_chunk is None:
                     print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
