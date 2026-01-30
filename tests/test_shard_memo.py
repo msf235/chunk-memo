@@ -9,6 +9,10 @@ from shard_memo import ShardMemo
 from .utils import exec_fn_grid
 
 
+def exec_fn_singleton(params):
+    return {"value": params["alpha"] * 2}
+
+
 def exec_fn_sleep(params, strat, s):
     outputs = []
     for strat_value, s_value in itertools.product(strat, s):
@@ -313,3 +317,160 @@ def test_streaming_diagnostics_bound_memory():
 
         assert diag.executed_chunks == 3
         assert diag.max_stream_items == 2
+
+
+def test_discover_caches_empty():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        caches = ShardMemo.discover_caches(temp_dir)
+        assert caches == []
+
+
+def test_discover_caches_finds_caches():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        _, diag = memo.run(params, exec_fn_grid)
+
+        caches = ShardMemo.discover_caches(temp_dir)
+        assert len(caches) == 1
+        assert caches[0]["metadata"] is not None
+        assert caches[0]["metadata"]["axis_values"] == axis_values
+
+
+def test_find_compatible_caches_by_params():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        _, diag = memo.run(params, exec_fn_grid)
+
+        compatible = ShardMemo.find_compatible_caches(temp_dir, params=params)
+        assert len(compatible) == 1
+
+        incompatible = ShardMemo.find_compatible_caches(temp_dir, params={"alpha": 0.5})
+        assert len(incompatible) == 0
+
+
+def test_find_compatible_caches_by_axis_values():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        _, diag = memo.run(params, exec_fn_grid)
+
+        compatible = ShardMemo.find_compatible_caches(temp_dir, axis_values=axis_values)
+        assert len(compatible) == 1
+
+        incompatible = ShardMemo.find_compatible_caches(
+            temp_dir, axis_values={"strat": ["b"]}
+        )
+        assert len(incompatible) == 0
+
+
+def test_find_compatible_caches_wildcard():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        _, diag = memo.run(params, exec_fn_grid)
+
+        compatible = ShardMemo.find_compatible_caches(temp_dir)
+        assert len(compatible) == 1
+
+
+def test_load_from_cache():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        output1, diag1 = memo.run(params, exec_fn_grid)
+
+        memo_hash = memo._memo_hash(params)
+        memo2 = ShardMemo.load_from_cache(temp_dir, memo_hash, merge_fn=merge_fn)
+        output2, diag2 = memo2.run(params, exec_fn_grid)
+
+        assert output1 == output2
+        assert diag2.cached_chunks == diag2.total_chunks
+        assert diag2.executed_chunks == 0
+
+
+def test_load_from_cache_not_found():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(FileNotFoundError):
+            ShardMemo.load_from_cache(temp_dir, "nonexistent_hash")
+
+
+def test_singleton_cache_basic():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ShardMemo.create_singleton(temp_dir, params)
+        output, diag = memo.run(params, exec_fn_singleton)
+
+        assert output == [{"value": 0.8}]
+        assert diag.total_chunks == 1
+        assert diag.executed_chunks == 1
+
+
+def test_singleton_cache_reuse():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ShardMemo.create_singleton(temp_dir, params)
+        output1, diag1 = memo.run(params, exec_fn_singleton)
+
+        output2, diag2 = memo.run(params, exec_fn_singleton)
+
+        assert output1 == output2
+        assert diag2.cached_chunks == diag2.total_chunks
+        assert diag2.executed_chunks == 0
+
+
+def test_singleton_cache_param_change():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo = ShardMemo.create_singleton(temp_dir, {"alpha": 0.4})
+        output1, diag1 = memo.run({"alpha": 0.4}, exec_fn_singleton)
+        assert diag1.executed_chunks == 1
+
+        output2, diag2 = memo.run({"alpha": 0.5}, exec_fn_singleton)
+        assert diag2.executed_chunks == 1
+        assert output1 != output2
+
+
+def test_singleton_cache_no_axes_allowed():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ShardMemo.create_singleton(temp_dir, params)
+
+        with pytest.raises(ValueError, match="Cannot pass axis arguments"):
+            memo.run(params, exec_fn_singleton, strat=["a"])
+
+        with pytest.raises(ValueError, match="Cannot pass axis arguments"):
+            memo.run_streaming(params, exec_fn_singleton, axis_indices={"s": [0]})
+
+
+def test_singleton_cache_streaming():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ShardMemo.create_singleton(temp_dir, params)
+        diag1 = memo.run_streaming(params, exec_fn_singleton)
+        assert diag1.executed_chunks == 1
+
+        diag2 = memo.run_streaming(params, exec_fn_singleton)
+        assert diag2.cached_chunks == diag2.total_chunks
+        assert diag2.executed_chunks == 0
+
+
+def test_singleton_via_regular_constructor():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+            merge_fn=None,
+        )
+        output, diag = memo.run(params, exec_fn_singleton)
+
+        assert output == [{"value": 0.8}]
+        assert diag.total_chunks == 1
+        assert diag.executed_chunks == 1

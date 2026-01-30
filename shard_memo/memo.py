@@ -372,6 +372,10 @@ class ShardMemo:
         """
         if self._axis_values is None:
             raise ValueError("axis_values must be set before running memoized function")
+        if not self._axis_values and (axes or axis_indices):
+            raise ValueError(
+                "Cannot pass axis arguments to a singleton cache (no axes)"
+            )
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
@@ -409,6 +413,10 @@ class ShardMemo:
         """
         if self._axis_values is None:
             raise ValueError("axis_values must be set before running memoized function")
+        if not self._axis_values and (axes or axis_indices):
+            raise ValueError(
+                "Cannot pass axis arguments to a singleton cache (no axes)"
+            )
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
@@ -1125,3 +1133,207 @@ class ShardMemo:
                 raise KeyError(f"Missing size for axis '{axis}'")
             return int(size)
         return int(spec)
+
+    @classmethod
+    def discover_caches(cls, cache_root: str | Path) -> list[dict[str, Any]]:
+        """Discover all existing caches in cache_root.
+
+        Returns a list of cache metadata dictionaries, each containing:
+        - memo_hash: The unique hash of the cache
+        - path: Path to the cache directory
+        - metadata: Full metadata dict if available, None otherwise
+
+        Args:
+            cache_root: Directory to scan for caches.
+        """
+        cache_root = Path(cache_root)
+        if not cache_root.exists():
+            return []
+        caches: list[dict[str, Any]] = []
+        for entry in cache_root.iterdir():
+            if not entry.is_dir():
+                continue
+            metadata_path = entry / "metadata.json"
+            metadata = None
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, "r", encoding="utf-8") as handle:
+                        metadata = json.load(handle)
+                except (json.JSONDecodeError, IOError):
+                    pass
+            caches.append(
+                {
+                    "memo_hash": entry.name,
+                    "path": entry,
+                    "metadata": metadata,
+                }
+            )
+        return caches
+
+    @classmethod
+    def find_compatible_caches(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any] | None = None,
+        axis_values: dict[str, Any] | None = None,
+        memo_chunk_spec: dict[str, Any] | None = None,
+        cache_version: str | None = None,
+        axis_order: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find caches compatible with the given criteria.
+
+        Matching rules:
+        - If a criterion is provided, it must match exactly.
+        - If a criterion is None (omitted), it is ignored (wildcard).
+
+        Returns a list of compatible cache entries, each containing:
+        - memo_hash: The unique hash of the cache
+        - path: Path to the cache directory
+        - metadata: Full metadata dict
+
+        Args:
+            cache_root: Directory to scan for caches.
+            params: Optional params dict (axis values excluded) to match.
+            axis_values: Optional axis_values dict to match.
+            memo_chunk_spec: Optional memo_chunk_spec dict to match.
+            cache_version: Optional cache_version string to match.
+            axis_order: Optional axis_order sequence to match.
+        """
+        all_caches = cls.discover_caches(cache_root)
+        compatible: list[dict[str, Any]] = []
+        for cache in all_caches:
+            metadata = cache.get("metadata")
+            if metadata is None:
+                continue
+            if params is not None:
+                meta_params = metadata.get("params", {})
+                if _stable_serialize(meta_params) != _stable_serialize(params):
+                    continue
+            if axis_values is not None:
+                meta_axis_values = metadata.get("axis_values", {})
+                if _stable_serialize(meta_axis_values) != _stable_serialize(
+                    axis_values
+                ):
+                    continue
+            if memo_chunk_spec is not None:
+                meta_spec = metadata.get("memo_chunk_spec", {})
+                if _stable_serialize(meta_spec) != _stable_serialize(memo_chunk_spec):
+                    continue
+            if cache_version is not None:
+                if metadata.get("cache_version") != cache_version:
+                    continue
+            if axis_order is not None:
+                meta_axis_order = metadata.get("axis_order")
+                meta_tuple = (
+                    tuple(meta_axis_order) if meta_axis_order is not None else None
+                )
+                if meta_tuple != tuple(axis_order):
+                    continue
+            compatible.append(cache)
+        return compatible
+
+    @classmethod
+    def load_from_cache(
+        cls,
+        cache_root: str | Path,
+        memo_hash: str,
+        merge_fn: MergeFn | None = None,
+        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
+        cache_path_fn: CachePathFn | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+    ) -> "ShardMemo":
+        """Load a ShardMemo instance from an existing cache by memo_hash.
+
+        Raises:
+            FileNotFoundError: If the cache directory or metadata.json does not exist.
+            ValueError: If metadata is invalid.
+
+        Args:
+            cache_root: Directory containing caches.
+            memo_hash: The hash identifying the specific cache.
+            merge_fn: Optional merge function for the list of chunk outputs.
+            memo_chunk_enumerator: Optional chunk enumerator.
+            chunk_hash_fn: Optional override for chunk hashing.
+            cache_path_fn: Optional override for cache file paths.
+            verbose: Verbosity flag.
+            profile: Enable profiling output.
+        """
+        cache_root = Path(cache_root)
+        cache_path = cache_root / memo_hash
+        metadata_path = cache_path / "metadata.json"
+        if not cache_path.exists():
+            raise FileNotFoundError(f"Cache directory not found: {cache_path}")
+        if not metadata_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+        with open(metadata_path, "r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        axis_values = metadata.get("axis_values")
+        if axis_values is None:
+            raise ValueError("Metadata missing 'axis_values'")
+        memo_chunk_spec = metadata.get("memo_chunk_spec")
+        if memo_chunk_spec is None:
+            raise ValueError("Metadata missing 'memo_chunk_spec'")
+        instance = cls(
+            cache_root=cache_root,
+            memo_chunk_spec=memo_chunk_spec,
+            axis_values=axis_values,
+            merge_fn=merge_fn,
+            memo_chunk_enumerator=memo_chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            cache_path_fn=cache_path_fn,
+            cache_version=metadata.get("cache_version", "v1"),
+            axis_order=metadata.get("axis_order"),
+            verbose=verbose,
+            profile=profile,
+        )
+        return instance
+
+    @classmethod
+    def create_singleton(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any],
+        merge_fn: MergeFn | None = None,
+        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
+        cache_path_fn: CachePathFn | None = None,
+        cache_version: str = "v1",
+        axis_order: Sequence[str] | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+    ) -> "ShardMemo":
+        """Create a singleton cache with no axes (empty axis_values).
+
+        Useful for memoizing functions that depend only on params, not on axes.
+        The cache will contain a single chunk covering all data.
+
+        Args:
+            cache_root: Directory for chunk cache files.
+            params: Parameters dict (no axis values).
+            merge_fn: Optional merge function for the list of chunk outputs.
+            memo_chunk_enumerator: Optional chunk enumerator.
+            chunk_hash_fn: Optional override for chunk hashing.
+            cache_path_fn: Optional override for cache file paths.
+            cache_version: Cache namespace/version tag.
+            axis_order: Axis iteration order (not used for singleton, kept for API consistency).
+            verbose: Verbosity flag.
+            profile: Enable profiling output.
+        """
+        memo_chunk_spec: dict[str, Any] = {}
+        axis_values: dict[str, Any] = {}
+        instance = cls(
+            cache_root=cache_root,
+            memo_chunk_spec=memo_chunk_spec,
+            axis_values=axis_values,
+            merge_fn=merge_fn,
+            memo_chunk_enumerator=memo_chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            cache_path_fn=cache_path_fn,
+            cache_version=cache_version,
+            axis_order=axis_order,
+            verbose=verbose,
+            profile=profile,
+        )
+        return instance
