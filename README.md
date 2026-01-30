@@ -116,6 +116,7 @@ Notes:
   This hook is experimental and not yet thoroughly tested.
 - `exclusive`: if True, error when creating a cache with same `params` and
   `axis_values` as an existing cache (different `memo_chunk_spec` still conflicts).
+  Also prevents creating subset/superset caches when overlapping data exists.
 - `warn_on_overlap`: if True, warn when caches have same `params` but partially
   overlapping `axis_values`.
 
@@ -213,12 +214,16 @@ caches = ShardMemo.find_compatible_caches(
     memo_chunk_spec=chunk_spec_dict,
     cache_version="v1",
     axis_order=None,
+    allow_superset=False,
 )
 ```
 
 Find caches compatible with the given criteria. Matching rules:
-- If a criterion is provided, it must match exactly.
+- If a criterion is provided, it must match exactly (when `allow_superset=False`).
 - If a criterion is omitted (`None`), it acts as a wildcard.
+- When `allow_superset=True`, finds caches that are supersets of the requested configuration:
+  - All requested axes are present in the cache's axes
+  - All requested params match either the cache's params or corresponding axis values
 
 Returns a list of compatible cache entries (same structure as `discover_caches`).
 
@@ -276,13 +281,24 @@ memo = ShardMemo.auto_load(
     axis_values=axis_values_dict,
     memo_chunk_spec=chunk_spec_dict,
     merge_fn=merge_fn,
+    memo_chunk_enumerator=memo_chunk_enumerator,
+    chunk_hash_fn=chunk_hash_fn,
+    cache_path_fn=cache_path_fn,
+    cache_version="v1",
+    axis_order=axis_order,
+    verbose=1,
+    profile=False,
     exclusive=False,
     warn_on_overlap=False,
+    allow_superset=False,
 )
 ```
 
 Streamlined memoization that finds or creates a cache. Behavior:
-- If `axis_values` is provided: finds an exact match (same `params` + `axis_values`), or creates a new cache with the specified (or default) `memo_chunk_spec`.
+- If `axis_values` is provided and `allow_superset=False` (default): finds an exact match (same `params` + `axis_values`), or creates a new cache with specified (or default) `memo_chunk_spec`.
+- If `axis_values` is provided and `allow_superset=True`: finds an exact match OR finds a superset cache that contains all requested data. A cache is a superset if:
+  - All requested axes are present in the cache's axes
+  - All requested params match either the cache's params or corresponding axis values
 - If `axis_values` is not provided: finds caches with matching `params`. Requires exactly 1 match, or raises `ValueError` (ambiguous).
 - When creating a new cache without `memo_chunk_spec`, defaults to chunk size 1 for all axes.
 
@@ -307,6 +323,7 @@ memo = auto_load(
     merge_fn=merge_fn,
     exclusive=False,
     warn_on_overlap=False,
+    allow_superset=False,
 )
 ```
 
@@ -314,10 +331,16 @@ Convenience wrapper for `ShardMemo.auto_load()`. Automatically finds an existing
 cache or creates a new one based on your `params` and `axis_values`.
 
 Use cases:
-- Quick start: let the library find or create the appropriate cache
-- Exclusive workflow: prevent duplicate caches with `exclusive=True`
+- Quick start: let the library find or create a appropriate cache
+- Exclusive workflow: prevent duplicate caches with `exclusive=True`.
+  Also prevents creating subset/superset caches when overlapping data exists.
 - Flexible chunking: `auto_load` handles different `memo_chunk_spec` values
   for the same data
+- Subset detection: use `allow_superset=True` to find and reuse existing
+  caches that are supersets of your requested data. This allows you to:
+  - Define reduced `axis_values` by moving some axes to `params`
+  - Find caches with broader axis coverage automatically
+  - Avoid creating redundant caches for overlapping data
 
 ```python
 from shard_memo import memo_parallel_run, memo_parallel_run_streaming
@@ -392,6 +415,70 @@ memo_parallel_run_streaming(
 - Adding values to a list reuses existing chunks and computes only new ones.
 
 ## Examples
+
+### Subset detection and cache reuse
+
+You can define caches with broad axis coverage and then find them for
+more specific requests using `allow_superset=True`:
+
+```python
+# Create a broad cache with strat=["a", "b"]
+from shard_memo import ShardMemo
+
+broad_cache = ShardMemo(
+    cache_root="./memo_cache",
+    memo_chunk_spec={"strat": 1, "s": 3},
+    axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
+    merge_fn=merge_fn,
+)
+params = {"alpha": 0.4}
+output1, diag1 = broad_cache.run(params, exec_fn)
+# Executes all 6 points: (a,1), (a,2), (a,3), (b,1), (b,2), (b,3)
+
+# Later, request just strat="a" - will find and reuse the broad cache
+from shard_memo import auto_load
+
+memo_a = auto_load(
+    cache_root="./memo_cache",
+    params=params,
+    axis_values={"strat": ["a"]},  # Subset of original
+    allow_superset=True,  # Enable superset detection
+    merge_fn=merge_fn,
+)
+output2, diag2 = memo_a.run(params, exec_fn)
+# Only executes the 3 points for strat="a", reuses cached data
+assert diag2.cached_chunks == 1  # All data reused
+assert diag2.executed_chunks == 0
+```
+
+### Flexible axis/param mapping
+
+You can choose whether to include an axis in the split spec or as a
+fixed parameter value, depending on your workflow:
+
+```python
+# Option 1: Include strat as axis (full sweep over strat values)
+memo_full = ShardMemo.auto_load(
+    cache_root="./cache",
+    params={"alpha": 0.4},
+    axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
+    allow_superset=True,
+)
+
+# Option 2: Fix strat as a parameter (single value)
+# Useful when you only need one value or plan to iterate externally
+memo_fixed = ShardMemo.auto_load(
+    cache_root="./cache",
+    params={"alpha": 0.4, "strat": "a"},  # strat as param
+    axis_values={"s": [1, 2, 3]},  # Reduced axes
+    allow_superset=True,
+)
+```
+
+Both approaches work, and `allow_superset=True` will find the appropriate cache
+or create a new one that covers your requested data.
+
+## Running examples
 
 Run the example script:
 
