@@ -38,13 +38,20 @@ def _save_chunk_payload(
     spec_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if chunk_key in missing_chunks:
-        payload: dict[str, Any] = {"output": chunk_output, "items": item_map}
+        payload: dict[str, Any] = {}
+        if item_map is not None:
+            payload["items"] = item_map
+        else:
+            payload["output"] = chunk_output
     else:
         existing = cached_payloads.get(chunk_key, {})
         payload: dict[str, Any] = dict(existing)
         existing_items = existing.get("items", {})
-        payload["items"] = {**existing_items, **item_map}
-        if "output" not in payload and chunk_output is not None:
+        merged_items = dict(existing_items)
+        if item_map is not None:
+            merged_items.update(item_map)
+        payload["items"] = merged_items
+        if "output" not in payload and chunk_output is not None and item_map is None:
             payload["output"] = chunk_output
     _apply_payload_timestamps(
         payload,
@@ -447,7 +454,14 @@ def memo_parallel_run(
             diagnostics.cached_chunks += 1
             if memo.verbose >= 2:
                 print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-            outputs.append(payload["output"])
+            chunk_output = payload.get("output")
+            if chunk_output is None:
+                items = payload.get("items")
+                if items is not None and isinstance(items, Mapping):
+                    chunk_output = memo._reconstruct_output_from_items(chunk_key, items)
+            if chunk_output is None:
+                raise ValueError("Cache payload missing required data")
+            outputs.append(chunk_output)
             report_progress_main(processed, final=processed == total_chunks)
             continue
         item_map = payload.get("items")

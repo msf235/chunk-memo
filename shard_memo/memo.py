@@ -448,13 +448,15 @@ class ShardMemo:
             diagnostics.max_stream_items,
             _stream_item_count(chunk_output),
         )
-        payload = {"output": chunk_output}
+        payload: dict[str, Any] = {}
         item_map = self._build_item_map(chunk_key, chunk_output)
         if item_map is not None:
             payload["items"] = item_map
-        item_spec = self._build_item_spec_map(chunk_key, chunk_output)
-        if item_spec is not None:
-            payload["spec"] = item_spec
+            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
+            if item_spec is not None:
+                payload["spec"] = item_spec
+        else:
+            payload["output"] = chunk_output
         _apply_payload_timestamps(payload, existing=existing_payload)
         _atomic_write_pickle(path, payload)
         self._update_chunk_index(params, chunk_hash, chunk_key)
@@ -513,7 +515,16 @@ class ShardMemo:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
                         print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-                    outputs.append(payload["output"])
+                    chunk_output = payload.get("output")
+                    if chunk_output is None:
+                        items = payload.get("items")
+                        if items is not None:
+                            chunk_output = self._reconstruct_output_from_items(
+                                chunk_key, items
+                            )
+                    if chunk_output is None:
+                        raise ValueError("Cache payload missing required data")
+                    outputs.append(chunk_output)
                     report_progress(processed, final=processed == total_chunks)
                     continue
                 cached_outputs = self._extract_cached_items(
@@ -1050,6 +1061,20 @@ class ShardMemo:
             item_key = self._item_hash(chunk_key, values)
             item_spec[item_key] = dict(zip(axis_names, values))
         return item_spec
+
+    def _reconstruct_output_from_items(
+        self, chunk_key: ChunkKey, items: Mapping[str, Any]
+    ) -> list[Any] | None:
+        axis_values = list(self._iter_chunk_axis_values(chunk_key))
+        if not axis_values:
+            return None
+        outputs: list[Any] = []
+        for values in axis_values:
+            item_key = self._item_hash(chunk_key, values)
+            if item_key not in items:
+                return None
+            outputs.append(items[item_key])
+        return outputs
 
     def _extract_cached_items(
         self,
