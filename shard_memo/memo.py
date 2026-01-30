@@ -783,6 +783,7 @@ class ShardMemo:
         lines = []
         lines.extend(format_params(params))
         lines.extend(format_spec(axis_values, axis_order))
+        lines.append(f"[ShardMemo] memo_chunk_spec: {self.memo_chunk_spec}")
         lines.append(f"[ShardMemo] plan: cached={cached_count} execute={execute_count}")
         print("\n".join(lines))
 

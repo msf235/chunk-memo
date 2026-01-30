@@ -50,7 +50,8 @@ def format_params(params: Mapping[str, Any]) -> list[str]:
     if not params:
         lines.append("  (none)")
         return lines
-    for key, value in params.items():
+    for key in sorted(params):
+        value = params[key]
         lines.append(f"  {key}={value!r}")
     return lines
 
