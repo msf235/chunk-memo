@@ -15,8 +15,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "    for chunk_key in chunk_keys:\n        chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n        path = self.cache_root / f\"{chunk_hash}.pkl\"\n        if path.exists():\n            diagnostics.cached_chunks += 1\n            continue\n\n        diagnostics.executed_chunks += 1\n        chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n        points = self.enumerate_points(params, chunk_split_spec)\n        if not points:\n            continue\n        stream_points.extend(points)\n        chunk_sizes.append(len(points))\n        chunk_paths.append(path)\n",
-  "newString": "    for chunk_key in chunk_keys:\n        chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n        path = self.cache_root / f\"{chunk_hash}.pkl\"\n        if path.exists():\n            diagnostics.cached_chunks += 1\n            continue\n\n        diagnostics.executed_chunks += 1\n        chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n        points = self.enumerate_points(params, chunk_split_spec)\n        if not points:\n            continue\n        stream_points.extend(points)\n        chunk_sizes.append(len(points))\n        chunk_paths.append(path)\n"
+  "oldString": "    for chunk_key in chunk_keys:\n        chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n        path = self.cache_root / f\"{chunk_hash}.pkl\"\n        if path.exists():\n            diagnostics.cached_chunks += 1\n            continue\n\n        diagnostics.executed_chunks += 1\n        chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n        points = self.enumerate_points(params, chunk_axis_values)\n        if not points:\n            continue\n        stream_points.extend(points)\n        chunk_sizes.append(len(points))\n        chunk_paths.append(path)\n",
+  "newString": "    for chunk_key in chunk_keys:\n        chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n        path = self.cache_root / f\"{chunk_hash}.pkl\"\n        if path.exists():\n            diagnostics.cached_chunks += 1\n            continue\n\n        diagnostics.executed_chunks += 1\n        chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n        points = self.enumerate_points(params, chunk_axis_values)\n        if not points:\n            continue\n        stream_points.extend(points)\n        chunk_sizes.append(len(points))\n        chunk_paths.append(path)\n"
 }
 ```
 **Error:**
@@ -76,10 +76,10 @@ Tool: read
 00201|         return results
 00202| 
 00203|     def run_streaming(
-00204|         self, params: dict[str, Any], split_spec: dict[str, Any]
+00204|         self, params: dict[str, Any], axis_values: dict[str, Any]
 00205|     ) -> Diagnostics:
-00206|         axis_order = self._resolve_axis_order(split_spec)
-00207|         chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+00206|         axis_order = self._resolve_axis_order(axis_values)
+00207|         chunk_keys = self._build_chunk_keys(axis_values, axis_order)
 00208|         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
 00209| 
 00210|         stream_points: List[Any] = []
@@ -94,8 +94,8 @@ Tool: read
 00219|                 continue
 00220| 
 00221|             diagnostics.executed_chunks += 1
-00222|             chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
-00223|             points = self.enumerate_points(params, chunk_split_spec)
+00222|             chunk_axis_values = {axis: list(values) for axis, values in chunk_key}
+00223|             points = self.enumerate_points(params, chunk_axis_values)
 00224|             if not points:
 00225|                 continue
 00226|             stream_points.extend(points)
@@ -127,11 +127,11 @@ Tool: read
 00252| 
 00253| 
 00254| def example_enumerate_points(
-00255|     params: dict[str, Any], split_spec: dict[str, Any]
+00255|     params: dict[str, Any], axis_values: dict[str, Any]
 00256| ) -> List[Tuple[str, int]]:
 00257|     points: List[Tuple[str, int]] = []
-00258|     for strat in split_spec["strat"]:
-00259|         for s in split_spec["s"]:
+00258|     for strat in axis_values["strat"]:
+00259|         for s in axis_values["s"]:
 00260|             points.append((strat, s))
 00261|     return points
 00262| 
@@ -180,8 +180,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "    def run_streaming(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Diagnostics:\n        axis_order = self._resolve_axis_order(split_spec)\n        chunk_keys = self._build_chunk_keys(split_spec, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_split_spec)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        exec_outputs = self._execute_points(params, stream_points, diagnostics)\n        buffer: List[Any] = []\n        chunk_index = 0\n\n        for output in exec_outputs:\n            buffer.append(output)\n            while (\n                chunk_index < len(chunk_sizes)\n                and len(buffer) >= chunk_sizes[chunk_index]\n            ):\n                size = chunk_sizes[chunk_index]\n                chunk_output = self.collate_fn(buffer[:size])\n                with open(chunk_paths[chunk_index], \"wb\") as handle:\n                    pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                diagnostics.stream_flushes += 1\n                buffer = buffer[size:]\n                chunk_index += 1\n\n        return diagnostics\n",
-  "newString": "    def run_streaming(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Diagnostics:\n        axis_order = self._resolve_axis_order(split_spec)\n        chunk_keys = self._build_chunk_keys(split_spec, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_split_spec)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n        shard_count = (\n            len(stream_points) + self.exec_chunk_size - 1\n        ) // self.exec_chunk_size\n        diagnostics.executed_shards += shard_count\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            for output in executor.map(\n                exec_fn, stream_points, chunksize=self.exec_chunk_size\n            ):\n                buffer.append(output)\n                while (\n                    chunk_index < len(chunk_sizes)\n                    and len(buffer) >= chunk_sizes[chunk_index]\n                ):\n                    size = chunk_sizes[chunk_index]\n                    chunk_output = self.collate_fn(buffer[:size])\n                    with open(chunk_paths[chunk_index], \"wb\") as handle:\n                        pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                    diagnostics.stream_flushes += 1\n                    buffer = buffer[size:]\n                    chunk_index += 1\n\n        return diagnostics\n"
+  "oldString": "    def run_streaming(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Diagnostics:\n        axis_order = self._resolve_axis_order(axis_values)\n        chunk_keys = self._build_chunk_keys(axis_values, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_axis_values)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        exec_outputs = self._execute_points(params, stream_points, diagnostics)\n        buffer: List[Any] = []\n        chunk_index = 0\n\n        for output in exec_outputs:\n            buffer.append(output)\n            while (\n                chunk_index < len(chunk_sizes)\n                and len(buffer) >= chunk_sizes[chunk_index]\n            ):\n                size = chunk_sizes[chunk_index]\n                chunk_output = self.collate_fn(buffer[:size])\n                with open(chunk_paths[chunk_index], \"wb\") as handle:\n                    pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                diagnostics.stream_flushes += 1\n                buffer = buffer[size:]\n                chunk_index += 1\n\n        return diagnostics\n",
+  "newString": "    def run_streaming(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Diagnostics:\n        axis_order = self._resolve_axis_order(axis_values)\n        chunk_keys = self._build_chunk_keys(axis_values, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_axis_values)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n        shard_count = (\n            len(stream_points) + self.exec_chunk_size - 1\n        ) // self.exec_chunk_size\n        diagnostics.executed_shards += shard_count\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            for output in executor.map(\n                exec_fn, stream_points, chunksize=self.exec_chunk_size\n            ):\n                buffer.append(output)\n                while (\n                    chunk_index < len(chunk_sizes)\n                    and len(buffer) >= chunk_sizes[chunk_index]\n                ):\n                    size = chunk_sizes[chunk_index]\n                    chunk_output = self.collate_fn(buffer[:size])\n                    with open(chunk_paths[chunk_index], \"wb\") as handle:\n                        pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                    diagnostics.stream_flushes += 1\n                    buffer = buffer[size:]\n                    chunk_index += 1\n\n        return diagnostics\n"
 }
 ```
 **Output:**
@@ -226,8 +226,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "    def run_streaming(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Diagnostics:\n        axis_order = self._resolve_axis_order(split_spec)\n",
-  "newString": "    def run_streaming(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Diagnostics:\n        \"\"\"Execute missing chunks and flush outputs to disk only.\"\"\"\n        axis_order = self._resolve_axis_order(split_spec)\n"
+  "oldString": "    def run_streaming(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Diagnostics:\n        axis_order = self._resolve_axis_order(axis_values)\n",
+  "newString": "    def run_streaming(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Diagnostics:\n        \"\"\"Execute missing chunks and flush outputs to disk only.\"\"\"\n        axis_order = self._resolve_axis_order(axis_values)\n"
 }
 ```
 **Output:**
@@ -328,11 +328,11 @@ Tool: read
 00201|         return results
 00202| 
 00203|     def run_streaming(
-00204|         self, params: dict[str, Any], split_spec: dict[str, Any]
+00204|         self, params: dict[str, Any], axis_values: dict[str, Any]
 00205|     ) -> Diagnostics:
 00206|         """Execute missing chunks and flush outputs to disk only."""
-00207|         axis_order = self._resolve_axis_order(split_spec)
-00208|         chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+00207|         axis_order = self._resolve_axis_order(axis_values)
+00208|         chunk_keys = self._build_chunk_keys(axis_values, axis_order)
 00209|         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
 00210| 
 00211|         stream_points: List[Any] = []
@@ -347,8 +347,8 @@ Tool: read
 00220|                 continue
 00221| 
 00222|             diagnostics.executed_chunks += 1
-00223|             chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
-00224|             points = self.enumerate_points(params, chunk_split_spec)
+00223|             chunk_axis_values = {axis: list(values) for axis, values in chunk_key}
+00224|             points = self.enumerate_points(params, chunk_axis_values)
 00225|             if not points:
 00226|                 continue
 00227|             stream_points.extend(points)
@@ -589,8 +589,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_split_spec)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            for shard in _iter_exec_shards(stream_points, self.exec_chunk_size):\n                diagnostics.executed_shards += 1\n                for output in executor.map(\n                    exec_fn, shard, chunksize=self.exec_chunk_size\n                ):\n                    buffer.append(output)\n                while (\n                    chunk_index < len(chunk_sizes)\n                    and len(buffer) >= chunk_sizes[chunk_index]\n                ):\n                    size = chunk_sizes[chunk_index]\n                    chunk_output = self.collate_fn(buffer[:size])\n                    with open(chunk_paths[chunk_index], \"wb\") as handle:\n                        pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                    diagnostics.stream_flushes += 1\n                    buffer = buffer[size:]\n                    chunk_index += 1\n\n        return diagnostics\n",
-  "newString": "        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_split_spec)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n        next_point_index = 0\n        total_points = len(stream_points)\n        pending: Dict[Any, int] = {}\n        results_by_index: Dict[int, Any] = {}\n        next_flush_index = 0\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            while next_point_index < total_points and len(pending) < self.exec_chunk_size:\n                future = executor.submit(exec_fn, stream_points[next_point_index])\n                pending[future] = next_point_index\n                next_point_index += 1\n\n            while pending:\n                done, _ = wait(pending, return_when=FIRST_COMPLETED)\n                for future in done:\n                    index = pending.pop(future)\n                    results_by_index[index] = future.result()\n\n                while next_flush_index in results_by_index:\n                    buffer.append(results_by_index.pop(next_flush_index))\n                    next_flush_index += 1\n                    while (\n                        chunk_index < len(chunk_sizes)\n                        and len(buffer) >= chunk_sizes[chunk_index]\n                    ):\n                        size = chunk_sizes[chunk_index]\n                        chunk_output = self.collate_fn(buffer[:size])\n                        with open(chunk_paths[chunk_index], \"wb\") as handle:\n                            pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                        diagnostics.stream_flushes += 1\n                        buffer = buffer[size:]\n                        chunk_index += 1\n\n                while (\n                    next_point_index < total_points\n                    and len(pending) < self.exec_chunk_size\n                ):\n                    future = executor.submit(exec_fn, stream_points[next_point_index])\n                    pending[future] = next_point_index\n                    next_point_index += 1\n\n        diagnostics.executed_shards += (\n            total_points + self.exec_chunk_size - 1\n        ) // self.exec_chunk_size\n        return diagnostics\n"
+  "oldString": "        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_axis_values)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            for shard in _iter_exec_shards(stream_points, self.exec_chunk_size):\n                diagnostics.executed_shards += 1\n                for output in executor.map(\n                    exec_fn, shard, chunksize=self.exec_chunk_size\n                ):\n                    buffer.append(output)\n                while (\n                    chunk_index < len(chunk_sizes)\n                    and len(buffer) >= chunk_sizes[chunk_index]\n                ):\n                    size = chunk_sizes[chunk_index]\n                    chunk_output = self.collate_fn(buffer[:size])\n                    with open(chunk_paths[chunk_index], \"wb\") as handle:\n                        pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                    diagnostics.stream_flushes += 1\n                    buffer = buffer[size:]\n                    chunk_index += 1\n\n        return diagnostics\n",
+  "newString": "        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_axis_values)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n        next_point_index = 0\n        total_points = len(stream_points)\n        pending: Dict[Any, int] = {}\n        results_by_index: Dict[int, Any] = {}\n        next_flush_index = 0\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            while next_point_index < total_points and len(pending) < self.exec_chunk_size:\n                future = executor.submit(exec_fn, stream_points[next_point_index])\n                pending[future] = next_point_index\n                next_point_index += 1\n\n            while pending:\n                done, _ = wait(pending, return_when=FIRST_COMPLETED)\n                for future in done:\n                    index = pending.pop(future)\n                    results_by_index[index] = future.result()\n\n                while next_flush_index in results_by_index:\n                    buffer.append(results_by_index.pop(next_flush_index))\n                    next_flush_index += 1\n                    while (\n                        chunk_index < len(chunk_sizes)\n                        and len(buffer) >= chunk_sizes[chunk_index]\n                    ):\n                        size = chunk_sizes[chunk_index]\n                        chunk_output = self.collate_fn(buffer[:size])\n                        with open(chunk_paths[chunk_index], \"wb\") as handle:\n                            pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                        diagnostics.stream_flushes += 1\n                        buffer = buffer[size:]\n                        chunk_index += 1\n\n                while (\n                    next_point_index < total_points\n                    and len(pending) < self.exec_chunk_size\n                ):\n                    future = executor.submit(exec_fn, stream_points[next_point_index])\n                    pending[future] = next_point_index\n                    next_point_index += 1\n\n        diagnostics.executed_shards += (\n            total_points + self.exec_chunk_size - 1\n        ) // self.exec_chunk_size\n        return diagnostics\n"
 }
 ```
 **Output:**
@@ -632,13 +632,13 @@ Absolutely. Here’s a concise battery of tests that cover correctness, caching,
 **Test Suite Proposal**
 
 **1) Chunk key stability + hashing**
-- Inputs: fixed `params`, `split_spec` with same values
+- Inputs: fixed `params`, `axis_values` with same values
 - Expect: repeated run uses identical chunk hashes (cache hits)
 - Change a single split value (e.g., `"a"` → `"aaa"`)
 - Expect: cache miss for affected chunk only
 
 **2) Basic cache reuse**
-- Run with `split_spec={"strat":["a"], "s":[1,2,3]}` and `memo_chunk_spec={"strat":1,"s":3}`
+- Run with `axis_values={"strat":["a"], "s":[1,2,3]}` and `memo_chunk_spec={"strat":1,"s":3}`
 - Second run with same inputs
 - Expect: `cached_chunks == total_chunks`, `executed_chunks == 0`
 
@@ -672,7 +672,7 @@ Absolutely. Here’s a concise battery of tests that cover correctness, caching,
 - E.g., `memo_chunk_spec={"s":3}`, `exec_chunk_size=4`
 - Expect: chunk outputs correct and no missing outputs
 
-**9) Empty or degenerate split_spec**
+**9) Empty or degenerate axis_values**
 - Empty list for one axis
 - Expect: no chunks executed, diagnostics reflect zeros, no crash
 
@@ -682,7 +682,7 @@ Absolutely. Here’s a concise battery of tests that cover correctness, caching,
 - Expect cache misses for all chunks (since chunk hash includes params)
 
 **11) Non‑hashable / complex values**
-- Use nested dicts, floats, tuples in params and split_spec
+- Use nested dicts, floats, tuples in params and axis_values
 - Ensure stable hashing and no crashes
 
 **12) Concurrency stability**
@@ -712,7 +712,7 @@ Tool: write
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "content": "import time\nfrom pathlib import Path\nimport tempfile\n\nimport pytest\n\nfrom swarm_memo import SwarmMemo\n\n\ndef enumerate_points(params, split_spec):\n    points = []\n    for strat in split_spec[\"strat\"]:\n        for s in split_spec[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef exec_fn(params, point):\n    strat, s = point\n    return {\"alpha\": params[\"alpha\"], \"strat\": strat, \"s\": s}\n\n\ndef exec_fn_sleep(params, point):\n    strat, s = point\n    time.sleep(0.05)\n    return {\"alpha\": params[\"alpha\"], \"strat\": strat, \"s\": s}\n\n\ndef collate_fn(outputs):\n    return outputs\n\n\ndef merge_fn(chunks):\n    merged = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\ndef run_memo(cache_root, exec_chunk_size=2):\n    return SwarmMemo(\n        cache_root=cache_root,\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=exec_chunk_size,\n        enumerate_points=enumerate_points,\n        exec_fn=exec_fn,\n        collate_fn=collate_fn,\n        merge_fn=merge_fn,\n        max_workers=2,\n    )\n\n\ndef run_memo_sleep(cache_root, exec_chunk_size=2):\n    return SwarmMemo(\n        cache_root=cache_root,\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=exec_chunk_size,\n        enumerate_points=enumerate_points,\n        exec_fn=exec_fn_sleep,\n        collate_fn=collate_fn,\n        merge_fn=merge_fn,\n        max_workers=2,\n    )\n\n\ndef test_basic_cache_reuse():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = memo.run(params, split_spec)\n        assert output\n        assert diag.executed_chunks == 1\n\n        output2, diag2 = memo.run(params, split_spec)\n        assert output2 == output\n        assert diag2.cached_chunks == diag2.total_chunks\n        assert diag2.executed_chunks == 0\n\n\ndef test_incremental_split_extension():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        _, diag = memo.run(params, split_spec)\n        assert diag.total_chunks == 1\n\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        _, diag2 = memo.run(params, split_spec)\n        assert diag2.total_chunks == 2\n        assert diag2.cached_chunks == 1\n        assert diag2.executed_chunks == 1\n\n\ndef test_param_change_invalidates_cache():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        _, diag = memo.run({\"alpha\": 0.4}, split_spec)\n        assert diag.executed_chunks == 1\n\n        _, diag2 = memo.run({\"alpha\": 0.5}, split_spec)\n        assert diag2.cached_chunks == 0\n        assert diag2.executed_chunks == 1\n\n\ndef test_chunk_count_grid():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\", \"b\", \"c\"], \"s\": [1, 2, 3, 4]}\n        _, diag = memo.run(params, split_spec)\n        assert diag.total_chunks == 6\n        assert diag.executed_chunks == 6\n\n\ndef test_exec_chunk_size_output_stability():\n    params = {\"alpha\": 0.4}\n    split_spec = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=1)\n        output_small, _ = memo.run(params, split_spec)\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=4)\n        output_large, _ = memo.run(params, split_spec)\n    assert output_small == output_large\n\n\ndef test_streaming_then_run_uses_cache():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n        diag_stream = memo.run_streaming(params, split_spec)\n        assert diag_stream.stream_flushes == diag_stream.executed_chunks\n\n        _, diag = memo.run(params, split_spec)\n        assert diag.executed_chunks == 0\n        assert diag.cached_chunks == diag.total_chunks\n\n\ndef test_streaming_order_preserved():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=3)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        memo.run_streaming(params, split_spec)\n        output, _ = memo.run(params, split_spec)\n        expected = [\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 1},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 2},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 3},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 4},\n        ]\n        assert output == expected\n\n\ndef test_timing_cache_speedup():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n\n        start = time.perf_counter()\n        memo.run(params, split_spec)\n        first = time.perf_counter() - start\n\n        start = time.perf_counter()\n        memo.run(params, split_spec)\n        second = time.perf_counter() - start\n\n        assert second < first * 0.3\n"
+  "content": "import time\nfrom pathlib import Path\nimport tempfile\n\nimport pytest\n\nfrom swarm_memo import SwarmMemo\n\n\ndef enumerate_points(params, axis_values):\n    points = []\n    for strat in axis_values[\"strat\"]:\n        for s in axis_values[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef exec_fn(params, point):\n    strat, s = point\n    return {\"alpha\": params[\"alpha\"], \"strat\": strat, \"s\": s}\n\n\ndef exec_fn_sleep(params, point):\n    strat, s = point\n    time.sleep(0.05)\n    return {\"alpha\": params[\"alpha\"], \"strat\": strat, \"s\": s}\n\n\ndef collate_fn(outputs):\n    return outputs\n\n\ndef merge_fn(chunks):\n    merged = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\ndef run_memo(cache_root, exec_chunk_size=2):\n    return SwarmMemo(\n        cache_root=cache_root,\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=exec_chunk_size,\n        enumerate_points=enumerate_points,\n        exec_fn=exec_fn,\n        collate_fn=collate_fn,\n        merge_fn=merge_fn,\n        max_workers=2,\n    )\n\n\ndef run_memo_sleep(cache_root, exec_chunk_size=2):\n    return SwarmMemo(\n        cache_root=cache_root,\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=exec_chunk_size,\n        enumerate_points=enumerate_points,\n        exec_fn=exec_fn_sleep,\n        collate_fn=collate_fn,\n        merge_fn=merge_fn,\n        max_workers=2,\n    )\n\n\ndef test_basic_cache_reuse():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = memo.run(params, axis_values)\n        assert output\n        assert diag.executed_chunks == 1\n\n        output2, diag2 = memo.run(params, axis_values)\n        assert output2 == output\n        assert diag2.cached_chunks == diag2.total_chunks\n        assert diag2.executed_chunks == 0\n\n\ndef test_incremental_split_extension():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        _, diag = memo.run(params, axis_values)\n        assert diag.total_chunks == 1\n\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        _, diag2 = memo.run(params, axis_values)\n        assert diag2.total_chunks == 2\n        assert diag2.cached_chunks == 1\n        assert diag2.executed_chunks == 1\n\n\ndef test_param_change_invalidates_cache():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        _, diag = memo.run({\"alpha\": 0.4}, axis_values)\n        assert diag.executed_chunks == 1\n\n        _, diag2 = memo.run({\"alpha\": 0.5}, axis_values)\n        assert diag2.cached_chunks == 0\n        assert diag2.executed_chunks == 1\n\n\ndef test_chunk_count_grid():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\", \"b\", \"c\"], \"s\": [1, 2, 3, 4]}\n        _, diag = memo.run(params, axis_values)\n        assert diag.total_chunks == 6\n        assert diag.executed_chunks == 6\n\n\ndef test_exec_chunk_size_output_stability():\n    params = {\"alpha\": 0.4}\n    axis_values = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=1)\n        output_small, _ = memo.run(params, axis_values)\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=4)\n        output_large, _ = memo.run(params, axis_values)\n    assert output_small == output_large\n\n\ndef test_streaming_then_run_uses_cache():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n        diag_stream = memo.run_streaming(params, axis_values)\n        assert diag_stream.stream_flushes == diag_stream.executed_chunks\n\n        _, diag = memo.run(params, axis_values)\n        assert diag.executed_chunks == 0\n        assert diag.cached_chunks == diag.total_chunks\n\n\ndef test_streaming_order_preserved():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=3)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        memo.run_streaming(params, axis_values)\n        output, _ = memo.run(params, axis_values)\n        expected = [\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 1},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 2},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 3},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 4},\n        ]\n        assert output == expected\n\n\ndef test_timing_cache_speedup():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n\n        start = time.perf_counter()\n        memo.run(params, axis_values)\n        first = time.perf_counter() - start\n\n        start = time.perf_counter()\n        memo.run(params, axis_values)\n        second = time.perf_counter() - start\n\n        assert second < first * 0.3\n"
 }
 ```
 **Output:**
@@ -774,13 +774,13 @@ We can absolutely design a “candy flag” wrapper for SwarmMemo. Here are a fe
 **Approach A — decorator factory (closest to Memory.cache)**
 - `memo = SwarmMemo(...)`
 - `@memo.wrap(...)` returns a wrapper that:
-  - accepts `params` + `split_spec` + optional overrides
+  - accepts `params` + `axis_values` + optional overrides
   - routes to `run` or `run_streaming` based on a flag
 - Pros: ergonomic, familiar to `Memory.cache`
-- Cons: function signature becomes specialized (must accept `params`, `split_spec`)
+- Cons: function signature becomes specialized (must accept `params`, `axis_values`)
 
 **Approach B — wrapper that extracts args by name**
-- `@memo.wrap(param_arg="params", split_arg="split_spec")`
+- `@memo.wrap(param_arg="params", split_arg="axis_values")`
 - Wrapper inspects function signature like `Memory.cache`
 - The wrapped function becomes the `exec_fn`
 - Pros: can wrap existing APIs without changing argument order
@@ -788,7 +788,7 @@ We can absolutely design a “candy flag” wrapper for SwarmMemo. Here are a fe
 
 **Approach C — build a “runner” object**
 - `runner = memo.runner(exec_fn, enumerate_points, ...)`
-- `runner.run(params, split_spec)` or `runner.streaming(params, split_spec)`
+- `runner.run(params, axis_values)` or `runner.streaming(params, axis_values)`
 - Pros: explicit, easy to debug; clean separation
 - Cons: less decorator-like
 
@@ -801,7 +801,7 @@ We can absolutely design a “candy flag” wrapper for SwarmMemo. Here are a fe
 ---
 
 **Questions to decide before planning further**
-1) Should the decorator wrap an entire “experiment function” that already takes `params` and `split_spec`, or should it wrap the per‑point `exec_fn`?
+1) Should the decorator wrap an entire “experiment function” that already takes `params` and `axis_values`, or should it wrap the per‑point `exec_fn`?
 2) Should the wrapper default to `run` or `run_streaming`?
 3) Do you want introspection (like `Memory.cache`) to pull arguments by name, or do you prefer explicit parameters for clarity?
 
@@ -835,7 +835,7 @@ memo = SwarmMemo(...)
 def exec_point(params, point):
     ...
 
-output, diag = exec_point(params=..., split_spec=...)
+output, diag = exec_point(params=..., axis_values=...)
 ```
 
 ```python
@@ -843,24 +843,24 @@ output, diag = exec_point(params=..., split_spec=...)
 def exec_point(params, point):
     ...
 
-diag = exec_point(params=..., split_spec=...)
+diag = exec_point(params=..., axis_values=...)
 ```
 
 **3) Introspection behavior**
 - The wrapper inspects the decorated function’s signature to find:
   - `params` argument name (default: `"params"`)
-  - `split_spec` argument name (default: `"split_spec"`)
+  - `axis_values` argument name (default: `"axis_values"`)
 - On call, the wrapper:
-  - extracts `params` and `split_spec` from args/kwargs
+  - extracts `params` and `axis_values` from args/kwargs
   - builds a SwarmMemo runner using the decorated function as `exec_fn`
   - invokes `run` or `run_streaming`
 
 **4) Wrapper signature**
-- The returned wrapper should accept **the same call signature** as the original exec function, but it **must** also receive `split_spec`.
-- If `split_spec` is not supplied, raise a clear error.
+- The returned wrapper should accept **the same call signature** as the original exec function, but it **must** also receive `axis_values`.
+- If `axis_values` is not supplied, raise a clear error.
 
 **5) Configurable knobs (optional in the decorator)**
-- `@memo.run_wrap(params_arg="params", split_arg="split_spec")`
+- `@memo.run_wrap(params_arg="params", split_arg="axis_values")`
 - This keeps introspection but allows nonstandard arg names.
 
 **6) Forward-compatibility**
@@ -869,7 +869,7 @@ diag = exec_point(params=..., split_spec=...)
 ---
 
 **Clarifying questions before implementation**
-1) Should the wrapper call allow **positional** args for `params` and `split_spec`, or require them as keyword args for clarity?
+1) Should the wrapper call allow **positional** args for `params` and `axis_values`, or require them as keyword args for clarity?
 2) Should the wrapper pass through any extra kwargs to the underlying exec function, or only to memoization logic?
 3) Should the wrapper expose the diagnostics return explicitly (e.g., `return output, diagnostics`) or provide a structured result object?
 
@@ -879,7 +879,7 @@ Once you confirm, I’ll proceed with implementation.
 
 ## User
 
-1) I think that positional args should be allowed for params, but split_spec should require keyword args. 2) kwargs should probably be processed and treated like normal parameters: those that are not ignored should be taken into consideration when memoizing. 3) I think direct is fine. The wrapper should be relatively transparent.
+1) I think that positional args should be allowed for params, but axis_values should require keyword args. 2) kwargs should probably be processed and treated like normal parameters: those that are not ignored should be taken into consideration when memoizing. 3) I think direct is fine. The wrapper should be relatively transparent.
 
 ---
 
@@ -896,33 +896,33 @@ Here’s the concrete plan to implement the exec_fn wrapper decorators with your
 **Plan: exec_fn wrapper decorators (transparent, introspective)**
 
 **1) Add two decorator factories to `SwarmMemo`**
-- `def run_wrap(self, *, params_arg="params", split_arg="split_spec")`
-- `def streaming_wrap(self, *, params_arg="params", split_arg="split_spec")`
+- `def run_wrap(self, *, params_arg="params", split_arg="axis_values")`
+- `def streaming_wrap(self, *, params_arg="params", split_arg="axis_values")`
 
 **2) Wrapper behavior (both)**
 - Inspect the decorated function signature with `inspect.signature`.
-- Allow **positional** `params` (first positional arg or by name), but require `split_spec` **as keyword**:
-  - If `split_spec` missing → raise `ValueError` with clear message.
+- Allow **positional** `params` (first positional arg or by name), but require `axis_values` **as keyword**:
+  - If `axis_values` missing → raise `ValueError` with clear message.
 - Collect all arguments (positional + keyword) into a dict using signature binding (`signature.bind_partial(...)`).
-- The bound arguments (minus `split_spec`) become `params` for memoization **only if** you want to treat all kwargs as fixed params.  
+- The bound arguments (minus `axis_values`) become `params` for memoization **only if** you want to treat all kwargs as fixed params.  
   - Per your request: “kwargs should be treated like normal parameters,” so yes—include them in `params` used for hashing.
 
 **3) How params are formed**
-- `params_for_hash` is built from all bound arguments **excluding** `split_spec`.
-- If `params_arg` is present, its value should be used as the primary `params` for `exec_fn` and hashing, and merged with other kwargs (excluding `split_spec`) so they are also hashed.
+- `params_for_hash` is built from all bound arguments **excluding** `axis_values`.
+- If `params_arg` is present, its value should be used as the primary `params` for `exec_fn` and hashing, and merged with other kwargs (excluding `axis_values`) so they are also hashed.
 
 **4) Exec function wiring**
 - The decorated function becomes `exec_fn(params, point)`.
-- `run_wrap` calls `self.run(params_for_hash, split_spec)`.
-- `streaming_wrap` calls `self.run_streaming(params_for_hash, split_spec)`.
+- `run_wrap` calls `self.run(params_for_hash, axis_values)`.
+- `streaming_wrap` calls `self.run_streaming(params_for_hash, axis_values)`.
 
 **5) Return values**
 - `run_wrap` returns `(output, diagnostics)` from `run`.
 - `streaming_wrap` returns `diagnostics` from `run_streaming`.
-- Wrapper otherwise transparent: user calls it like a normal function except it needs `split_spec` keyword.
+- Wrapper otherwise transparent: user calls it like a normal function except it needs `axis_values` keyword.
 
 **6) Error handling**
-- Missing `split_spec` → explicit error.
+- Missing `axis_values` → explicit error.
 - Missing `params` positional or keyword → explicit error.
 
 **7) Future ignore support**
@@ -1100,7 +1100,7 @@ Tool: read
 00084|             cache_root: Directory for chunk cache files.
 00085|             memo_chunk_spec: Per-axis chunk sizes (e.g., {"strat": 1, "s": 3}).
 00086|             exec_chunk_size: Executor batching size for points.
-00087|             enumerate_points: Builds ordered points for a split_spec.
+00087|             enumerate_points: Builds ordered points for a axis_values.
 00088|             exec_fn: Executes one point with full params, signature (params, point).
 00089|             collate_fn: Combines per-point outputs into a chunk output.
 00090|             merge_fn: Combines chunk outputs into the final output.
@@ -1127,10 +1127,10 @@ Tool: read
 00111|         self.verbose = verbose
 00112| 
 00113|     def run(
-00114|         self, params: dict[str, Any], split_spec: dict[str, Any]
+00114|         self, params: dict[str, Any], axis_values: dict[str, Any]
 00115|     ) -> Tuple[Any, Diagnostics]:
-00116|         axis_order = self._resolve_axis_order(split_spec)
-00117|         chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+00116|         axis_order = self._resolve_axis_order(axis_values)
+00117|         chunk_keys = self._build_chunk_keys(axis_values, axis_order)
 00118|         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
 00119| 
 00120|         outputs: List[Any] = []
@@ -1151,8 +1151,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "    def run(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Tuple[Any, Diagnostics]:\n",
-  "newString": "    def run(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Tuple[Any, Diagnostics]:\n"
+  "oldString": "    def run(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Tuple[Any, Diagnostics]:\n",
+  "newString": "    def run(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Tuple[Any, Diagnostics]:\n"
 }
 ```
 **Error:**
@@ -1177,7 +1177,7 @@ Tool: edit
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
   "oldString": "        self.axis_order = tuple(axis_order) if axis_order is not None else None\n        self.verbose = verbose\n\n    def run(\n",
-  "newString": "        self.axis_order = tuple(axis_order) if axis_order is not None else None\n        self.verbose = verbose\n\n    def run_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"split_spec\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:\n        \"\"\"Decorator for running memoized execution with output.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=False)\n\n    def streaming_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"split_spec\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:\n        \"\"\"Decorator for streaming memoized execution to disk only.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=True)\n\n    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                split_spec = kwargs.pop(split_arg)\n                if split_arg in kwargs:\n                    raise ValueError(f\"Duplicate '{split_arg}' argument\")\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                if extras:\n                    merged_params = dict(params)\n                    merged_params.update(extras)\n                else:\n                    merged_params = params\n\n                if streaming:\n                    return self.run_streaming(merged_params, split_spec)\n                return self.run(merged_params, split_spec)\n\n            return wrapper\n\n        return decorator\n\n    def run(\n"
+  "newString": "        self.axis_order = tuple(axis_order) if axis_order is not None else None\n        self.verbose = verbose\n\n    def run_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"axis_values\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:\n        \"\"\"Decorator for running memoized execution with output.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=False)\n\n    def streaming_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"axis_values\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:\n        \"\"\"Decorator for streaming memoized execution to disk only.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=True)\n\n    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                axis_values = kwargs.pop(split_arg)\n                if split_arg in kwargs:\n                    raise ValueError(f\"Duplicate '{split_arg}' argument\")\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                if extras:\n                    merged_params = dict(params)\n                    merged_params.update(extras)\n                else:\n                    merged_params = params\n\n                if streaming:\n                    return self.run_streaming(merged_params, axis_values)\n                return self.run(merged_params, axis_values)\n\n            return wrapper\n\n        return decorator\n\n    def run(\n"
 }
 ```
 **Output:**
@@ -1197,8 +1197,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "                split_spec = kwargs.pop(split_arg)\n                if split_arg in kwargs:\n                    raise ValueError(f\"Duplicate '{split_arg}' argument\")\n",
-  "newString": "                split_spec = kwargs.pop(split_arg)\n"
+  "oldString": "                axis_values = kwargs.pop(split_arg)\n                if split_arg in kwargs:\n                    raise ValueError(f\"Duplicate '{split_arg}' argument\")\n",
+  "newString": "                axis_values = kwargs.pop(split_arg)\n"
 }
 ```
 **Output:**
@@ -1239,8 +1239,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "def example_enumerate_points(\n    params: dict[str, Any], split_spec: dict[str, Any]\n) -> List[Tuple[str, int]]:\n    points: List[Tuple[str, int]] = []\n    for strat in split_spec[\"strat\"]:\n        for s in split_spec[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:\n    strat, s = point\n    print(point, params)\n    time.sleep(5)\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef example_collate_fn(outputs: List[dict[str, Any]]) -> List[dict[str, Any]]:\n    return outputs\n\n\ndef example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]:\n    merged: List[dict[str, Any]] = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nif __name__ == \"__main__\":\n    memo = SwarmMemo(\n        cache_root=\"./memo_cache\",\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=2,\n        enumerate_points=example_enumerate_points,\n        exec_fn=example_exec_fn,\n        collate_fn=example_collate_fn,\n        merge_fn=example_merge_fn,\n        max_workers=4,\n    )\n\n    params = {\"alpha\": 0.4}\n    split_spec = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = memo.run(params, split_spec)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n",
-  "newString": "def example_enumerate_points(\n    params: dict[str, Any], split_spec: dict[str, Any]\n) -> List[Tuple[str, int]]:\n    points: List[Tuple[str, int]] = []\n    for strat in split_spec[\"strat\"]:\n        for s in split_spec[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:\n    strat, s = point\n    print(point, params)\n    time.sleep(5)\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef example_collate_fn(outputs: List[dict[str, Any]]) -> List[dict[str, Any]]:\n    return outputs\n\n\ndef example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]:\n    merged: List[dict[str, Any]] = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nif __name__ == \"__main__\":\n    memo = SwarmMemo(\n        cache_root=\"./memo_cache\",\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=2,\n        enumerate_points=example_enumerate_points,\n        exec_fn=example_exec_fn,\n        collate_fn=example_collate_fn,\n        merge_fn=example_merge_fn,\n        max_workers=4,\n    )\n\n    @memo.run_wrap()\n    def wrapped_exec(params: dict[str, Any], point: Tuple[str, int]):\n        return example_exec_fn(params, point)\n\n    params = {\"alpha\": 0.4}\n    split_spec = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = wrapped_exec(params, split_spec=split_spec)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n"
+  "oldString": "def example_enumerate_points(\n    params: dict[str, Any], axis_values: dict[str, Any]\n) -> List[Tuple[str, int]]:\n    points: List[Tuple[str, int]] = []\n    for strat in axis_values[\"strat\"]:\n        for s in axis_values[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:\n    strat, s = point\n    print(point, params)\n    time.sleep(5)\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef example_collate_fn(outputs: List[dict[str, Any]]) -> List[dict[str, Any]]:\n    return outputs\n\n\ndef example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]:\n    merged: List[dict[str, Any]] = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nif __name__ == \"__main__\":\n    memo = SwarmMemo(\n        cache_root=\"./memo_cache\",\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=2,\n        enumerate_points=example_enumerate_points,\n        exec_fn=example_exec_fn,\n        collate_fn=example_collate_fn,\n        merge_fn=example_merge_fn,\n        max_workers=4,\n    )\n\n    params = {\"alpha\": 0.4}\n    axis_values = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = memo.run(params, axis_values)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n",
+  "newString": "def example_enumerate_points(\n    params: dict[str, Any], axis_values: dict[str, Any]\n) -> List[Tuple[str, int]]:\n    points: List[Tuple[str, int]] = []\n    for strat in axis_values[\"strat\"]:\n        for s in axis_values[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef example_exec_fn(params: dict[str, Any], point: Tuple[str, int]) -> dict[str, Any]:\n    strat, s = point\n    print(point, params)\n    time.sleep(5)\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef example_collate_fn(outputs: List[dict[str, Any]]) -> List[dict[str, Any]]:\n    return outputs\n\n\ndef example_merge_fn(chunks: List[List[dict[str, Any]]]) -> List[dict[str, Any]]:\n    merged: List[dict[str, Any]] = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nif __name__ == \"__main__\":\n    memo = SwarmMemo(\n        cache_root=\"./memo_cache\",\n        memo_chunk_spec={\"strat\": 1, \"s\": 3},\n        exec_chunk_size=2,\n        enumerate_points=example_enumerate_points,\n        exec_fn=example_exec_fn,\n        collate_fn=example_collate_fn,\n        merge_fn=example_merge_fn,\n        max_workers=4,\n    )\n\n    @memo.run_wrap()\n    def wrapped_exec(params: dict[str, Any], point: Tuple[str, int]):\n        return example_exec_fn(params, point)\n\n    params = {\"alpha\": 0.4}\n    axis_values = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = wrapped_exec(params, axis_values=axis_values)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n"
 }
 ```
 **Output:**
@@ -1256,15 +1256,15 @@ Edit applied successfully.
 Added `run_wrap` and `streaming_wrap` decorators to wrap per‑point exec functions with introspection and merged params, plus a small wrapper example in the `__main__` block.
 
 Key behavior:
-- `split_spec` must be passed as a keyword argument.
+- `axis_values` must be passed as a keyword argument.
 - `params` can be positional or keyword, but not both.
-- All non‑`split_spec` arguments are merged into the params dict for hashing.
+- All non‑`axis_values` arguments are merged into the params dict for hashing.
 - `run_wrap` returns `(output, diagnostics)`, `streaming_wrap` returns `diagnostics`.
 
 Files updated:
 - `/home/matthew/projects/swarm_eval/swarm_memo.py`
 
-If you want, I can add tests for the decorators (positional params, missing split_spec, and param merging).
+If you want, I can add tests for the decorators (positional params, missing axis_values, and param merging).
 
 ---
 
@@ -1298,10 +1298,10 @@ Tool: read
 00007| from swarm_memo import SwarmMemo
 00008| 
 00009| 
-00010| def enumerate_points(params, split_spec):
+00010| def enumerate_points(params, axis_values):
 00011|     points = []
-00012|     for strat in split_spec["strat"]:
-00013|         for s in split_spec["s"]:
+00012|     for strat in axis_values["strat"]:
+00013|         for s in axis_values["s"]:
 00014|             points.append((strat, s))
 00015|     return points
 00016| 
@@ -1358,12 +1358,12 @@ Tool: read
 00067|     with tempfile.TemporaryDirectory() as temp_dir:
 00068|         memo = run_memo_sleep(temp_dir)
 00069|         params = {"alpha": 0.4}
-00070|         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-00071|         output, diag = memo.run(params, split_spec)
+00070|         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+00071|         output, diag = memo.run(params, axis_values)
 00072|         assert output
 00073|         assert diag.executed_chunks == 1
 00074| 
-00075|         output2, diag2 = memo.run(params, split_spec)
+00075|         output2, diag2 = memo.run(params, axis_values)
 00076|         assert output2 == output
 00077|         assert diag2.cached_chunks == diag2.total_chunks
 00078|         assert diag2.executed_chunks == 0
@@ -1373,12 +1373,12 @@ Tool: read
 00082|     with tempfile.TemporaryDirectory() as temp_dir:
 00083|         memo = run_memo(temp_dir)
 00084|         params = {"alpha": 0.4}
-00085|         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-00086|         _, diag = memo.run(params, split_spec)
+00085|         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+00086|         _, diag = memo.run(params, axis_values)
 00087|         assert diag.total_chunks == 1
 00088| 
-00089|         split_spec = {"strat": ["a"], "s": [1, 2, 3, 4]}
-00090|         _, diag2 = memo.run(params, split_spec)
+00089|         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
+00090|         _, diag2 = memo.run(params, axis_values)
 00091|         assert diag2.total_chunks == 2
 00092|         assert diag2.cached_chunks == 1
 00093|         assert diag2.executed_chunks == 1
@@ -1387,11 +1387,11 @@ Tool: read
 00096| def test_param_change_invalidates_cache():
 00097|     with tempfile.TemporaryDirectory() as temp_dir:
 00098|         memo = run_memo(temp_dir)
-00099|         split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-00100|         _, diag = memo.run({"alpha": 0.4}, split_spec)
+00099|         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+00100|         _, diag = memo.run({"alpha": 0.4}, axis_values)
 00101|         assert diag.executed_chunks == 1
 00102| 
-00103|         _, diag2 = memo.run({"alpha": 0.5}, split_spec)
+00103|         _, diag2 = memo.run({"alpha": 0.5}, axis_values)
 00104|         assert diag2.cached_chunks == 0
 00105|         assert diag2.executed_chunks == 1
 00106| 
@@ -1400,21 +1400,21 @@ Tool: read
 00109|     with tempfile.TemporaryDirectory() as temp_dir:
 00110|         memo = run_memo(temp_dir)
 00111|         params = {"alpha": 0.4}
-00112|         split_spec = {"strat": ["a", "b", "c"], "s": [1, 2, 3, 4]}
-00113|         _, diag = memo.run(params, split_spec)
+00112|         axis_values = {"strat": ["a", "b", "c"], "s": [1, 2, 3, 4]}
+00113|         _, diag = memo.run(params, axis_values)
 00114|         assert diag.total_chunks == 6
 00115|         assert diag.executed_chunks == 6
 00116| 
 00117| 
 00118| def test_exec_chunk_size_output_stability():
 00119|     params = {"alpha": 0.4}
-00120|     split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+00120|     axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
 00121|     with tempfile.TemporaryDirectory() as temp_dir:
 00122|         memo = run_memo(temp_dir, exec_chunk_size=1)
-00123|         output_small, _ = memo.run(params, split_spec)
+00123|         output_small, _ = memo.run(params, axis_values)
 00124|     with tempfile.TemporaryDirectory() as temp_dir:
 00125|         memo = run_memo(temp_dir, exec_chunk_size=4)
-00126|         output_large, _ = memo.run(params, split_spec)
+00126|         output_large, _ = memo.run(params, axis_values)
 00127|     assert output_small == output_large
 00128| 
 00129| 
@@ -1422,11 +1422,11 @@ Tool: read
 00131|     with tempfile.TemporaryDirectory() as temp_dir:
 00132|         memo = run_memo(temp_dir)
 00133|         params = {"alpha": 0.4}
-00134|         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-00135|         diag_stream = memo.run_streaming(params, split_spec)
+00134|         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+00135|         diag_stream = memo.run_streaming(params, axis_values)
 00136|         assert diag_stream.stream_flushes == diag_stream.executed_chunks
 00137| 
-00138|         _, diag = memo.run(params, split_spec)
+00138|         _, diag = memo.run(params, axis_values)
 00139|         assert diag.executed_chunks == 0
 00140|         assert diag.cached_chunks == diag.total_chunks
 00141| 
@@ -1435,9 +1435,9 @@ Tool: read
 00144|     with tempfile.TemporaryDirectory() as temp_dir:
 00145|         memo = run_memo(temp_dir, exec_chunk_size=3)
 00146|         params = {"alpha": 0.4}
-00147|         split_spec = {"strat": ["a"], "s": [1, 2, 3, 4]}
-00148|         memo.run_streaming(params, split_spec)
-00149|         output, _ = memo.run(params, split_spec)
+00147|         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
+00148|         memo.run_streaming(params, axis_values)
+00149|         output, _ = memo.run(params, axis_values)
 00150|         expected = [
 00151|             {"alpha": 0.4, "strat": "a", "s": 1},
 00152|             {"alpha": 0.4, "strat": "a", "s": 2},
@@ -1451,14 +1451,14 @@ Tool: read
 00160|     with tempfile.TemporaryDirectory() as temp_dir:
 00161|         memo = run_memo_sleep(temp_dir)
 00162|         params = {"alpha": 0.4}
-00163|         split_spec = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+00163|         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
 00164| 
 00165|         start = time.perf_counter()
-00166|         memo.run(params, split_spec)
+00166|         memo.run(params, axis_values)
 00167|         first = time.perf_counter() - start
 00168| 
 00169|         start = time.perf_counter()
-00170|         memo.run(params, split_spec)
+00170|         memo.run(params, axis_values)
 00171|         second = time.perf_counter() - start
 00172| 
 00173|         assert second < first * 0.3
@@ -1501,8 +1501,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_timing_cache_speedup():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n\n        start = time.perf_counter()\n        memo.run(params, split_spec)\n        first = time.perf_counter() - start\n\n        start = time.perf_counter()\n        memo.run(params, split_spec)\n        second = time.perf_counter() - start\n\n        assert second < first * 0.3\n",
-  "newString": "@pytest.mark.flaky(reruns=2)\ndef test_timing_cache_speedup():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n\n        start = time.perf_counter()\n        memo.run(params, split_spec)\n        first = time.perf_counter() - start\n\n        start = time.perf_counter()\n        memo.run(params, split_spec)\n        second = time.perf_counter() - start\n\n        assert second < first * 0.3\n"
+  "oldString": "def test_timing_cache_speedup():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n\n        start = time.perf_counter()\n        memo.run(params, axis_values)\n        first = time.perf_counter() - start\n\n        start = time.perf_counter()\n        memo.run(params, axis_values)\n        second = time.perf_counter() - start\n\n        assert second < first * 0.3\n",
+  "newString": "@pytest.mark.flaky(reruns=2)\ndef test_timing_cache_speedup():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo_sleep(temp_dir)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\", \"b\"], \"s\": [1, 2, 3, 4]}\n\n        start = time.perf_counter()\n        memo.run(params, axis_values)\n        first = time.perf_counter() - start\n\n        start = time.perf_counter()\n        memo.run(params, axis_values)\n        second = time.perf_counter() - start\n\n        assert second < first * 0.3\n"
 }
 ```
 **Output:**
@@ -1522,8 +1522,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_streaming_order_preserved():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=3)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        memo.run_streaming(params, split_spec)\n        output, _ = memo.run(params, split_spec)\n        expected = [\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 1},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 2},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 3},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 4},\n        ]\n        assert output == expected\n",
-  "newString": "def test_streaming_order_preserved():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=3)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        memo.run_streaming(params, split_spec)\n        output, _ = memo.run(params, split_spec)\n        expected = [\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 1},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 2},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 3},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 4},\n        ]\n        assert output == expected\n\n\ndef test_run_wrap_positional_params():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=1):\n            return {\"alpha\": params[\"alpha\"], \"extra\": extra, \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, split_spec=split_spec)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 1\n\n\ndef test_run_wrap_missing_split_spec():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        with pytest.raises(ValueError, match=\"split_spec\"):\n            exec_point(params)\n\n\ndef test_run_wrap_param_merge():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=2):\n            return {\n                \"alpha\": params[\"alpha\"],\n                \"extra\": extra,\n                \"point\": point,\n            }\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, split_spec=split_spec, extra=3)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 3\n\n        output2, diag2 = exec_point(params, split_spec=split_spec, extra=3)\n        assert output2 == output\n        assert diag2.executed_chunks == 0\n\n\ndef test_run_wrap_duplicate_params_arg():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        with pytest.raises(ValueError, match=\"both positional and keyword\"):\n            exec_point(params, params=params, split_spec=split_spec)\n\n\ndef test_streaming_wrap_returns_diagnostics():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.streaming_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        diag = exec_point(params, split_spec=split_spec)\n        assert diag.executed_chunks == 1\n        assert diag.stream_flushes == 1\n"
+  "oldString": "def test_streaming_order_preserved():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=3)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        memo.run_streaming(params, axis_values)\n        output, _ = memo.run(params, axis_values)\n        expected = [\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 1},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 2},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 3},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 4},\n        ]\n        assert output == expected\n",
+  "newString": "def test_streaming_order_preserved():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir, exec_chunk_size=3)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3, 4]}\n        memo.run_streaming(params, axis_values)\n        output, _ = memo.run(params, axis_values)\n        expected = [\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 1},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 2},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 3},\n            {\"alpha\": 0.4, \"strat\": \"a\", \"s\": 4},\n        ]\n        assert output == expected\n\n\ndef test_run_wrap_positional_params():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=1):\n            return {\"alpha\": params[\"alpha\"], \"extra\": extra, \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, axis_values=axis_values)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 1\n\n\ndef test_run_wrap_missing_axis_values():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        with pytest.raises(ValueError, match=\"axis_values\"):\n            exec_point(params)\n\n\ndef test_run_wrap_param_merge():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=2):\n            return {\n                \"alpha\": params[\"alpha\"],\n                \"extra\": extra,\n                \"point\": point,\n            }\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, axis_values=axis_values, extra=3)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 3\n\n        output2, diag2 = exec_point(params, axis_values=axis_values, extra=3)\n        assert output2 == output\n        assert diag2.executed_chunks == 0\n\n\ndef test_run_wrap_duplicate_params_arg():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        with pytest.raises(ValueError, match=\"both positional and keyword\"):\n            exec_point(params, params=params, axis_values=axis_values)\n\n\ndef test_streaming_wrap_returns_diagnostics():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.streaming_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        diag = exec_point(params, axis_values=axis_values)\n        assert diag.executed_chunks == 1\n        assert diag.stream_flushes == 1\n"
 }
 ```
 **Output:**
@@ -1539,8 +1539,8 @@ Edit applied successfully.
 Added decorator tests to the suite and cleaned up imports.
 
 New tests cover:
-- positional `params` + keyword `split_spec`
-- missing `split_spec` error
+- positional `params` + keyword `axis_values`
+- missing `axis_values` error
 - params merging into cache key
 - duplicate `params` error
 - streaming wrapper returns diagnostics
@@ -1574,8 +1574,8 @@ ________________________________________________________________________________
                 return {"alpha": params["alpha"], "extra": extra, "point": point}
 
             params = {"alpha": 0.4}
-            split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-            output, diag = exec_point(params, split_spec=split_spec)
+            axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+            output, diag = exec_point(params, axis_values=axis_values)
             assert diag.executed_chunks == 1
 >           assert output[0]["extra"] == 1
                    ^^^^^^^^^^^^^^^^^^
@@ -1597,8 +1597,8 @@ ________________________________________________________________________________
                 }
 
             params = {"alpha": 0.4}
-            split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-            output, diag = exec_point(params, split_spec=split_spec, extra=3)
+            axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+            output, diag = exec_point(params, axis_values=axis_values, extra=3)
             assert diag.executed_chunks == 1
 >           assert output[0]["extra"] == 3
                    ^^^^^^^^^^^^^^^^^^
@@ -1631,8 +1631,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                split_spec = kwargs.pop(split_arg)\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                if streaming:\n                    return self.run_streaming(merged_params, split_spec)\n                return self.run(merged_params, split_spec)\n\n            return wrapper\n\n        return decorator\n",
-  "newString": "    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                split_spec = kwargs.pop(split_arg)\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                runner = self._clone_with_exec_fn(func)\n                if streaming:\n                    return runner.run_streaming(merged_params, split_spec)\n                return runner.run(merged_params, split_spec)\n\n            return wrapper\n\n        return decorator\n\n    def _clone_with_exec_fn(self, exec_fn: Callable[[dict[str, Any], Any], Any]) -> \"SwarmMemo\":\n        return SwarmMemo(\n            cache_root=self.cache_root,\n            memo_chunk_spec=self.memo_chunk_spec,\n            exec_chunk_size=self.exec_chunk_size,\n            enumerate_points=self.enumerate_points,\n            exec_fn=exec_fn,\n            collate_fn=self.collate_fn,\n            merge_fn=self.merge_fn,\n            chunk_hash_fn=self.chunk_hash_fn,\n            cache_version=self.cache_version,\n            max_workers=self.max_workers,\n            axis_order=self.axis_order,\n            verbose=self.verbose,\n        )\n"
+  "oldString": "    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                axis_values = kwargs.pop(split_arg)\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                if streaming:\n                    return self.run_streaming(merged_params, axis_values)\n                return self.run(merged_params, axis_values)\n\n            return wrapper\n\n        return decorator\n",
+  "newString": "    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                axis_values = kwargs.pop(split_arg)\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                runner = self._clone_with_exec_fn(func)\n                if streaming:\n                    return runner.run_streaming(merged_params, axis_values)\n                return runner.run(merged_params, axis_values)\n\n            return wrapper\n\n        return decorator\n\n    def _clone_with_exec_fn(self, exec_fn: Callable[[dict[str, Any], Any], Any]) -> \"SwarmMemo\":\n        return SwarmMemo(\n            cache_root=self.cache_root,\n            memo_chunk_spec=self.memo_chunk_spec,\n            exec_chunk_size=self.exec_chunk_size,\n            enumerate_points=self.enumerate_points,\n            exec_fn=exec_fn,\n            collate_fn=self.collate_fn,\n            merge_fn=self.merge_fn,\n            chunk_hash_fn=self.chunk_hash_fn,\n            cache_version=self.cache_version,\n            max_workers=self.max_workers,\n            axis_order=self.axis_order,\n            verbose=self.verbose,\n        )\n"
 }
 ```
 **Output:**
@@ -1705,14 +1705,14 @@ The above exception was the direct cause of the following exception:
                 return {"alpha": params["alpha"], "extra": extra, "point": point}
 
             params = {"alpha": 0.4}
-            split_spec = {"strat": ["a"], "s": [1, 2, 3]}
->           output, diag = exec_point(params, split_spec=split_spec)
+            axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+>           output, diag = exec_point(params, axis_values=axis_values)
                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 tests/test_swarm_memo.py:169:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 swarm_memo.py:161: in wrapper
-    return runner.run(merged_params, split_spec)
+    return runner.run(merged_params, axis_values)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 swarm_memo.py:214: in run
     exec_outputs = self._execute_points(params, all_points, diagnostics)
@@ -1794,14 +1794,14 @@ The above exception was the direct cause of the following exception:
                 }
 
             params = {"alpha": 0.4}
-            split_spec = {"strat": ["a"], "s": [1, 2, 3]}
->           output, diag = exec_point(params, split_spec=split_spec, extra=3)
+            axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+>           output, diag = exec_point(params, axis_values=axis_values, extra=3)
                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 tests/test_swarm_memo.py:201:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 swarm_memo.py:161: in wrapper
-    return runner.run(merged_params, split_spec)
+    return runner.run(merged_params, axis_values)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 swarm_memo.py:214: in run
     exec_outputs = self._execute_points(params, all_points, diagnostics)
@@ -1875,14 +1875,14 @@ The above exception was the direct cause of the following exception:
                 return {"alpha": params["alpha"], "point": point}
 
             params = {"alpha": 0.4}
-            split_spec = {"strat": ["a"], "s": [1, 2, 3]}
->           diag = exec_point(params, split_spec=split_spec)
+            axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+>           diag = exec_point(params, axis_values=axis_values)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 tests/test_swarm_memo.py:234:
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 swarm_memo.py:160: in wrapper
-    return runner.run_streaming(merged_params, split_spec)
+    return runner.run_streaming(merged_params, axis_values)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 swarm_memo.py:328: in run_streaming
     results_by_index[index] = future.result()
@@ -1960,8 +1960,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_run_wrap_positional_params():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=1):\n            return {\"alpha\": params[\"alpha\"], \"extra\": extra, \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, split_spec=split_spec)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 1\n",
-  "newString": "def test_run_wrap_positional_params():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_extra_default)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, split_spec=split_spec)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 1\n"
+  "oldString": "def test_run_wrap_positional_params():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=1):\n            return {\"alpha\": params[\"alpha\"], \"extra\": extra, \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, axis_values=axis_values)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 1\n",
+  "newString": "def test_run_wrap_positional_params():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_extra_default)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, axis_values=axis_values)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 1\n"
 }
 ```
 **Output:**
@@ -1981,8 +1981,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_run_wrap_missing_split_spec():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        with pytest.raises(ValueError, match=\"split_spec\"):\n            exec_point(params)\n",
-  "newString": "def test_run_wrap_missing_split_spec():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_basic)\n        params = {\"alpha\": 0.4}\n        with pytest.raises(ValueError, match=\"split_spec\"):\n            exec_point(params)\n"
+  "oldString": "def test_run_wrap_missing_axis_values():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        with pytest.raises(ValueError, match=\"axis_values\"):\n            exec_point(params)\n",
+  "newString": "def test_run_wrap_missing_axis_values():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_basic)\n        params = {\"alpha\": 0.4}\n        with pytest.raises(ValueError, match=\"axis_values\"):\n            exec_point(params)\n"
 }
 ```
 **Output:**
@@ -2002,8 +2002,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_run_wrap_param_merge():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=2):\n            return {\n                \"alpha\": params[\"alpha\"],\n                \"extra\": extra,\n                \"point\": point,\n            }\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, split_spec=split_spec, extra=3)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 3\n\n        output2, diag2 = exec_point(params, split_spec=split_spec, extra=3)\n        assert output2 == output\n        assert diag2.executed_chunks == 0\n",
-  "newString": "def test_run_wrap_param_merge():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_extra_param)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, split_spec=split_spec, extra=3)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 3\n\n        output2, diag2 = exec_point(params, split_spec=split_spec, extra=3)\n        assert output2 == output\n        assert diag2.executed_chunks == 0\n"
+  "oldString": "def test_run_wrap_param_merge():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point, extra=2):\n            return {\n                \"alpha\": params[\"alpha\"],\n                \"extra\": extra,\n                \"point\": point,\n            }\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, axis_values=axis_values, extra=3)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 3\n\n        output2, diag2 = exec_point(params, axis_values=axis_values, extra=3)\n        assert output2 == output\n        assert diag2.executed_chunks == 0\n",
+  "newString": "def test_run_wrap_param_merge():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_extra_param)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        output, diag = exec_point(params, axis_values=axis_values, extra=3)\n        assert diag.executed_chunks == 1\n        assert output[0][\"extra\"] == 3\n\n        output2, diag2 = exec_point(params, axis_values=axis_values, extra=3)\n        assert output2 == output\n        assert diag2.executed_chunks == 0\n"
 }
 ```
 **Output:**
@@ -2023,8 +2023,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_run_wrap_duplicate_params_arg():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        with pytest.raises(ValueError, match=\"both positional and keyword\"):\n            exec_point(params, params=params, split_spec=split_spec)\n",
-  "newString": "def test_run_wrap_duplicate_params_arg():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_basic)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        with pytest.raises(ValueError, match=\"both positional and keyword\"):\n            exec_point(params, params=params, split_spec=split_spec)\n"
+  "oldString": "def test_run_wrap_duplicate_params_arg():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.run_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        with pytest.raises(ValueError, match=\"both positional and keyword\"):\n            exec_point(params, params=params, axis_values=axis_values)\n",
+  "newString": "def test_run_wrap_duplicate_params_arg():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.run_wrap()(exec_point_basic)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        with pytest.raises(ValueError, match=\"both positional and keyword\"):\n            exec_point(params, params=params, axis_values=axis_values)\n"
 }
 ```
 **Output:**
@@ -2044,8 +2044,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/tests/test_swarm_memo.py",
-  "oldString": "def test_streaming_wrap_returns_diagnostics():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.streaming_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        diag = exec_point(params, split_spec=split_spec)\n        assert diag.executed_chunks == 1\n        assert diag.stream_flushes == 1\n",
-  "newString": "def test_streaming_wrap_returns_diagnostics():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.streaming_wrap()(exec_point_basic)\n        params = {\"alpha\": 0.4}\n        split_spec = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        diag = exec_point(params, split_spec=split_spec)\n        assert diag.executed_chunks == 1\n        assert diag.stream_flushes == 1\n"
+  "oldString": "def test_streaming_wrap_returns_diagnostics():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        @memo.streaming_wrap()\n        def exec_point(params, point):\n            return {\"alpha\": params[\"alpha\"], \"point\": point}\n\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        diag = exec_point(params, axis_values=axis_values)\n        assert diag.executed_chunks == 1\n        assert diag.stream_flushes == 1\n",
+  "newString": "def test_streaming_wrap_returns_diagnostics():\n    with tempfile.TemporaryDirectory() as temp_dir:\n        memo = run_memo(temp_dir)\n\n        exec_point = memo.streaming_wrap()(exec_point_basic)\n        params = {\"alpha\": 0.4}\n        axis_values = {\"strat\": [\"a\"], \"s\": [1, 2, 3]}\n        diag = exec_point(params, axis_values=axis_values)\n        assert diag.executed_chunks == 1\n        assert diag.stream_flushes == 1\n"
 }
 ```
 **Output:**
@@ -2089,8 +2089,8 @@ ________________________________________________________________________________
 
             exec_point = memo.run_wrap()(exec_point_extra_param)
             params = {"alpha": 0.4}
-            split_spec = {"strat": ["a"], "s": [1, 2, 3]}
-            output, diag = exec_point(params, split_spec=split_spec, extra=3)
+            axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+            output, diag = exec_point(params, axis_values=axis_values, extra=3)
             assert diag.executed_chunks == 1
 >           assert output[0]["extra"] == 3
 E           assert 2 == 3
@@ -2129,7 +2129,7 @@ Tool: read
 ```
 <file>
 00121|     def streaming_wrap(
-00122|         self, *, params_arg: str = "params", split_arg: str = "split_spec"
+00122|         self, *, params_arg: str = "params", split_arg: str = "axis_values"
 00123|     ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
 00124|         """Decorator for streaming memoized execution to disk only."""
 00125|         return self._build_wrapper(
@@ -2146,7 +2146,7 @@ Tool: read
 00136|             def wrapper(*args: Any, **kwargs: Any) -> Any:
 00137|                 if split_arg not in kwargs:
 00138|                     raise ValueError(f"Missing required keyword argument '{split_arg}'")
-00139|                 split_spec = kwargs.pop(split_arg)
+00139|                 axis_values = kwargs.pop(split_arg)
 00140| 
 00141|                 if params_arg in kwargs and args:
 00142|                     raise ValueError(
@@ -2167,8 +2167,8 @@ Tool: read
 00157| 
 00158|                 runner = self._clone_with_exec_fn(func)
 00159|                 if streaming:
-00160|                     return runner.run_streaming(merged_params, split_spec)
-00161|                 return runner.run(merged_params, split_spec)
+00160|                     return runner.run_streaming(merged_params, axis_values)
+00161|                 return runner.run(merged_params, axis_values)
 00162| 
 00163|             return wrapper
 00164| 
@@ -2193,10 +2193,10 @@ Tool: read
 00183|         )
 00184| 
 00185|     def run(
-00186|         self, params: dict[str, Any], split_spec: dict[str, Any]
+00186|         self, params: dict[str, Any], axis_values: dict[str, Any]
 00187|     ) -> Tuple[Any, Diagnostics]:
-00188|         axis_order = self._resolve_axis_order(split_spec)
-00189|         chunk_keys = self._build_chunk_keys(split_spec, axis_order)
+00188|         axis_order = self._resolve_axis_order(axis_values)
+00189|         chunk_keys = self._build_chunk_keys(axis_values, axis_order)
 00190|         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
 00191| 
 00192|         outputs: List[Any] = []
@@ -2229,8 +2229,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                runner = self._clone_with_exec_fn(func)\n                if streaming:\n                    return runner.run_streaming(merged_params, split_spec)\n                return runner.run(merged_params, split_spec)\n",
-  "newString": "                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                exec_fn = functools.partial(func, **extras)\n                runner = self._clone_with_exec_fn(exec_fn)\n                if streaming:\n                    return runner.run_streaming(merged_params, split_spec)\n                return runner.run(merged_params, split_spec)\n"
+  "oldString": "                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                runner = self._clone_with_exec_fn(func)\n                if streaming:\n                    return runner.run_streaming(merged_params, axis_values)\n                return runner.run(merged_params, axis_values)\n",
+  "newString": "                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                exec_fn = functools.partial(func, **extras)\n                runner = self._clone_with_exec_fn(exec_fn)\n                if streaming:\n                    return runner.run_streaming(merged_params, axis_values)\n                return runner.run(merged_params, axis_values)\n"
 }
 ```
 **Output:**
@@ -2291,8 +2291,8 @@ Tool: read
 00204|                 continue
 00205| 
 00206|             diagnostics.executed_chunks += 1
-00207|             chunk_split_spec = {axis: list(values) for axis, values in chunk_key}
-00208|             points = self.enumerate_points(params, chunk_split_spec)
+00207|             chunk_axis_values = {axis: list(values) for axis, values in chunk_key}
+00208|             points = self.enumerate_points(params, chunk_axis_values)
 00209|             start = len(all_points)
 00210|             all_points.extend(points)
 00211|             end = len(all_points)
@@ -2310,19 +2310,19 @@ Tool: read
 00223|         merged = self.merge_fn(outputs)
 00224|         return merged, diagnostics
 00225| 
-00226|     def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
+00226|     def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
 00227|         if self.axis_order is not None:
 00228|             return self.axis_order
-00229|         return tuple(sorted(split_spec))
+00229|         return tuple(sorted(axis_values))
 00230| 
 00231|     def _build_chunk_keys(
-00232|         self, split_spec: dict[str, Any], axis_order: Sequence[str]
+00232|         self, axis_values: dict[str, Any], axis_order: Sequence[str]
 00233|     ) -> List[ChunkKey]:
 00234|         axis_chunks: List[List[Tuple[Any, ...]]] = []
 00235|         for axis in axis_order:
-00236|             values = split_spec.get(axis)
+00236|             values = axis_values.get(axis)
 00237|             if values is None:
-00238|                 raise KeyError(f"Missing axis '{axis}' in split_spec")
+00238|                 raise KeyError(f"Missing axis '{axis}' in axis_values")
 00239|             size = self._resolve_axis_chunk_size(axis)
 00240|             axis_chunks.append(_chunk_values(values, size))
 00241| 
@@ -2362,7 +2362,7 @@ Tool: read
 00275|         return results
 00276| 
 00277|     def run_streaming(
-00278|         self, params: dict[str, Any], split_spec: dict[str, Any]
+00278|         self, params: dict[str, Any], axis_values: dict[str, Any]
 00279|     ) -> Diagnostics:
 00280|         """Execute missing chunks and flush outputs to disk only."""
 
@@ -2457,11 +2457,11 @@ Tool: read
 00362| 
 00363| 
 00364| def example_enumerate_points(
-00365|     params: dict[str, Any], split_spec: dict[str, Any]
+00365|     params: dict[str, Any], axis_values: dict[str, Any]
 00366| ) -> List[Tuple[str, int]]:
 00367|     points: List[Tuple[str, int]] = []
-00368|     for strat in split_spec["strat"]:
-00369|         for s in split_spec["s"]:
+00368|     for strat in axis_values["strat"]:
+00369|         for s in axis_values["s"]:
 00370|             points.append((strat, s))
 00371|     return points
 00372| 
@@ -2501,11 +2501,11 @@ Tool: read
 00362| 
 00363| 
 00364| def example_enumerate_points(
-00365|     params: dict[str, Any], split_spec: dict[str, Any]
+00365|     params: dict[str, Any], axis_values: dict[str, Any]
 00366| ) -> List[Tuple[str, int]]:
 00367|     points: List[Tuple[str, int]] = []
-00368|     for strat in split_spec["strat"]:
-00369|         for s in split_spec["s"]:
+00368|     for strat in axis_values["strat"]:
+00369|         for s in axis_values["s"]:
 00370|             points.append((strat, s))
 00371|     return points
 00372| 
@@ -2545,8 +2545,8 @@ Tool: read
 00406|         return example_exec_fn(params, point)
 00407| 
 00408|     params = {"alpha": 0.4}
-00409|     split_spec = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-00410|     output, diag = wrapped_exec(params, split_spec=split_spec)
+00409|     axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
+00410|     output, diag = wrapped_exec(params, axis_values=axis_values)
 00411|     print("Output:", output)
 00412|     print("Diagnostics:", dataclasses.asdict(diag))
 00413| 
@@ -2592,8 +2592,8 @@ Tool: edit
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo.py",
-  "oldString": "    @memo.run_wrap()\n    def wrapped_exec(params: dict[str, Any], point: Tuple[str, int]):\n        return example_exec_fn(params, point)\n\n    params = {\"alpha\": 0.4}\n    split_spec = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = wrapped_exec(params, split_spec=split_spec)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n",
-  "newString": "    params = {\"alpha\": 0.4}\n    split_spec = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = memo.run(params, split_spec)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n"
+  "oldString": "    @memo.run_wrap()\n    def wrapped_exec(params: dict[str, Any], point: Tuple[str, int]):\n        return example_exec_fn(params, point)\n\n    params = {\"alpha\": 0.4}\n    axis_values = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = wrapped_exec(params, axis_values=axis_values)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n",
+  "newString": "    params = {\"alpha\": 0.4}\n    axis_values = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\n    output, diag = memo.run(params, axis_values)\n    print(\"Output:\", output)\n    print(\"Diagnostics:\", dataclasses.asdict(diag))\n"
 }
 ```
 **Output:**
@@ -2853,7 +2853,7 @@ Tool: write
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/swarm_memo/core.py",
-  "content": "from __future__ import annotations\n\nimport dataclasses\nimport functools\nimport hashlib\nimport inspect\nimport itertools\nimport pickle\nfrom concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait\nfrom pathlib import Path\nfrom typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple\n\nChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]\n\n\n@dataclasses.dataclass\nclass Diagnostics:\n    total_chunks: int = 0\n    cached_chunks: int = 0\n    executed_chunks: int = 0\n    executed_shards: int = 0\n    merges: int = 0\n    stream_flushes: int = 0\n\n\ndef _stable_serialize(value: Any) -> str:\n    if isinstance(value, dict):\n        items = ((k, _stable_serialize(value[k])) for k in sorted(value))\n        return \"{\" + \",\".join(f\"{k}:{v}\" for k, v in items) + \"}\"\n    if isinstance(value, (list, tuple)):\n        inner = \",\".join(_stable_serialize(v) for v in value)\n        return \"[\" + inner + \"]\"\n    return repr(value)\n\n\ndef default_chunk_hash(\n    params: dict[str, Any], chunk_key: ChunkKey, version: str\n) -> str:\n    payload = {\n        \"params\": params,\n        \"chunk_key\": chunk_key,\n        \"version\": version,\n    }\n    data = _stable_serialize(payload)\n    return hashlib.sha256(data.encode(\"utf-8\")).hexdigest()\n\n\ndef _chunk_values(values: Sequence[Any], size: int) -> List[Tuple[Any, ...]]:\n    if size <= 0:\n        raise ValueError(\"chunk size must be > 0\")\n    chunks: List[Tuple[Any, ...]] = []\n    for start in range(0, len(values), size):\n        end = min(start + size, len(values))\n        chunks.append(tuple(values[start:end]))\n    return chunks\n\n\ndef _iter_exec_shards(points: Sequence[Any], shard_size: int) -> Iterable[List[Any]]:\n    for start in range(0, len(points), shard_size):\n        end = min(start + shard_size, len(points))\n        yield list(points[start:end])\n\n\nclass SwarmMemo:\n    def __init__(\n        self,\n        cache_root: str | Path,\n        memo_chunk_spec: dict[str, Any],\n        exec_chunk_size: int,\n        enumerate_points: Callable[[dict[str, Any], dict[str, Any]], List[Any]],\n        exec_fn: Callable[[dict[str, Any], Any], Any],\n        collate_fn: Callable[[List[Any]], Any],\n        merge_fn: Callable[[List[Any]], Any],\n        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,\n        cache_version: str = \"v1\",\n        max_workers: int | None = None,\n        axis_order: Sequence[str] | None = None,\n        verbose: int = 1,\n    ) -> None:\n        \"\"\"Initialize a SwarmMemo runner.\n\n        Args:\n            cache_root: Directory for chunk cache files.\n            memo_chunk_spec: Per-axis chunk sizes (e.g., {\"strat\": 1, \"s\": 3}).\n            exec_chunk_size: Executor batching size for points.\n            enumerate_points: Builds ordered points for a split_spec.\n            exec_fn: Executes one point with full params, signature (params, point).\n            collate_fn: Combines per-point outputs into a chunk output.\n            merge_fn: Combines chunk outputs into the final output.\n            chunk_hash_fn: Optional override for chunk hashing.\n            cache_version: Cache namespace/version tag.\n            max_workers: Max process workers for execution.\n            axis_order: Axis iteration order (defaults to lexicographic).\n            verbose: Verbosity flag.\n        \"\"\"\n        if exec_chunk_size <= 0:\n            raise ValueError(\"exec_chunk_size must be > 0\")\n        self.cache_root = Path(cache_root)\n        self.cache_root.mkdir(parents=True, exist_ok=True)\n        self.memo_chunk_spec = memo_chunk_spec\n        self.exec_chunk_size = exec_chunk_size\n        self.enumerate_points = enumerate_points\n        self.exec_fn = exec_fn\n        self.collate_fn = collate_fn\n        self.merge_fn = merge_fn\n        self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash\n        self.cache_version = cache_version\n        self.max_workers = max_workers\n        self.axis_order = tuple(axis_order) if axis_order is not None else None\n        self.verbose = verbose\n\n    def run_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"split_spec\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:\n        \"\"\"Decorator for running memoized execution with output.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=False)\n\n    def streaming_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"split_spec\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:\n        \"\"\"Decorator for streaming memoized execution to disk only.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=True)\n\n    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                split_spec = kwargs.pop(split_arg)\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                try:\n                    pickle.dumps(func)\n                except Exception as exc:\n                    raise ValueError(\n                        \"exec_fn must be a top-level function to work with \"\n                        \"ProcessPoolExecutor\"\n                    ) from exc\n\n                exec_fn = functools.partial(func, **extras)\n                runner = self._clone_with_exec_fn(exec_fn)\n                if streaming:\n                    return runner.run_streaming(merged_params, split_spec)\n                return runner.run(merged_params, split_spec)\n\n            return wrapper\n\n        return decorator\n\n    def _clone_with_exec_fn(\n        self, exec_fn: Callable[[dict[str, Any], Any], Any]\n    ) -> \"SwarmMemo\":\n        return SwarmMemo(\n            cache_root=self.cache_root,\n            memo_chunk_spec=self.memo_chunk_spec,\n            exec_chunk_size=self.exec_chunk_size,\n            enumerate_points=self.enumerate_points,\n            exec_fn=exec_fn,\n            collate_fn=self.collate_fn,\n            merge_fn=self.merge_fn,\n            chunk_hash_fn=self.chunk_hash_fn,\n            cache_version=self.cache_version,\n            max_workers=self.max_workers,\n            axis_order=self.axis_order,\n            verbose=self.verbose,\n        )\n\n    def run(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Tuple[Any, Diagnostics]:\n        axis_order = self._resolve_axis_order(split_spec)\n        chunk_keys = self._build_chunk_keys(split_spec, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        outputs: List[Any] = []\n        all_points: List[Any] = []\n        point_ranges: List[Tuple[ChunkKey, int, int, Path]] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                with open(path, \"rb\") as handle:\n                    outputs.append(pickle.load(handle)[\"output\"])\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_split_spec)\n            start = len(all_points)\n            all_points.extend(points)\n            end = len(all_points)\n            point_ranges.append((chunk_key, start, end, path))\n\n        if all_points:\n            exec_outputs = self._execute_points(params, all_points, diagnostics)\n            for chunk_key, start, end, path in point_ranges:\n                chunk_output = self.collate_fn(exec_outputs[start:end])\n                with open(path, \"wb\") as handle:\n                    pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                outputs.append(chunk_output)\n\n        diagnostics.merges += 1\n        merged = self.merge_fn(outputs)\n        return merged, diagnostics\n\n    def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:\n        if self.axis_order is not None:\n            return self.axis_order\n        return tuple(sorted(split_spec))\n\n    def _build_chunk_keys(\n        self, split_spec: dict[str, Any], axis_order: Sequence[str]\n    ) -> List[ChunkKey]:\n        axis_chunks: List[List[Tuple[Any, ...]]] = []\n        for axis in axis_order:\n            values = split_spec.get(axis)\n            if values is None:\n                raise KeyError(f\"Missing axis '{axis}' in split_spec\")\n            size = self._resolve_axis_chunk_size(axis)\n            axis_chunks.append(_chunk_values(values, size))\n\n        chunk_keys: List[ChunkKey] = []\n        for product in itertools.product(*axis_chunks):\n            chunk_key = tuple(\n                (axis, tuple(values)) for axis, values in zip(axis_order, product)\n            )\n            chunk_keys.append(chunk_key)\n        return chunk_keys\n\n    def _resolve_axis_chunk_size(self, axis: str) -> int:\n        spec = self.memo_chunk_spec.get(axis)\n        if spec is None:\n            raise KeyError(f\"Missing memo_chunk_spec for axis '{axis}'\")\n        if isinstance(spec, dict):\n            size = spec.get(\"size\")\n            if size is None:\n                raise KeyError(f\"Missing size for axis '{axis}'\")\n            return int(size)\n        return int(spec)\n\n    def _execute_points(\n        self, params: dict[str, Any], points: Sequence[Any], diagnostics: Diagnostics\n    ) -> List[Any]:\n        if not points:\n            return []\n        results: List[Any] = []\n        shard_count = (len(points) + self.exec_chunk_size - 1) // self.exec_chunk_size\n        diagnostics.executed_shards += shard_count\n        exec_fn = functools.partial(self.exec_fn, params)\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            results.extend(\n                executor.map(exec_fn, points, chunksize=self.exec_chunk_size)\n            )\n        return results\n\n    def run_streaming(\n        self, params: dict[str, Any], split_spec: dict[str, Any]\n    ) -> Diagnostics:\n        \"\"\"Execute missing chunks and flush outputs to disk only.\"\"\"\n        axis_order = self._resolve_axis_order(split_spec)\n        chunk_keys = self._build_chunk_keys(split_spec, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_split_spec = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_split_spec)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n        next_point_index = 0\n        total_points = len(stream_points)\n        pending: Dict[Any, int] = {}\n        results_by_index: Dict[int, Any] = {}\n        next_flush_index = 0\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            while next_point_index < total_points and len(pending) < self.exec_chunk_size:\n                future = executor.submit(exec_fn, stream_points[next_point_index])\n                pending[future] = next_point_index\n                next_point_index += 1\n\n            while pending:\n                done, _ = wait(pending, return_when=FIRST_COMPLETED)\n                for future in done:\n                    index = pending.pop(future)\n                    results_by_index[index] = future.result()\n\n                while next_flush_index in results_by_index:\n                    buffer.append(results_by_index.pop(next_flush_index))\n                    next_flush_index += 1\n                    while (\n                        chunk_index < len(chunk_sizes)\n                        and len(buffer) >= chunk_sizes[chunk_index]\n                    ):\n                        size = chunk_sizes[chunk_index]\n                        chunk_output = self.collate_fn(buffer[:size])\n                        with open(chunk_paths[chunk_index], \"wb\") as handle:\n                            pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                        diagnostics.stream_flushes += 1\n                        buffer = buffer[size:]\n                        chunk_index += 1\n\n                while (\n                    next_point_index < total_points\n                    and len(pending) < self.exec_chunk_size\n                ):\n                    future = executor.submit(exec_fn, stream_points[next_point_index])\n                    pending[future] = next_point_index\n                    next_point_index += 1\n\n        diagnostics.executed_shards += (\n            total_points + self.exec_chunk_size - 1\n        ) // self.exec_chunk_size\n        return diagnostics\n"
+  "content": "from __future__ import annotations\n\nimport dataclasses\nimport functools\nimport hashlib\nimport inspect\nimport itertools\nimport pickle\nfrom concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait\nfrom pathlib import Path\nfrom typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple\n\nChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]\n\n\n@dataclasses.dataclass\nclass Diagnostics:\n    total_chunks: int = 0\n    cached_chunks: int = 0\n    executed_chunks: int = 0\n    executed_shards: int = 0\n    merges: int = 0\n    stream_flushes: int = 0\n\n\ndef _stable_serialize(value: Any) -> str:\n    if isinstance(value, dict):\n        items = ((k, _stable_serialize(value[k])) for k in sorted(value))\n        return \"{\" + \",\".join(f\"{k}:{v}\" for k, v in items) + \"}\"\n    if isinstance(value, (list, tuple)):\n        inner = \",\".join(_stable_serialize(v) for v in value)\n        return \"[\" + inner + \"]\"\n    return repr(value)\n\n\ndef default_chunk_hash(\n    params: dict[str, Any], chunk_key: ChunkKey, version: str\n) -> str:\n    payload = {\n        \"params\": params,\n        \"chunk_key\": chunk_key,\n        \"version\": version,\n    }\n    data = _stable_serialize(payload)\n    return hashlib.sha256(data.encode(\"utf-8\")).hexdigest()\n\n\ndef _chunk_values(values: Sequence[Any], size: int) -> List[Tuple[Any, ...]]:\n    if size <= 0:\n        raise ValueError(\"chunk size must be > 0\")\n    chunks: List[Tuple[Any, ...]] = []\n    for start in range(0, len(values), size):\n        end = min(start + size, len(values))\n        chunks.append(tuple(values[start:end]))\n    return chunks\n\n\ndef _iter_exec_shards(points: Sequence[Any], shard_size: int) -> Iterable[List[Any]]:\n    for start in range(0, len(points), shard_size):\n        end = min(start + shard_size, len(points))\n        yield list(points[start:end])\n\n\nclass SwarmMemo:\n    def __init__(\n        self,\n        cache_root: str | Path,\n        memo_chunk_spec: dict[str, Any],\n        exec_chunk_size: int,\n        enumerate_points: Callable[[dict[str, Any], dict[str, Any]], List[Any]],\n        exec_fn: Callable[[dict[str, Any], Any], Any],\n        collate_fn: Callable[[List[Any]], Any],\n        merge_fn: Callable[[List[Any]], Any],\n        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,\n        cache_version: str = \"v1\",\n        max_workers: int | None = None,\n        axis_order: Sequence[str] | None = None,\n        verbose: int = 1,\n    ) -> None:\n        \"\"\"Initialize a SwarmMemo runner.\n\n        Args:\n            cache_root: Directory for chunk cache files.\n            memo_chunk_spec: Per-axis chunk sizes (e.g., {\"strat\": 1, \"s\": 3}).\n            exec_chunk_size: Executor batching size for points.\n            enumerate_points: Builds ordered points for a axis_values.\n            exec_fn: Executes one point with full params, signature (params, point).\n            collate_fn: Combines per-point outputs into a chunk output.\n            merge_fn: Combines chunk outputs into the final output.\n            chunk_hash_fn: Optional override for chunk hashing.\n            cache_version: Cache namespace/version tag.\n            max_workers: Max process workers for execution.\n            axis_order: Axis iteration order (defaults to lexicographic).\n            verbose: Verbosity flag.\n        \"\"\"\n        if exec_chunk_size <= 0:\n            raise ValueError(\"exec_chunk_size must be > 0\")\n        self.cache_root = Path(cache_root)\n        self.cache_root.mkdir(parents=True, exist_ok=True)\n        self.memo_chunk_spec = memo_chunk_spec\n        self.exec_chunk_size = exec_chunk_size\n        self.enumerate_points = enumerate_points\n        self.exec_fn = exec_fn\n        self.collate_fn = collate_fn\n        self.merge_fn = merge_fn\n        self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash\n        self.cache_version = cache_version\n        self.max_workers = max_workers\n        self.axis_order = tuple(axis_order) if axis_order is not None else None\n        self.verbose = verbose\n\n    def run_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"axis_values\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:\n        \"\"\"Decorator for running memoized execution with output.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=False)\n\n    def streaming_wrap(\n        self, *, params_arg: str = \"params\", split_arg: str = \"axis_values\"\n    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:\n        \"\"\"Decorator for streaming memoized execution to disk only.\"\"\"\n        return self._build_wrapper(params_arg=params_arg, split_arg=split_arg, streaming=True)\n\n    def _build_wrapper(\n        self, *, params_arg: str, split_arg: str, streaming: bool\n    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:\n        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:\n            signature = inspect.signature(func)\n\n            @functools.wraps(func)\n            def wrapper(*args: Any, **kwargs: Any) -> Any:\n                if split_arg not in kwargs:\n                    raise ValueError(f\"Missing required keyword argument '{split_arg}'\")\n                axis_values = kwargs.pop(split_arg)\n\n                if params_arg in kwargs and args:\n                    raise ValueError(\n                        f\"'{params_arg}' passed as both positional and keyword\"\n                    )\n\n                bound = signature.bind_partial(*args, **kwargs)\n                bound.apply_defaults()\n                if params_arg not in bound.arguments:\n                    raise ValueError(f\"Missing required argument '{params_arg}'\")\n\n                params = bound.arguments[params_arg]\n                if not isinstance(params, dict):\n                    raise ValueError(f\"'{params_arg}' must be a dict\")\n                extras = {k: v for k, v in bound.arguments.items() if k != params_arg}\n                merged_params = dict(params)\n                merged_params.update(extras)\n\n                try:\n                    pickle.dumps(func)\n                except Exception as exc:\n                    raise ValueError(\n                        \"exec_fn must be a top-level function to work with \"\n                        \"ProcessPoolExecutor\"\n                    ) from exc\n\n                exec_fn = functools.partial(func, **extras)\n                runner = self._clone_with_exec_fn(exec_fn)\n                if streaming:\n                    return runner.run_streaming(merged_params, axis_values)\n                return runner.run(merged_params, axis_values)\n\n            return wrapper\n\n        return decorator\n\n    def _clone_with_exec_fn(\n        self, exec_fn: Callable[[dict[str, Any], Any], Any]\n    ) -> \"SwarmMemo\":\n        return SwarmMemo(\n            cache_root=self.cache_root,\n            memo_chunk_spec=self.memo_chunk_spec,\n            exec_chunk_size=self.exec_chunk_size,\n            enumerate_points=self.enumerate_points,\n            exec_fn=exec_fn,\n            collate_fn=self.collate_fn,\n            merge_fn=self.merge_fn,\n            chunk_hash_fn=self.chunk_hash_fn,\n            cache_version=self.cache_version,\n            max_workers=self.max_workers,\n            axis_order=self.axis_order,\n            verbose=self.verbose,\n        )\n\n    def run(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Tuple[Any, Diagnostics]:\n        axis_order = self._resolve_axis_order(axis_values)\n        chunk_keys = self._build_chunk_keys(axis_values, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        outputs: List[Any] = []\n        all_points: List[Any] = []\n        point_ranges: List[Tuple[ChunkKey, int, int, Path]] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                with open(path, \"rb\") as handle:\n                    outputs.append(pickle.load(handle)[\"output\"])\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_axis_values)\n            start = len(all_points)\n            all_points.extend(points)\n            end = len(all_points)\n            point_ranges.append((chunk_key, start, end, path))\n\n        if all_points:\n            exec_outputs = self._execute_points(params, all_points, diagnostics)\n            for chunk_key, start, end, path in point_ranges:\n                chunk_output = self.collate_fn(exec_outputs[start:end])\n                with open(path, \"wb\") as handle:\n                    pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                outputs.append(chunk_output)\n\n        diagnostics.merges += 1\n        merged = self.merge_fn(outputs)\n        return merged, diagnostics\n\n    def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:\n        if self.axis_order is not None:\n            return self.axis_order\n        return tuple(sorted(axis_values))\n\n    def _build_chunk_keys(\n        self, axis_values: dict[str, Any], axis_order: Sequence[str]\n    ) -> List[ChunkKey]:\n        axis_chunks: List[List[Tuple[Any, ...]]] = []\n        for axis in axis_order:\n            values = axis_values.get(axis)\n            if values is None:\n                raise KeyError(f\"Missing axis '{axis}' in axis_values\")\n            size = self._resolve_axis_chunk_size(axis)\n            axis_chunks.append(_chunk_values(values, size))\n\n        chunk_keys: List[ChunkKey] = []\n        for product in itertools.product(*axis_chunks):\n            chunk_key = tuple(\n                (axis, tuple(values)) for axis, values in zip(axis_order, product)\n            )\n            chunk_keys.append(chunk_key)\n        return chunk_keys\n\n    def _resolve_axis_chunk_size(self, axis: str) -> int:\n        spec = self.memo_chunk_spec.get(axis)\n        if spec is None:\n            raise KeyError(f\"Missing memo_chunk_spec for axis '{axis}'\")\n        if isinstance(spec, dict):\n            size = spec.get(\"size\")\n            if size is None:\n                raise KeyError(f\"Missing size for axis '{axis}'\")\n            return int(size)\n        return int(spec)\n\n    def _execute_points(\n        self, params: dict[str, Any], points: Sequence[Any], diagnostics: Diagnostics\n    ) -> List[Any]:\n        if not points:\n            return []\n        results: List[Any] = []\n        shard_count = (len(points) + self.exec_chunk_size - 1) // self.exec_chunk_size\n        diagnostics.executed_shards += shard_count\n        exec_fn = functools.partial(self.exec_fn, params)\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            results.extend(\n                executor.map(exec_fn, points, chunksize=self.exec_chunk_size)\n            )\n        return results\n\n    def run_streaming(\n        self, params: dict[str, Any], axis_values: dict[str, Any]\n    ) -> Diagnostics:\n        \"\"\"Execute missing chunks and flush outputs to disk only.\"\"\"\n        axis_order = self._resolve_axis_order(axis_values)\n        chunk_keys = self._build_chunk_keys(axis_values, axis_order)\n        diagnostics = Diagnostics(total_chunks=len(chunk_keys))\n\n        stream_points: List[Any] = []\n        chunk_sizes: List[int] = []\n        chunk_paths: List[Path] = []\n\n        for chunk_key in chunk_keys:\n            chunk_hash = self.chunk_hash_fn(params, chunk_key, self.cache_version)\n            path = self.cache_root / f\"{chunk_hash}.pkl\"\n            if path.exists():\n                diagnostics.cached_chunks += 1\n                continue\n\n            diagnostics.executed_chunks += 1\n            chunk_axis_values = {axis: list(values) for axis, values in chunk_key}\n            points = self.enumerate_points(params, chunk_axis_values)\n            if not points:\n                continue\n            stream_points.extend(points)\n            chunk_sizes.append(len(points))\n            chunk_paths.append(path)\n\n        if not stream_points:\n            return diagnostics\n\n        buffer: List[Any] = []\n        chunk_index = 0\n        exec_fn = functools.partial(self.exec_fn, params)\n        next_point_index = 0\n        total_points = len(stream_points)\n        pending: Dict[Any, int] = {}\n        results_by_index: Dict[int, Any] = {}\n        next_flush_index = 0\n\n        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:\n            while next_point_index < total_points and len(pending) < self.exec_chunk_size:\n                future = executor.submit(exec_fn, stream_points[next_point_index])\n                pending[future] = next_point_index\n                next_point_index += 1\n\n            while pending:\n                done, _ = wait(pending, return_when=FIRST_COMPLETED)\n                for future in done:\n                    index = pending.pop(future)\n                    results_by_index[index] = future.result()\n\n                while next_flush_index in results_by_index:\n                    buffer.append(results_by_index.pop(next_flush_index))\n                    next_flush_index += 1\n                    while (\n                        chunk_index < len(chunk_sizes)\n                        and len(buffer) >= chunk_sizes[chunk_index]\n                    ):\n                        size = chunk_sizes[chunk_index]\n                        chunk_output = self.collate_fn(buffer[:size])\n                        with open(chunk_paths[chunk_index], \"wb\") as handle:\n                            pickle.dump({\"output\": chunk_output}, handle, protocol=5)\n                        diagnostics.stream_flushes += 1\n                        buffer = buffer[size:]\n                        chunk_index += 1\n\n                while (\n                    next_point_index < total_points\n                    and len(pending) < self.exec_chunk_size\n                ):\n                    future = executor.submit(exec_fn, stream_points[next_point_index])\n                    pending[future] = next_point_index\n                    next_point_index += 1\n\n        diagnostics.executed_shards += (\n            total_points + self.exec_chunk_size - 1\n        ) // self.exec_chunk_size\n        return diagnostics\n"
 }
 ```
 **Output:**
@@ -2985,7 +2985,7 @@ Tool: write
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/examples/basic.py",
-  "content": "from swarm_memo import SwarmMemo\n\n\ndef enumerate_points(params, split_spec):\n    points = []\n    for strat in split_spec[\"strat\"]:\n        for s in split_spec[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef exec_fn(params, point):\n    strat, s = point\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef collate_fn(outputs):\n    return outputs\n\n\ndef merge_fn(chunks):\n    merged = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nmemo = SwarmMemo(\n    cache_root=\"./memo_cache\",\n    memo_chunk_spec={\"strat\": 1, \"s\": 3},\n    exec_chunk_size=2,\n    enumerate_points=enumerate_points,\n    exec_fn=exec_fn,\n    collate_fn=collate_fn,\n    merge_fn=merge_fn,\n)\n\nparams = {\"alpha\": 0.4}\nsplit_spec = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\noutput, diag = memo.run(params, split_spec)\nprint(\"Output:\", output)\nprint(\"Diagnostics:\", diag)\n"
+  "content": "from swarm_memo import SwarmMemo\n\n\ndef enumerate_points(params, axis_values):\n    points = []\n    for strat in axis_values[\"strat\"]:\n        for s in axis_values[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef exec_fn(params, point):\n    strat, s = point\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef collate_fn(outputs):\n    return outputs\n\n\ndef merge_fn(chunks):\n    merged = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nmemo = SwarmMemo(\n    cache_root=\"./memo_cache\",\n    memo_chunk_spec={\"strat\": 1, \"s\": 3},\n    exec_chunk_size=2,\n    enumerate_points=enumerate_points,\n    exec_fn=exec_fn,\n    collate_fn=collate_fn,\n    merge_fn=merge_fn,\n)\n\nparams = {\"alpha\": 0.4}\naxis_values = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\noutput, diag = memo.run(params, axis_values)\nprint(\"Output:\", output)\nprint(\"Diagnostics:\", diag)\n"
 }
 ```
 **Output:**
@@ -3025,10 +3025,10 @@ Tool: read
 00007| from swarm_memo import SwarmMemo
 00008| 
 00009| 
-00010| def enumerate_points(params, split_spec):
+00010| def enumerate_points(params, axis_values):
 00011|     points = []
-00012|     for strat in split_spec["strat"]:
-00013|         for s in split_spec["s"]:
+00012|     for strat in axis_values["strat"]:
+00013|         for s in axis_values["s"]:
 00014|             points.append((strat, s))
 00015|     return points
 00016| 
@@ -3084,7 +3084,7 @@ Tool: write
 ```json
 {
   "filePath": "/home/matthew/projects/swarm_eval/README.md",
-  "content": "# swarm-memo\n\nSwarm-memo provides a general-purpose, chunked memoization utility for parallel experiments. It executes a per-point function across a grid of split variables, stores chunk outputs to disk, and reuses cached chunks on subsequent runs. The cache is keyed by a stable hash of fixed parameters plus the chunk’s axis bins, so adding new split values reuses existing results while avoiding collisions when values change.\n\n## Core ideas\n\n- **Axis-aware chunking**: chunk sizes are defined per axis (e.g., `strat=1`, `s=3`). Chunks are built by binning each axis list sequentially, then taking the cartesian product of bins.\n- **Flat cache layout**: each chunk is written as `<chunk_hash>.pkl` under a single `cache_root` directory. Chunk hashes are derived from a stable serialization of `(params, chunk_key, cache_version)`.\n- **Parallel execution**: point execution uses `ProcessPoolExecutor` with `exec_chunk_size` controlling batching overhead.\n- **Streaming option**: `run_streaming` flushes memo chunks as soon as they are complete, writing to disk without returning the full output.\n\n## Installation\n\nLocal editable install:\n\n```bash\npip install -e .\n```\n\n## Quick start\n\n```python\nfrom swarm_memo import SwarmMemo\n\n\ndef enumerate_points(params, split_spec):\n    points = []\n    for strat in split_spec[\"strat\"]:\n        for s in split_spec[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef exec_fn(params, point):\n    strat, s = point\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef collate_fn(outputs):\n    return outputs\n\n\ndef merge_fn(chunks):\n    merged = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nmemo = SwarmMemo(\n    cache_root=\"./memo_cache\",\n    memo_chunk_spec={\"strat\": 1, \"s\": 3},\n    exec_chunk_size=2,\n    enumerate_points=enumerate_points,\n    exec_fn=exec_fn,\n    collate_fn=collate_fn,\n    merge_fn=merge_fn,\n)\n\nparams = {\"alpha\": 0.4}\nsplit_spec = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\noutput, diag = memo.run(params, split_spec)\nprint(output)\nprint(diag)\n```\n\n## API overview\n\n### SwarmMemo\n\n```python\nSwarmMemo(\n    cache_root: str | Path,\n    memo_chunk_spec: dict[str, int | dict],\n    exec_chunk_size: int,\n    enumerate_points: Callable[[dict, dict], list],\n    exec_fn: Callable[[dict, Any], Any],\n    collate_fn: Callable[[list], Any],\n    merge_fn: Callable[[list], Any],\n    chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,\n    cache_version: str = \"v1\",\n    max_workers: int | None = None,\n    axis_order: Sequence[str] | None = None,\n    verbose: int = 1,\n)\n```\n\n- `memo_chunk_spec`: per-axis chunk sizes (e.g., `{\"strat\": 1, \"s\": 3}` or `{\"s\": {\"size\": 3}}`).\n- `exec_chunk_size`: batching size used by `ProcessPoolExecutor` to reduce overhead.\n- `exec_fn(params, point)`: per-point execution function (must be top-level for multiprocessing).\n\n### run\n\n```python\noutput, diagnostics = memo.run(params, split_spec)\n```\n\nRuns missing chunks, caches them, and returns merged output with diagnostics.\n\n### run_streaming\n\n```python\ndiagnostics = memo.run_streaming(params, split_spec)\n```\n\nExecutes missing chunks and writes each completed chunk to disk as soon as possible. No output is returned.\n\n### Decorator wrappers\n\n```python\n@memo.run_wrap()\ndef exec_point(params, point, extra=1):\n    ...\n\noutput, diag = exec_point(params, split_spec=split_spec, extra=2)\n```\n\n- `split_spec` must be passed as a keyword argument.\n- `params` can be positional or keyword.\n- Additional keyword arguments are merged into the memoization params (and passed into the exec function).\n\n## Caching behavior\n\n- Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.\n- If split values change, new chunks are created automatically.\n- If you add values to an axis list, existing chunks are reused and only new chunks are computed.\n\n## Examples\n\nRun the example script:\n\n```bash\npython examples/basic.py\n```\n\n## Notes\n\n- For multiprocessing, the exec function must be a top-level function (not nested).\n- `run_streaming` preserves point order within chunks while flushing as soon as chunks are complete.\n"
+  "content": "# swarm-memo\n\nSwarm-memo provides a general-purpose, chunked memoization utility for parallel experiments. It executes a per-point function across a grid of split variables, stores chunk outputs to disk, and reuses cached chunks on subsequent runs. The cache is keyed by a stable hash of fixed parameters plus the chunk’s axis bins, so adding new split values reuses existing results while avoiding collisions when values change.\n\n## Core ideas\n\n- **Axis-aware chunking**: chunk sizes are defined per axis (e.g., `strat=1`, `s=3`). Chunks are built by binning each axis list sequentially, then taking the cartesian product of bins.\n- **Flat cache layout**: each chunk is written as `<chunk_hash>.pkl` under a single `cache_root` directory. Chunk hashes are derived from a stable serialization of `(params, chunk_key, cache_version)`.\n- **Parallel execution**: point execution uses `ProcessPoolExecutor` with `exec_chunk_size` controlling batching overhead.\n- **Streaming option**: `run_streaming` flushes memo chunks as soon as they are complete, writing to disk without returning the full output.\n\n## Installation\n\nLocal editable install:\n\n```bash\npip install -e .\n```\n\n## Quick start\n\n```python\nfrom swarm_memo import SwarmMemo\n\n\ndef enumerate_points(params, axis_values):\n    points = []\n    for strat in axis_values[\"strat\"]:\n        for s in axis_values[\"s\"]:\n            points.append((strat, s))\n    return points\n\n\ndef exec_fn(params, point):\n    strat, s = point\n    return {\"strat\": strat, \"s\": s, \"value\": len(strat) + s}\n\n\ndef collate_fn(outputs):\n    return outputs\n\n\ndef merge_fn(chunks):\n    merged = []\n    for chunk in chunks:\n        merged.extend(chunk)\n    return merged\n\n\nmemo = SwarmMemo(\n    cache_root=\"./memo_cache\",\n    memo_chunk_spec={\"strat\": 1, \"s\": 3},\n    exec_chunk_size=2,\n    enumerate_points=enumerate_points,\n    exec_fn=exec_fn,\n    collate_fn=collate_fn,\n    merge_fn=merge_fn,\n)\n\nparams = {\"alpha\": 0.4}\naxis_values = {\"strat\": [\"aaa\", \"bb\"], \"s\": [1, 2, 3, 4]}\noutput, diag = memo.run(params, axis_values)\nprint(output)\nprint(diag)\n```\n\n## API overview\n\n### SwarmMemo\n\n```python\nSwarmMemo(\n    cache_root: str | Path,\n    memo_chunk_spec: dict[str, int | dict],\n    exec_chunk_size: int,\n    enumerate_points: Callable[[dict, dict], list],\n    exec_fn: Callable[[dict, Any], Any],\n    collate_fn: Callable[[list], Any],\n    merge_fn: Callable[[list], Any],\n    chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,\n    cache_version: str = \"v1\",\n    max_workers: int | None = None,\n    axis_order: Sequence[str] | None = None,\n    verbose: int = 1,\n)\n```\n\n- `memo_chunk_spec`: per-axis chunk sizes (e.g., `{\"strat\": 1, \"s\": 3}` or `{\"s\": {\"size\": 3}}`).\n- `exec_chunk_size`: batching size used by `ProcessPoolExecutor` to reduce overhead.\n- `exec_fn(params, point)`: per-point execution function (must be top-level for multiprocessing).\n\n### run\n\n```python\noutput, diagnostics = memo.run(params, axis_values)\n```\n\nRuns missing chunks, caches them, and returns merged output with diagnostics.\n\n### run_streaming\n\n```python\ndiagnostics = memo.run_streaming(params, axis_values)\n```\n\nExecutes missing chunks and writes each completed chunk to disk as soon as possible. No output is returned.\n\n### Decorator wrappers\n\n```python\n@memo.run_wrap()\ndef exec_point(params, point, extra=1):\n    ...\n\noutput, diag = exec_point(params, axis_values=axis_values, extra=2)\n```\n\n- `axis_values` must be passed as a keyword argument.\n- `params` can be positional or keyword.\n- Additional keyword arguments are merged into the memoization params (and passed into the exec function).\n\n## Caching behavior\n\n- Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.\n- If split values change, new chunks are created automatically.\n- If you add values to an axis list, existing chunks are reused and only new chunks are computed.\n\n## Examples\n\nRun the example script:\n\n```bash\npython examples/basic.py\n```\n\n## Notes\n\n- For multiprocessing, the exec function must be a top-level function (not nested).\n- `run_streaming` preserves point order within chunks while flushing as soon as chunks are complete.\n"
 }
 ```
 **Output:**

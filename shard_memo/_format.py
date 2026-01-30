@@ -1,10 +1,37 @@
 import math
+import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, Tuple
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 
-_progress_state = {"last_len": 0, "last_msg": ""}
+_thread_local = threading.local()
+
+
+@dataclass
+class _ProgressTracker:
+    last_len: int = 0
+    last_msg: str = ""
+
+    def print_progress(self, message: str, *, final: bool) -> None:
+        if final:
+            print(message, end="\n", flush=True)
+            self.last_len = 0
+            self.last_msg = ""
+            return
+        pad = max(self.last_len - len(message), 0)
+        print(message + (" " * pad), end="\r", flush=True)
+        self.last_len = len(message)
+        self.last_msg = message
+
+    def print_detail(self, message: str) -> None:
+        if self.last_len:
+            print()
+        print(message)
+        if self.last_msg:
+            print(self.last_msg, end="\r", flush=True)
+            self.last_len = len(self.last_msg)
 
 
 def format_axis_values(values: Any) -> str:
@@ -71,26 +98,15 @@ def format_rate_eta(
 
 
 def print_progress(message: str, *, final: bool) -> None:
-    if final:
-        print(message, end="\n", flush=True)
-        _progress_state["last_len"] = 0
-        _progress_state["last_msg"] = ""
-        return
-    pad = max(_progress_state["last_len"] - len(message), 0)
-    print(message + (" " * pad), end="\r", flush=True)
-    _progress_state["last_len"] = len(message)
-    _progress_state["last_msg"] = message
+    if not hasattr(_thread_local, "tracker"):
+        _thread_local.tracker = _ProgressTracker()
+    _thread_local.tracker.print_progress(message, final=final)
 
 
 def print_detail(message: str) -> None:
-    last_len = _progress_state.get("last_len", 0)
-    last_msg = _progress_state.get("last_msg", "")
-    if last_len:
-        print()
-    print(message)
-    if last_msg:
-        print(last_msg, end="\r", flush=True)
-        _progress_state["last_len"] = len(last_msg)
+    if not hasattr(_thread_local, "tracker"):
+        _thread_local.tracker = _ProgressTracker()
+    _thread_local.tracker.print_detail(message)
 
 
 def chunk_key_size(chunk_key: ChunkKey) -> int:

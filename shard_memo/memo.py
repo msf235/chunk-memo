@@ -160,7 +160,7 @@ class ShardMemo:
         self,
         cache_root: str | Path,
         memo_chunk_spec: dict[str, Any],
-        split_spec: dict[str, Any],
+        axis_values: dict[str, Any],
         merge_fn: MergeFn | None = None,
         memo_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
@@ -183,7 +183,7 @@ class ShardMemo:
                 experimental and not yet thoroughly tested.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order (defaults to lexicographic).
-            split_spec: Canonical split spec for the cache.
+            axis_values: Canonical split spec for the cache.
             verbose: Verbosity flag.
             profile: Enable profiling output.
         """
@@ -198,9 +198,9 @@ class ShardMemo:
         self.axis_order = tuple(axis_order) if axis_order is not None else None
         self.verbose = verbose
         self.profile = profile
-        self._split_spec: dict[str, Any] | None = None
+        self._axis_values: dict[str, Any] | None = None
         self._axis_index_map: AxisIndexMap | None = None
-        self._set_split_spec(split_spec)
+        self._set_axis_values(axis_values)
 
     def run_wrap(
         self, *, params_arg: str = "params"
@@ -244,7 +244,7 @@ class ShardMemo:
                     raise ValueError(f"'{params_arg}' must be a dict")
                 extras = {k: v for k, v in bound.arguments.items() if k != params_arg}
 
-                axis_names = set(self._split_spec or {})
+                axis_names = set(self._axis_values or {})
                 axis_inputs = {k: v for k, v in extras.items() if k in axis_names}
                 exec_extras = {k: v for k, v in extras.items() if k not in axis_names}
                 merged_params = dict(params)
@@ -271,7 +271,7 @@ class ShardMemo:
                 axis_indices: Mapping[str, Any] | None = None,
                 **axes: Any,
             ):
-                axis_names = set(self._split_spec or {})
+                axis_names = set(self._axis_values or {})
                 exec_extras = {k: v for k, v in axes.items() if k not in axis_names}
                 merged_params = dict(params)
                 merged_params.update(exec_extras)
@@ -298,16 +298,16 @@ class ShardMemo:
         those), based on the canonical split spec order.
         """
         profile_start = time.monotonic() if self.profile else None
-        if self._split_spec is None:
-            raise ValueError("split_spec must be set before checking cache status")
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before checking cache status")
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
         if axis_indices is not None:
-            split_spec = self._normalize_axis_indices(axis_indices)
+            axis_values = self._normalize_axis_indices(axis_indices)
         else:
-            split_spec = self._normalize_axes(axes)
+            axis_values = self._normalize_axes(axes)
         index_format = self._infer_index_format(axis_indices)
-        chunk_keys = self._build_chunk_keys_for_axes(split_spec)
+        chunk_keys = self._build_chunk_keys_for_axes(axis_values)
         chunk_index = self._load_chunk_index(params)
         use_index = bool(chunk_index)
         if self.profile and self.verbose >= 1 and profile_start is not None:
@@ -338,7 +338,7 @@ class ShardMemo:
             )
         return {
             "params": params,
-            "axis_values": split_spec,
+            "axis_values": axis_values,
             "total_chunks": len(chunk_keys),
             "cached_chunks": cached_chunks,
             "cached_chunk_indices": cached_chunk_indices,
@@ -359,23 +359,23 @@ class ShardMemo:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order.
         """
-        if self._split_spec is None:
-            raise ValueError("split_spec must be set before running memoized function")
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before running memoized function")
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
             if self.verbose == 1:
-                self._print_run_header(params, self._split_spec, chunk_keys)
+                self._print_run_header(params, self._axis_values, chunk_keys)
             return self._run_chunks(params, chunk_keys, exec_fn)
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
         if axis_indices is not None:
-            split_spec = self._normalize_axis_indices(axis_indices)
+            axis_values = self._normalize_axis_indices(axis_indices)
         else:
-            split_spec = self._normalize_axes(axes)
-        chunk_keys, requested_items = self._build_chunk_plan_for_axes(split_spec)
+            axis_values = self._normalize_axes(axes)
+        chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
         if self.verbose == 1:
-            self._print_run_header(params, split_spec, chunk_keys)
+            self._print_run_header(params, axis_values, chunk_keys)
         return self._run_chunks(
             params,
             chunk_keys,
@@ -396,29 +396,58 @@ class ShardMemo:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order.
         """
-        if self._split_spec is None:
-            raise ValueError("split_spec must be set before running memoized function")
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before running memoized function")
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
             if self.verbose == 1:
-                self._print_run_header(params, self._split_spec, chunk_keys)
+                self._print_run_header(params, self._axis_values, chunk_keys)
             return self._run_chunks_streaming(params, chunk_keys, exec_fn)
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
         if axis_indices is not None:
-            split_spec = self._normalize_axis_indices(axis_indices)
+            axis_values = self._normalize_axis_indices(axis_indices)
         else:
-            split_spec = self._normalize_axes(axes)
-        chunk_keys, requested_items = self._build_chunk_plan_for_axes(split_spec)
+            axis_values = self._normalize_axes(axes)
+        chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
         if self.verbose == 1:
-            self._print_run_header(params, split_spec, chunk_keys)
+            self._print_run_header(params, axis_values, chunk_keys)
         return self._run_chunks_streaming(
             params,
             chunk_keys,
             exec_fn,
             requested_items_by_chunk=requested_items,
         )
+
+    def _execute_and_save_chunk(
+        self,
+        params: dict[str, Any],
+        chunk_key: ChunkKey,
+        exec_fn: Callable[..., Any],
+        path: Path,
+        chunk_hash: str,
+        diagnostics: Diagnostics,
+        existing_payload: Mapping[str, Any] | None = None,
+    ) -> tuple[Any, dict[str, Any] | None]:
+        diagnostics.executed_chunks += 1
+        chunk_axes = {axis: list(values) for axis, values in chunk_key}
+        chunk_output = exec_fn(params, **chunk_axes)
+        diagnostics.max_stream_items = max(
+            diagnostics.max_stream_items,
+            _stream_item_count(chunk_output),
+        )
+        payload = {"output": chunk_output}
+        item_map = self._build_item_map(chunk_key, chunk_output)
+        if item_map is not None:
+            payload["items"] = item_map
+        item_spec = self._build_item_spec_map(chunk_key, chunk_output)
+        if item_spec is not None:
+            payload["spec"] = item_spec
+        _apply_payload_timestamps(payload, existing=existing_payload)
+        _atomic_write_pickle(path, payload)
+        self._update_chunk_index(params, chunk_hash, chunk_key)
+        return chunk_output, item_map
 
     def _run_chunks(
         self,
@@ -489,23 +518,15 @@ class ShardMemo:
                     report_progress(processed, final=processed == total_chunks)
                     continue
 
-            diagnostics.executed_chunks += 1
-            chunk_axes = {axis: list(values) for axis, values in chunk_key}
-            chunk_output = exec_fn(params, **chunk_axes)
-            diagnostics.max_stream_items = max(
-                diagnostics.max_stream_items,
-                _stream_item_count(chunk_output),
+            chunk_output, item_map = self._execute_and_save_chunk(
+                params,
+                chunk_key,
+                exec_fn,
+                path,
+                chunk_hash,
+                diagnostics,
+                existing_payload,
             )
-            payload = {"output": chunk_output}
-            item_map = self._build_item_map(chunk_key, chunk_output)
-            if item_map is not None:
-                payload["items"] = item_map
-            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
-            if item_spec is not None:
-                payload["spec"] = item_spec
-            _apply_payload_timestamps(payload, existing=existing_payload)
-            _atomic_write_pickle(path, payload)
-            self._update_chunk_index(params, chunk_hash, chunk_key)
 
             if requested_items_by_chunk is None:
                 if self.verbose >= 2:
@@ -613,23 +634,10 @@ class ShardMemo:
                     report_progress(processed, final=processed == total_chunks)
                     continue
 
-            diagnostics.executed_chunks += 1
-            chunk_axes = {axis: list(values) for axis, values in chunk_key}
-            chunk_output = exec_fn(params, **chunk_axes)
-            diagnostics.max_stream_items = max(
-                diagnostics.max_stream_items,
-                _stream_item_count(chunk_output),
+            chunk_output, item_map = self._execute_and_save_chunk(
+                params, chunk_key, exec_fn, path, chunk_hash, diagnostics, None
             )
-            payload = {"output": chunk_output}
-            item_map = self._build_item_map(chunk_key, chunk_output)
-            if item_map is not None:
-                payload["items"] = item_map
-            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
-            if item_spec is not None:
-                payload["spec"] = item_spec
-            _apply_payload_timestamps(payload, existing=existing_payload)
-            _atomic_write_pickle(path, payload)
-            self._update_chunk_index(params, chunk_hash, chunk_key)
+
             if self.verbose >= 2:
                 if requested_items_by_chunk is None:
                     print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
@@ -693,10 +701,10 @@ class ShardMemo:
         _atomic_write_json(self._chunk_index_path(params), index)
 
     def _normalized_hash_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        if not self._split_spec:
+        if not self._axis_values:
             return params
         return {
-            key: value for key, value in params.items() if key not in self._split_spec
+            key: value for key, value in params.items() if key not in self._axis_values
         }
 
     def _chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
@@ -706,7 +714,7 @@ class ShardMemo:
     def _memo_hash(self, params: dict[str, Any]) -> str:
         payload = {
             "params": self._normalized_hash_params(params),
-            "split_spec": self._split_spec,
+            "axis_values": self._axis_values,
             "memo_chunk_spec": self.memo_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
@@ -734,7 +742,7 @@ class ShardMemo:
             "created_at": created_at,
             "updated_at": _now_iso(),
             "params": self._normalized_hash_params(params),
-            "split_spec": self._split_spec,
+            "axis_values": self._axis_values,
             "memo_chunk_spec": self.memo_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
@@ -746,10 +754,10 @@ class ShardMemo:
     def _print_run_header(
         self,
         params: dict[str, Any],
-        split_spec: Mapping[str, Any],
+        axis_values: Mapping[str, Any],
         chunk_keys: Sequence[ChunkKey],
     ) -> None:
-        axis_order = self._resolve_axis_order(dict(split_spec))
+        axis_order = self._resolve_axis_order(dict(axis_values))
         chunk_index = self._load_chunk_index(params)
         use_index = bool(chunk_index)
         cached_count = 0
@@ -763,35 +771,35 @@ class ShardMemo:
         execute_count = len(chunk_keys) - cached_count
         lines = []
         lines.extend(format_params(params))
-        lines.extend(format_spec(split_spec, axis_order))
+        lines.extend(format_spec(axis_values, axis_order))
         lines.append(f"[ShardMemo] plan: cached={cached_count} execute={execute_count}")
         print("\n".join(lines))
 
-    def _resolve_axis_order(self, split_spec: dict[str, Any]) -> Tuple[str, ...]:
+    def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:
             return self.axis_order
-        return tuple(sorted(split_spec))
+        return tuple(sorted(axis_values))
 
-    def _set_split_spec(self, split_spec: dict[str, Any]) -> None:
-        axis_order = self._resolve_axis_order(split_spec)
+    def _set_axis_values(self, axis_values: dict[str, Any]) -> None:
+        axis_order = self._resolve_axis_order(axis_values)
         for axis in axis_order:
-            if axis not in split_spec:
-                raise KeyError(f"Missing axis '{axis}' in split_spec")
+            if axis not in axis_values:
+                raise KeyError(f"Missing axis '{axis}' in axis_values")
         axis_index_map: AxisIndexMap = {}
         for axis in axis_order:
             axis_index_map[axis] = {
-                value: index for index, value in enumerate(split_spec[axis])
+                value: index for index, value in enumerate(axis_values[axis])
             }
-        self._split_spec = {axis: list(split_spec[axis]) for axis in axis_order}
+        self._axis_values = {axis: list(axis_values[axis]) for axis in axis_order}
         self._axis_index_map = axis_index_map
 
     def _normalize_axes(self, axes: Mapping[str, Any]) -> dict[str, List[Any]]:
-        if self._split_spec is None or self._axis_index_map is None:
-            raise ValueError("split_spec must be set before running memoized function")
-        split_spec: dict[str, List[Any]] = {}
-        for axis in self._split_spec:
+        if self._axis_values is None or self._axis_index_map is None:
+            raise ValueError("axis_values must be set before running memoized function")
+        axis_values: dict[str, List[Any]] = {}
+        for axis in self._axis_values:
             if axis not in axes:
-                split_spec[axis] = list(self._split_spec[axis])
+                axis_values[axis] = list(self._axis_values[axis])
                 continue
             values = axes[axis]
             if isinstance(values, (list, tuple)):
@@ -801,28 +809,28 @@ class ShardMemo:
             for value in normalized:
                 if value not in self._axis_index_map[axis]:
                     raise KeyError(
-                        f"Value '{value}' not found in split_spec for axis '{axis}'"
+                        f"Value '{value}' not found in axis_values for axis '{axis}'"
                     )
-            split_spec[axis] = normalized
-        return split_spec
+            axis_values[axis] = normalized
+        return axis_values
 
     def _normalize_axis_indices(
         self, axis_indices: Mapping[str, Any]
     ) -> dict[str, List[Any]]:
         """Normalize axis_indices into axis values using canonical split order."""
-        if self._split_spec is None:
-            raise ValueError("split_spec must be set before running memoized function")
-        split_spec: dict[str, List[Any]] = {}
-        for axis in self._split_spec:
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before running memoized function")
+        axis_values: dict[str, List[Any]] = {}
+        for axis in self._axis_values:
             if axis not in axis_indices:
-                split_spec[axis] = list(self._split_spec[axis])
+                axis_values[axis] = list(self._axis_values[axis])
                 continue
             values = axis_indices[axis]
             indices = self._expand_axis_indices(
-                values, axis, len(self._split_spec[axis])
+                values, axis, len(self._axis_values[axis])
             )
-            split_spec[axis] = [self._split_spec[axis][index] for index in indices]
-        return split_spec
+            axis_values[axis] = [self._axis_values[axis][index] for index in indices]
+        return axis_values
 
     def _expand_axis_indices(self, values: Any, axis: str, axis_len: int) -> List[int]:
         if isinstance(values, (list, tuple)):
@@ -849,15 +857,15 @@ class ShardMemo:
         return resolved
 
     def _build_chunk_keys(self) -> List[ChunkKey]:
-        if self._split_spec is None:
-            raise ValueError("split_spec must be set before running memoized function")
-        return self._build_chunk_keys_for_axes(self._split_spec)
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before running memoized function")
+        return self._build_chunk_keys_for_axes(self._axis_values)
 
     def _chunk_indices_from_key(
         self, chunk_key: ChunkKey, index_format: Mapping[str, str] | None
     ) -> Dict[str, Any]:
         if self._axis_index_map is None:
-            raise ValueError("split_spec must be set before checking cache status")
+            raise ValueError("axis_values must be set before checking cache status")
         indices: Dict[str, Any] = {}
         for axis, values in chunk_key:
             axis_map = self._axis_index_map.get(axis)
@@ -928,17 +936,17 @@ class ShardMemo:
         return slice(indices[0], indices[-1] + step, step)
 
     def _build_chunk_keys_for_axes(
-        self, split_spec: Mapping[str, Sequence[Any]]
+        self, axis_values: Mapping[str, Sequence[Any]]
     ) -> List[ChunkKey]:
         if self.memo_chunk_enumerator is not None:
-            return list(self.memo_chunk_enumerator(dict(split_spec)))
+            return list(self.memo_chunk_enumerator(dict(axis_values)))
 
-        axis_order = self._resolve_axis_order(dict(split_spec))
+        axis_order = self._resolve_axis_order(dict(axis_values))
         axis_chunks: List[List[Tuple[Any, ...]]] = []
         for axis in axis_order:
-            values = split_spec.get(axis)
+            values = axis_values.get(axis)
             if values is None:
-                raise KeyError(f"Missing axis '{axis}' in split_spec")
+                raise KeyError(f"Missing axis '{axis}' in axis_values")
             size = self._resolve_axis_chunk_size(axis)
             axis_chunks.append(_chunk_values(values, size))
 
@@ -951,24 +959,24 @@ class ShardMemo:
         return chunk_keys
 
     def _build_chunk_plan_for_axes(
-        self, split_spec: Mapping[str, Sequence[Any]]
+        self, axis_values: Mapping[str, Sequence[Any]]
     ) -> Tuple[List[ChunkKey], Dict[ChunkKey, List[Tuple[Any, ...]]]]:
-        if self._split_spec is None or self._axis_index_map is None:
-            raise ValueError("split_spec must be set before running memoized function")
-        axis_order = self._resolve_axis_order(self._split_spec)
+        if self._axis_values is None or self._axis_index_map is None:
+            raise ValueError("axis_values must be set before running memoized function")
+        axis_order = self._resolve_axis_order(self._axis_values)
         per_axis_chunks: List[List[dict[str, Any]]] = []
         for axis in axis_order:
-            requested_values = list(split_spec.get(axis, []))
+            requested_values = list(axis_values.get(axis, []))
             if not requested_values:
                 raise ValueError(f"Missing values for axis '{axis}'")
             size = self._resolve_axis_chunk_size(axis)
-            full_values = list(self._split_spec[axis])
+            full_values = list(self._axis_values[axis])
             chunk_map: Dict[int, dict[str, Any]] = {}
             for value in requested_values:
                 index = self._axis_index_map[axis].get(value)
                 if index is None:
                     raise KeyError(
-                        f"Value '{value}' not found in split_spec for axis '{axis}'"
+                        f"Value '{value}' not found in axis_values for axis '{axis}'"
                     )
                 chunk_id = index // size
                 chunk = chunk_map.setdefault(

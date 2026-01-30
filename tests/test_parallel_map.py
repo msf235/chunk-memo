@@ -1,57 +1,34 @@
-import itertools
 import tempfile
 
 from shard_memo import ShardMemo, memo_parallel_run
 
-
-def exec_fn(params, strat, s):
-    if isinstance(strat, (list, tuple)) and isinstance(s, (list, tuple)):
-        outputs = []
-        for strat_value, s_value in itertools.product(strat, s):
-            outputs.append(
-                {"alpha": params["alpha"], "strat": strat_value, "s": s_value}
-            )
-        return outputs
-    return {"alpha": params["alpha"], "strat": strat, "s": s}
-
-
-def _item_from_index(item, split_spec):
-    return {
-        "strat": split_spec["strat"][item[0]],
-        "s": split_spec["s"][item[1]],
-    }
+from .utils import exec_fn_grid, flatten_outputs, item_from_index
 
 
 def test_memo_parallel_run_returns_requested_points():
     params = {"alpha": 0.4}
-    split_spec = {"strat": ["a", "b"], "s": [1, 2, 3]}
+    axis_values = {"strat": ["a", "b"], "s": [1, 2, 3]}
     items = [(0, 0), (1, 2), (0, 1), (1, 0)]
 
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
-        memo.run(params, exec_fn=exec_fn, strat=["a"], s=[1, 2, 3])
+        memo.run(params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
 
-        status = memo.cache_status(params, strat=split_spec["strat"], s=split_spec["s"])
+        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
         outputs, diag = memo_parallel_run(
             memo,
-            [_item_from_index(item, split_spec) for item in items],
-            exec_fn=exec_fn,
+            [item_from_index(item, axis_values) for item in items],
+            exec_fn=exec_fn_grid,
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
     assert diag.executed_chunks == len(status["missing_chunks"])
-    expected = {(split_spec["strat"][i], split_spec["s"][j]) for i, j in items}
-    flattened = []
-    for chunk in outputs:
-        if isinstance(chunk, list):
-            flattened.extend(chunk)
-        else:
-            flattened.append(chunk)
-    observed = {(item["strat"], item["s"]) for item in flattened}
+    expected = {(axis_values["strat"][i], axis_values["s"][j]) for i, j in items}
+    observed = {(item["strat"], item["s"]) for item in flatten_outputs(outputs)}
     assert observed == expected

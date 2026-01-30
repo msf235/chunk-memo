@@ -26,7 +26,7 @@ def main():
     memo = ShardMemo(
         cache_root=output_root / "memo_cache",
         memo_chunk_spec={"strat": 1, "s": 2},
-        split_spec={"strat": ["a", "b"], "s": [1, 2, 3]},
+        axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
         merge_fn=merge_fn,
     )
 

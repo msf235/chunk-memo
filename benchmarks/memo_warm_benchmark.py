@@ -17,13 +17,13 @@ def exec_fn(params, s):
 
 
 def run_warm_benchmark(*, n_points, chunk_size, repeats):
-    split_spec = {"s": list(range(n_points))}
+    axis_values = {"s": list(range(n_points))}
     params = {"scale": 2}
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ShardMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"s": chunk_size},
-            split_spec=split_spec,
+            axis_values=axis_values,
         )
         start = time.perf_counter()
         memo.run(params, exec_fn)
