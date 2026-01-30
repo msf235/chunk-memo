@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple
 
 from ._format import (
     chunk_key_size,
@@ -17,6 +17,9 @@ from ._format import (
     print_progress,
 )
 from .memo import ChunkKey, ShardMemo, Diagnostics, _atomic_write_pickle
+
+PROGRESS_REPORT_DIVISOR = 50
+EXEC_REPORT_INTERVAL_SECONDS = 2.0
 
 
 @dataclasses.dataclass
@@ -41,7 +44,7 @@ def _default_map_fn(
     func: Callable[..., Any],
     items: Iterable[Any],
     **kwargs: Any,
-) -> List[Any]:
+) -> list[Any]:
     max_workers = kwargs.get("max_workers")
     chunksize = kwargs.get("chunksize")
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -64,7 +67,7 @@ def _progress_map_fn(
         yield from executor.map(func, items, chunksize=chunksize)
 
 
-def _ensure_iterable(items: Iterable[Any]) -> List[Any]:
+def _ensure_iterable(items: Iterable[Any]) -> list[Any]:
     if isinstance(items, list):
         return items
     return list(items)
@@ -191,8 +194,8 @@ def _expand_items_to_chunks_slow(
     items: Sequence[Any],
     chunk_keys: Sequence[ChunkKey],
     axis_extractor: Callable[[Any], Tuple[Any, ...]],
-) -> List[List[Any]]:
-    chunked: List[List[Any]] = [[] for _ in chunk_keys]
+) -> list[list[Any]]:
+    chunked: list[list[Any]] = [[] for _ in chunk_keys]
     for item in items:
         axis_values = axis_extractor(item)
         for index, chunk_key in enumerate(chunk_keys):
@@ -226,7 +229,7 @@ def _expand_items_to_chunks_fast(
     items: Sequence[Any],
     chunk_keys: Sequence[ChunkKey],
     axis_extractor: Callable[[Any], Tuple[Any, ...]],
-) -> List[List[Any]]:
+) -> list[list[Any]]:
     if not chunk_keys:
         return [[] for _ in chunk_keys]
     axis_values = cache_status.get("axis_values")
@@ -236,12 +239,12 @@ def _expand_items_to_chunks_fast(
     axis_chunk_maps = _build_axis_chunk_maps(memo, axis_values, axis_order)
     chunk_index_map: dict[Tuple[int, ...], int] = {}
     for index, chunk_key in enumerate(chunk_keys):
-        chunk_ids: List[int] = []
+        chunk_ids: list[int] = []
         for axis, values in chunk_key:
             chunk_ids.append(axis_chunk_maps[axis][values[0]])
         chunk_index_map[tuple(chunk_ids)] = index
 
-    chunked: List[List[Any]] = [[] for _ in chunk_keys]
+    chunked: list[list[Any]] = [[] for _ in chunk_keys]
     for item in items:
         axis_vals = axis_extractor(item)
         if len(axis_vals) != len(axis_order):
@@ -298,7 +301,7 @@ def memo_parallel_run(
     cache_status: Mapping[str, Any],
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[List[Any]], Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
 ) -> tuple[Any, Diagnostics]:
     if map_fn is None:
         map_fn = _progress_map_fn if memo.verbose == 1 else _default_map_fn
@@ -309,16 +312,16 @@ def memo_parallel_run(
     params_dict: dict[str, Any] = dict(params)
     memo.write_metadata(params_dict)
 
-    cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
-    missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
+    cached_chunks: list[ChunkKey] = list(cache_status.get("cached_chunks", []))
+    missing_chunks: list[ChunkKey] = list(cache_status.get("missing_chunks", []))
     chunk_index = memo._load_chunk_index(params_dict)
     use_index = bool(chunk_index)
 
-    outputs: List[Any] = []
-    exec_outputs: List[Any] = []
+    outputs: list[Any] = []
+    exec_outputs: list[Any] = []
     diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
     total_chunks = diagnostics.total_chunks
-    progress_step = max(1, total_chunks // 50)
+    progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
 
     if collate_fn is None:
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
@@ -378,13 +381,13 @@ def memo_parallel_run(
         missing_chunks,
         axis_extractor,
     )
-    missing_items: List[Any] = []
-    missing_item_keys: List[ChunkKey] = []
-    missing_items_by_chunk: dict[ChunkKey, List[Any]] = {}
-    missing_chunk_order: List[ChunkKey] = []
+    missing_items: list[Any] = []
+    missing_item_keys: list[ChunkKey] = []
+    missing_items_by_chunk: dict[ChunkKey, list[Any]] = {}
+    missing_chunk_order: list[ChunkKey] = []
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
 
-    def _register_missing(chunk_key: ChunkKey, items_to_add: List[Any]) -> None:
+    def _register_missing(chunk_key: ChunkKey, items_to_add: list[Any]) -> None:
         if not items_to_add:
             return
         if chunk_key not in missing_items_by_chunk:
@@ -423,7 +426,7 @@ def memo_parallel_run(
             cached_payloads[chunk_key] = payload
             _register_missing(chunk_key, chunk_items)
             continue
-        item_outputs: List[Any] = []
+        item_outputs: list[Any] = []
         for item in chunk_items:
             axis_values = axis_extractor(item)
             item_key = memo._item_hash(chunk_key, axis_values)
@@ -470,7 +473,7 @@ def memo_parallel_run(
         cached_items_total = total_items_all - len(missing_items)
         exec_start = time.monotonic()
         last_report = time.monotonic()
-        report_interval = 2.0
+        report_interval = EXEC_REPORT_INTERVAL_SECONDS
         for index, result in enumerate(exec_iter, start=1):
             exec_outputs.append(result)
             now = time.monotonic()
@@ -568,7 +571,7 @@ def memo_parallel_run_streaming(
     cache_status: Mapping[str, Any],
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[List[Any]], Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
 ) -> Diagnostics:
     profile_start = time.monotonic() if memo.profile else None
     if map_fn is None:
@@ -582,14 +585,14 @@ def memo_parallel_run_streaming(
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(f"[ShardMemo] profile metadata_s={time.monotonic() - profile_start:0.3f}")
 
-    cached_chunks: List[ChunkKey] = list(cache_status.get("cached_chunks", []))
-    missing_chunks: List[ChunkKey] = list(cache_status.get("missing_chunks", []))
+    cached_chunks: list[ChunkKey] = list(cache_status.get("cached_chunks", []))
+    missing_chunks: list[ChunkKey] = list(cache_status.get("missing_chunks", []))
     chunk_index = memo._load_chunk_index(params_dict)
     use_index = bool(chunk_index)
 
     diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
     total_chunks = diagnostics.total_chunks
-    progress_step = max(1, total_chunks // 50)
+    progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile cache_status_s={time.monotonic() - profile_start:0.3f}"
@@ -667,13 +670,13 @@ def memo_parallel_run_streaming(
             f"[ShardMemo] profile expand_chunks_s={time.monotonic() - profile_start:0.3f}"
         )
 
-    missing_items: List[Any] = []
-    missing_item_keys: List[ChunkKey] = []
-    missing_items_by_chunk: dict[ChunkKey, List[Any]] = {}
-    missing_chunk_order: List[ChunkKey] = []
+    missing_items: list[Any] = []
+    missing_item_keys: list[ChunkKey] = []
+    missing_items_by_chunk: dict[ChunkKey, list[Any]] = {}
+    missing_chunk_order: list[ChunkKey] = []
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
 
-    def _register_missing(chunk_key: ChunkKey, items_to_add: List[Any]) -> None:
+    def _register_missing(chunk_key: ChunkKey, items_to_add: list[Any]) -> None:
         if not items_to_add:
             return
         if chunk_key not in missing_items_by_chunk:
@@ -770,10 +773,10 @@ def memo_parallel_run_streaming(
         expected_counts = {
             chunk_key: len(items) for chunk_key, items in missing_items_by_chunk.items()
         }
-        buffers: dict[ChunkKey, dict[str, List[Any]]] = {}
+        buffers: dict[ChunkKey, dict[str, list[Any]]] = {}
         current_buffer_items = 0
         last_report = time.monotonic()
-        report_interval = 2.0
+        report_interval = EXEC_REPORT_INTERVAL_SECONDS
         for index, result in enumerate(exec_iter, start=1):
             now = time.monotonic()
             if memo.verbose == 1 and (now - last_report) >= report_interval:

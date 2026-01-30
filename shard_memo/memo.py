@@ -11,7 +11,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Callable, Mapping, Sequence, Tuple
 
 from ._format import (
     chunk_key_size,
@@ -22,10 +22,12 @@ from ._format import (
     print_progress,
 )
 
+PROGRESS_REPORT_DIVISOR = 50
+
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
-MergeFn = Callable[[List[Any]], Any]
-AxisIndexMap = Dict[str, Dict[Any, int]]
+MergeFn = Callable[[list[Any]], Any]
+AxisIndexMap = dict[str, dict[Any, int]]
 CachePathFn = Callable[[dict[str, Any], ChunkKey, str, str], Path | str]
 
 
@@ -62,10 +64,10 @@ def default_chunk_hash(
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
-def _chunk_values(values: Sequence[Any], size: int) -> List[Tuple[Any, ...]]:
+def _chunk_values(values: Sequence[Any], size: int) -> list[Tuple[Any, ...]]:
     if size <= 0:
         raise ValueError("chunk size must be > 0")
-    chunks: List[Tuple[Any, ...]] = []
+    chunks: list[Tuple[Any, ...]] = []
     for start in range(0, len(values), size):
         end = min(start + size, len(values))
         chunks.append(tuple(values[start:end]))
@@ -314,10 +316,10 @@ class ShardMemo:
             print(
                 f"[ShardMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
             )
-        cached_chunks: List[ChunkKey] = []
-        cached_chunk_indices: List[Dict[str, Any]] = []
-        missing_chunks: List[ChunkKey] = []
-        missing_chunk_indices: List[Dict[str, Any]] = []
+        cached_chunks: list[ChunkKey] = []
+        cached_chunk_indices: list[dict[str, Any]] = []
+        missing_chunks: list[ChunkKey] = []
+        missing_chunk_indices: list[dict[str, Any]] = []
         for chunk_key in chunk_keys:
             chunk_hash = self._chunk_hash(params, chunk_key)
             indices = self._chunk_indices_from_key(chunk_key, index_format)
@@ -456,13 +458,13 @@ class ShardMemo:
         exec_fn: Callable[..., Any],
         *,
         requested_items_by_chunk: (
-            Mapping[ChunkKey, List[Tuple[Any, ...]]] | None
+            Mapping[ChunkKey, list[Tuple[Any, ...]]] | None
         ) = None,
     ) -> Tuple[Any, Diagnostics]:
-        outputs: List[Any] = []
+        outputs: list[Any] = []
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
         total_chunks = len(chunk_keys)
-        progress_step = max(1, total_chunks // 50)
+        progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
         start_time = time.monotonic()
         total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
         processed_items = 0
@@ -573,12 +575,12 @@ class ShardMemo:
         exec_fn: Callable[..., Any],
         *,
         requested_items_by_chunk: (
-            Mapping[ChunkKey, List[Tuple[Any, ...]]] | None
+            Mapping[ChunkKey, list[Tuple[Any, ...]]] | None
         ) = None,
     ) -> Diagnostics:
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
         total_chunks = len(chunk_keys)
-        progress_step = max(1, total_chunks // 50)
+        progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
         start_time = time.monotonic()
         total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
         processed_items = 0
@@ -793,10 +795,10 @@ class ShardMemo:
         self._axis_values = {axis: list(axis_values[axis]) for axis in axis_order}
         self._axis_index_map = axis_index_map
 
-    def _normalize_axes(self, axes: Mapping[str, Any]) -> dict[str, List[Any]]:
+    def _normalize_axes(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
         if self._axis_values is None or self._axis_index_map is None:
             raise ValueError("axis_values must be set before running memoized function")
-        axis_values: dict[str, List[Any]] = {}
+        axis_values: dict[str, list[Any]] = {}
         for axis in self._axis_values:
             if axis not in axes:
                 axis_values[axis] = list(self._axis_values[axis])
@@ -816,11 +818,11 @@ class ShardMemo:
 
     def _normalize_axis_indices(
         self, axis_indices: Mapping[str, Any]
-    ) -> dict[str, List[Any]]:
+    ) -> dict[str, list[Any]]:
         """Normalize axis_indices into axis values using canonical split order."""
         if self._axis_values is None:
             raise ValueError("axis_values must be set before running memoized function")
-        axis_values: dict[str, List[Any]] = {}
+        axis_values: dict[str, list[Any]] = {}
         for axis in self._axis_values:
             if axis not in axis_indices:
                 axis_values[axis] = list(self._axis_values[axis])
@@ -832,12 +834,12 @@ class ShardMemo:
             axis_values[axis] = [self._axis_values[axis][index] for index in indices]
         return axis_values
 
-    def _expand_axis_indices(self, values: Any, axis: str, axis_len: int) -> List[int]:
+    def _expand_axis_indices(self, values: Any, axis: str, axis_len: int) -> list[int]:
         if isinstance(values, (list, tuple)):
             items = list(values)
         else:
             items = [values]
-        resolved: List[int] = []
+        resolved: list[int] = []
         for item in items:
             if isinstance(item, range):
                 indices = list(item)
@@ -856,17 +858,17 @@ class ShardMemo:
                 resolved.append(index)
         return resolved
 
-    def _build_chunk_keys(self) -> List[ChunkKey]:
+    def _build_chunk_keys(self) -> list[ChunkKey]:
         if self._axis_values is None:
             raise ValueError("axis_values must be set before running memoized function")
         return self._build_chunk_keys_for_axes(self._axis_values)
 
     def _chunk_indices_from_key(
         self, chunk_key: ChunkKey, index_format: Mapping[str, str] | None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if self._axis_index_map is None:
             raise ValueError("axis_values must be set before checking cache status")
-        indices: Dict[str, Any] = {}
+        indices: dict[str, Any] = {}
         for axis, values in chunk_key:
             axis_map = self._axis_index_map.get(axis)
             if axis_map is None:
@@ -878,10 +880,10 @@ class ShardMemo:
 
     def _infer_index_format(
         self, axis_indices: Mapping[str, Any] | None
-    ) -> Dict[str, str] | None:
+    ) -> dict[str, str] | None:
         if axis_indices is None:
             return None
-        formats: Dict[str, str] = {}
+        formats: dict[str, str] = {}
         for axis, values in axis_indices.items():
             formats[axis] = self._detect_index_format(values)
         return formats
@@ -900,7 +902,7 @@ class ShardMemo:
             return "int"
         return "list"
 
-    def _format_indices(self, indices: List[int], format_kind: str | None) -> Any:
+    def _format_indices(self, indices: list[int], format_kind: str | None) -> Any:
         if format_kind == "int":
             return indices[:]
         if format_kind == "range":
@@ -909,7 +911,7 @@ class ShardMemo:
             return self._indices_to_slice(indices) or indices[:]
         return indices[:]
 
-    def _indices_to_range(self, indices: List[int]) -> range | None:
+    def _indices_to_range(self, indices: list[int]) -> range | None:
         if not indices:
             return range(0, 0)
         if len(indices) == 1:
@@ -922,7 +924,7 @@ class ShardMemo:
                 return None
         return range(indices[0], indices[-1] + step, step)
 
-    def _indices_to_slice(self, indices: List[int]) -> slice | None:
+    def _indices_to_slice(self, indices: list[int]) -> slice | None:
         if not indices:
             return slice(0, 0, None)
         if len(indices) == 1:
@@ -937,12 +939,12 @@ class ShardMemo:
 
     def _build_chunk_keys_for_axes(
         self, axis_values: Mapping[str, Sequence[Any]]
-    ) -> List[ChunkKey]:
+    ) -> list[ChunkKey]:
         if self.memo_chunk_enumerator is not None:
             return list(self.memo_chunk_enumerator(dict(axis_values)))
 
         axis_order = self._resolve_axis_order(dict(axis_values))
-        axis_chunks: List[List[Tuple[Any, ...]]] = []
+        axis_chunks: list[list[Tuple[Any, ...]]] = []
         for axis in axis_order:
             values = axis_values.get(axis)
             if values is None:
@@ -950,7 +952,7 @@ class ShardMemo:
             size = self._resolve_axis_chunk_size(axis)
             axis_chunks.append(_chunk_values(values, size))
 
-        chunk_keys: List[ChunkKey] = []
+        chunk_keys: list[ChunkKey] = []
         for product in itertools.product(*axis_chunks):
             chunk_key = tuple(
                 (axis, tuple(values)) for axis, values in zip(axis_order, product)
@@ -960,18 +962,18 @@ class ShardMemo:
 
     def _build_chunk_plan_for_axes(
         self, axis_values: Mapping[str, Sequence[Any]]
-    ) -> Tuple[List[ChunkKey], Dict[ChunkKey, List[Tuple[Any, ...]]]]:
+    ) -> Tuple[list[ChunkKey], dict[ChunkKey, list[Tuple[Any, ...]]]]:
         if self._axis_values is None or self._axis_index_map is None:
             raise ValueError("axis_values must be set before running memoized function")
         axis_order = self._resolve_axis_order(self._axis_values)
-        per_axis_chunks: List[List[dict[str, Any]]] = []
+        per_axis_chunks: list[list[dict[str, Any]]] = []
         for axis in axis_order:
             requested_values = list(axis_values.get(axis, []))
             if not requested_values:
                 raise ValueError(f"Missing values for axis '{axis}'")
             size = self._resolve_axis_chunk_size(axis)
             full_values = list(self._axis_values[axis])
-            chunk_map: Dict[int, dict[str, Any]] = {}
+            chunk_map: dict[int, dict[str, Any]] = {}
             for value in requested_values:
                 index = self._axis_index_map[axis].get(value)
                 if index is None:
@@ -989,8 +991,8 @@ class ShardMemo:
                 chunk["values"] = tuple(full_values[start:end])
             per_axis_chunks.append([chunk_map[idx] for idx in sorted(chunk_map.keys())])
 
-        chunk_keys: List[ChunkKey] = []
-        requested_items: Dict[ChunkKey, List[Tuple[Any, ...]]] = {}
+        chunk_keys: list[ChunkKey] = []
+        requested_items: dict[ChunkKey, list[Tuple[Any, ...]]] = {}
         for combo in itertools.product(*per_axis_chunks):
             chunk_key = tuple(
                 (axis, tuple(desc["values"])) for axis, desc in zip(axis_order, combo)
@@ -1005,7 +1007,7 @@ class ShardMemo:
 
     def _build_item_map(
         self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         if not isinstance(chunk_output, (list, tuple)):
             return None
         axis_values = list(self._iter_chunk_axis_values(chunk_key))
@@ -1018,14 +1020,14 @@ class ShardMemo:
 
     def _build_item_spec_map(
         self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> Dict[str, dict[str, Any]] | None:
+    ) -> dict[str, dict[str, Any]] | None:
         if not isinstance(chunk_output, (list, tuple)):
             return None
         axis_values = list(self._iter_chunk_axis_values(chunk_key))
         if len(axis_values) != len(chunk_output):
             return None
         axis_names = [axis for axis, _ in chunk_key]
-        item_spec: Dict[str, dict[str, Any]] = {}
+        item_spec: dict[str, dict[str, Any]] = {}
         for values in axis_values:
             item_key = self._item_hash(chunk_key, values)
             item_spec[item_key] = dict(zip(axis_names, values))
@@ -1035,8 +1037,8 @@ class ShardMemo:
         self,
         payload: Mapping[str, Any],
         chunk_key: ChunkKey,
-        requested_items: List[Tuple[Any, ...]],
-    ) -> List[Any] | None:
+        requested_items: list[Tuple[Any, ...]],
+    ) -> list[Any] | None:
         item_map = payload.get("items")
         return self._extract_items_from_map(item_map, chunk_key, requested_items)
 
@@ -1044,11 +1046,11 @@ class ShardMemo:
         self,
         item_map: Mapping[str, Any] | None,
         chunk_key: ChunkKey,
-        requested_items: List[Tuple[Any, ...]],
-    ) -> List[Any] | None:
+        requested_items: list[Tuple[Any, ...]],
+    ) -> list[Any] | None:
         if item_map is None:
             return None
-        outputs: List[Any] = []
+        outputs: list[Any] = []
         for values in requested_items:
             item_key = self._item_hash(chunk_key, values)
             if item_key not in item_map:
