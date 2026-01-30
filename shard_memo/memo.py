@@ -9,6 +9,7 @@ import os
 import pickle
 import tempfile
 import time
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple
@@ -171,6 +172,8 @@ class ShardMemo:
         axis_order: Sequence[str] | None = None,
         verbose: int = 1,
         profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
     ) -> None:
         """Initialize a ShardMemo runner.
 
@@ -188,6 +191,10 @@ class ShardMemo:
             axis_values: Canonical split spec for the cache.
             verbose: Verbosity flag.
             profile: Enable profiling output.
+            exclusive: If True, error when creating a cache with same
+                params and axis_values as an existing cache.
+            warn_on_overlap: If True, warn when caches overlap (same params but
+                partially overlapping axis_values).
         """
         self.cache_root = Path(cache_root)
         self.cache_root.mkdir(parents=True, exist_ok=True)
@@ -200,8 +207,11 @@ class ShardMemo:
         self.axis_order = tuple(axis_order) if axis_order is not None else None
         self.verbose = verbose
         self.profile = profile
+        self.exclusive = exclusive
+        self.warn_on_overlap = warn_on_overlap
         self._axis_values: dict[str, Any] | None = None
         self._axis_index_map: AxisIndexMap | None = None
+        self._checked_exclusive = False
         self._set_axis_values(axis_values)
 
     def run_wrap(
@@ -376,6 +386,7 @@ class ShardMemo:
             raise ValueError(
                 "Cannot pass axis arguments to a singleton cache (no axes)"
             )
+        self._check_exclusive(params)
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
@@ -417,6 +428,7 @@ class ShardMemo:
             raise ValueError(
                 "Cannot pass axis arguments to a singleton cache (no axes)"
             )
+        self._check_exclusive(params)
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
@@ -757,6 +769,73 @@ class ShardMemo:
         }
         data = _stable_serialize(payload)
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    def _check_exclusive(self, params: dict[str, Any]) -> None:
+        if self._checked_exclusive:
+            return
+        self._checked_exclusive = True
+        if not self.exclusive and not self.warn_on_overlap:
+            return
+
+        if self._axis_values is None:
+            return
+
+        normalized_params = self._normalized_hash_params(params)
+        all_caches = self.discover_caches(self.cache_root)
+
+        for cache in all_caches:
+            metadata = cache.get("metadata")
+            if metadata is None:
+                continue
+            meta_params = metadata.get("params", {})
+            if _stable_serialize(meta_params) != _stable_serialize(normalized_params):
+                continue
+            meta_axis_values = metadata.get("axis_values", {})
+
+            if _stable_serialize(meta_axis_values) == _stable_serialize(
+                self._axis_values
+            ):
+                if self.exclusive:
+                    raise ValueError(
+                        f"Cache with same params and axis_values already exists: {cache['memo_hash']}. "
+                        f"Use a different cache_version or cache_root, or set exclusive=False."
+                    )
+                continue
+
+            if self.warn_on_overlap and meta_axis_values and self._axis_values:
+                overlap = self._detect_axis_overlap(meta_axis_values, self._axis_values)
+                if overlap:
+                    warnings.warn(
+                        f"Cache overlap detected: {cache['memo_hash']} has axis_values={meta_axis_values}, "
+                        f"current has axis_values={self._axis_values}. Overlap: {overlap}. "
+                        f"Consider using exclusive=True to prevent accidental conflicts.",
+                        stacklevel=2,
+                    )
+
+    def _detect_axis_overlap(
+        self, axis_values_a: dict[str, Any], axis_values_b: dict[str, Any]
+    ) -> dict[str, list[Any]] | None:
+        shared_axes = set(axis_values_a) & set(axis_values_b)
+        if not shared_axes:
+            return None
+        overlap: dict[str, list[Any]] = {}
+        for axis in shared_axes:
+            values_a = (
+                set(axis_values_a[axis])
+                if isinstance(axis_values_a[axis], (list, tuple))
+                else {axis_values_a[axis]}
+            )
+            values_b = (
+                set(axis_values_b[axis])
+                if isinstance(axis_values_b[axis], (list, tuple))
+                else {axis_values_b[axis]}
+            )
+            intersection = values_a & values_b
+            if intersection:
+                overlap[axis] = sorted(intersection)
+            else:
+                return None
+        return overlap
 
     def _memo_root(self, params: dict[str, Any]) -> Path:
         return self.cache_root / self._memo_hash(params)
@@ -1233,6 +1312,64 @@ class ShardMemo:
         return compatible
 
     @classmethod
+    def find_overlapping_caches(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any],
+        axis_values: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Find caches that overlap with the given params and axis_values.
+
+        Overlap means caches have the same params and at least one
+        intersecting axis with shared values.
+
+        Returns a list of overlapping cache entries, each containing:
+        - memo_hash: The unique hash of the cache
+        - path: Path to the cache directory
+        - metadata: Full metadata dict
+        - overlap: Dict of axis names to overlapping values
+
+        Args:
+            cache_root: Directory to scan for caches.
+            params: Params dict (axis values excluded) to match.
+            axis_values: axis_values dict to check for overlap.
+        """
+        all_caches = cls.discover_caches(cache_root)
+        overlapping: list[dict[str, Any]] = []
+        for cache in all_caches:
+            metadata = cache.get("metadata")
+            if metadata is None:
+                continue
+            meta_params = metadata.get("params", {})
+            if _stable_serialize(meta_params) != _stable_serialize(params):
+                continue
+            meta_axis_values = metadata.get("axis_values", {})
+            if not meta_axis_values or not axis_values:
+                continue
+            overlap_dict = {}
+            has_all_intersections = True
+            for axis in set(meta_axis_values) & set(axis_values):
+                meta_vals = (
+                    set(meta_axis_values[axis])
+                    if isinstance(meta_axis_values[axis], (list, tuple))
+                    else {meta_axis_values[axis]}
+                )
+                vals = (
+                    set(axis_values[axis])
+                    if isinstance(axis_values[axis], (list, tuple))
+                    else {axis_values[axis]}
+                )
+                intersection = meta_vals & vals
+                if intersection:
+                    overlap_dict[axis] = sorted(intersection)
+                else:
+                    has_all_intersections = False
+                    break
+            if has_all_intersections and overlap_dict:
+                overlapping.append({**cache, "overlap": overlap_dict})
+        return overlapping
+
+    @classmethod
     def load_from_cache(
         cls,
         cache_root: str | Path,
@@ -1243,6 +1380,8 @@ class ShardMemo:
         cache_path_fn: CachePathFn | None = None,
         verbose: int = 1,
         profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
     ) -> "ShardMemo":
         """Load a ShardMemo instance from an existing cache by memo_hash.
 
@@ -1259,6 +1398,9 @@ class ShardMemo:
             cache_path_fn: Optional override for cache file paths.
             verbose: Verbosity flag.
             profile: Enable profiling output.
+            exclusive: If True, error when creating a cache with same
+                params and axis_values as another cache.
+            warn_on_overlap: If True, warn when caches overlap.
         """
         cache_root = Path(cache_root)
         cache_path = cache_root / memo_hash
@@ -1287,6 +1429,8 @@ class ShardMemo:
             axis_order=metadata.get("axis_order"),
             verbose=verbose,
             profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
         )
         return instance
 
@@ -1303,6 +1447,8 @@ class ShardMemo:
         axis_order: Sequence[str] | None = None,
         verbose: int = 1,
         profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
     ) -> "ShardMemo":
         """Create a singleton cache with no axes (empty axis_values).
 
@@ -1320,6 +1466,9 @@ class ShardMemo:
             axis_order: Axis iteration order (not used for singleton, kept for API consistency).
             verbose: Verbosity flag.
             profile: Enable profiling output.
+            exclusive: If True, error when creating a cache with same
+                params as an existing singleton cache.
+            warn_on_overlap: If True, warn when caches overlap (not applicable for singleton).
         """
         memo_chunk_spec: dict[str, Any] = {}
         axis_values: dict[str, Any] = {}
@@ -1335,5 +1484,7 @@ class ShardMemo:
             axis_order=axis_order,
             verbose=verbose,
             profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
         )
         return instance

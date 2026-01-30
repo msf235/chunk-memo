@@ -474,3 +474,100 @@ def test_singleton_via_regular_constructor():
         assert output == [{"value": 0.8}]
         assert diag.total_chunks == 1
         assert diag.executed_chunks == 1
+
+
+def test_exclusive_mode_exact_match():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        memo.run(params, exec_fn_grid)
+
+        memo2 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values,
+            merge_fn=merge_fn,
+            exclusive=True,
+        )
+        with pytest.raises(
+            ValueError, match="Cache with same params and axis_values already exists"
+        ):
+            memo2.run(params, exec_fn_grid)
+
+
+def test_exclusive_mode_rejects_different_chunking():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        params = {"alpha": 0.4}
+        memo.run(params, exec_fn_grid)
+
+        memo2 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 2},
+            axis_values=axis_values,
+            merge_fn=merge_fn,
+            exclusive=True,
+        )
+        with pytest.raises(
+            ValueError, match="Cache with same params and axis_values already exists"
+        ):
+            memo2.run(params, exec_fn_grid)
+
+
+def test_warn_on_overlap():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo1 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
+            merge_fn=merge_fn,
+        )
+        params = {"alpha": 0.4}
+        memo1.run(params, exec_fn_grid)
+
+        with pytest.warns(UserWarning, match="Cache overlap detected"):
+            memo2 = ShardMemo(
+                cache_root=temp_dir,
+                memo_chunk_spec={"strat": 1, "s": 2},
+                axis_values={"strat": ["a"], "s": [1, 2, 3, 4]},
+                merge_fn=merge_fn,
+                warn_on_overlap=True,
+            )
+            output, diag = memo2.run(params, exec_fn_grid)
+            assert diag.executed_chunks == 2
+
+
+def test_find_overlapping_caches():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memo1 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
+            merge_fn=merge_fn,
+        )
+        params = {"alpha": 0.4}
+        memo1.run(params, exec_fn_grid)
+
+        overlapping = ShardMemo.find_overlapping_caches(
+            temp_dir,
+            params,
+            {"strat": ["a"], "s": [1, 2, 3, 4]},
+        )
+        assert len(overlapping) == 1
+        assert overlapping[0]["overlap"] == {"s": [1, 2, 3], "strat": ["a"]}
+
+        no_overlap = ShardMemo.find_overlapping_caches(
+            temp_dir,
+            params,
+            {"strat": ["c"], "s": [1, 2, 3]},
+        )
+        assert len(no_overlap) == 0
+
+        different_params = ShardMemo.find_overlapping_caches(
+            temp_dir,
+            {"alpha": 0.5},
+            {"strat": ["a"], "s": [1, 2, 3]},
+        )
+        assert len(different_params) == 0
