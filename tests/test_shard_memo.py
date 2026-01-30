@@ -837,37 +837,6 @@ def test_exclusive_prevents_subset_when_superset_exists():
             memo.run(params_subset, exec_fn_grid)
 
 
-def test_exclusive_prevents_subset_when_superset_exists():
-    """Test that creating a subset cache is prevented when a superset cache exists."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
-        params_superset = {"alpha": 0.4}
-        memo_superset = ShardMemo(
-            cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
-            axis_values=axis_values_superset,
-            merge_fn=merge_fn,
-            exclusive=True,
-        )
-        memo_superset.run(params_superset, exec_fn_grid)
-
-        axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
-        params_subset = {"alpha": 0.4}
-
-        with pytest.raises(
-            ValueError,
-            match="Cannot create subset cache: a superset cache already exists",
-        ):
-            memo = ShardMemo.auto_load(
-                temp_dir,
-                params_subset,
-                axis_values=axis_values_subset,
-                exclusive=True,
-                merge_fn=merge_fn,
-            )
-            memo.run(params_subset, exec_fn_grid)
-
-
 def test_find_compatible_caches_with_allow_superset():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
@@ -898,3 +867,181 @@ def test_find_compatible_caches_with_allow_superset():
             allow_superset=False,
         )
         assert len(caches_exact) == 0
+
+
+def test_allow_superset_no_superset_creates_new():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
+        params_subset = {"alpha": 0.4, "strat": "a"}
+
+        memo_subset = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values_subset,
+            merge_fn=merge_fn,
+        )
+        output1, diag1 = memo_subset.run(params_subset, exec_fn_grid)
+        assert diag1.executed_chunks == 1
+
+        axis_values_different = {"strat": ["b"], "s": [1, 2, 3]}
+        params_different = {"alpha": 0.4, "strat": "b"}
+
+        memo_different = ShardMemo.auto_load(
+            temp_dir,
+            params_different,
+            axis_values=axis_values_different,
+            allow_superset=True,
+            merge_fn=merge_fn,
+        )
+        output2, diag2 = memo_different.run(params_different, exec_fn_grid)
+
+        assert output2
+        assert diag2.executed_chunks == 1
+        assert diag2.cached_chunks == 0
+
+
+def test_allow_superset_mixed_params_and_axes():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
+        params_superset = {"alpha": 0.4}
+        memo_superset = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values_superset,
+            merge_fn=merge_fn,
+        )
+        memo_superset.run(params_superset, exec_fn_grid)
+
+        axis_values_subset = {"s": [1, 2, 3]}
+        params_subset = {"alpha": 0.4, "strat": "a"}
+
+        memo_subset = ShardMemo.auto_load(
+            temp_dir,
+            params_subset,
+            axis_values=axis_values_subset,
+            allow_superset=True,
+            merge_fn=merge_fn,
+        )
+        output, diag = memo_subset.run(params_subset, exec_fn_grid)
+
+        assert output
+        assert diag.cached_chunks > 0
+        assert diag.executed_chunks == 0
+
+
+def test_allow_superset_partial_subset_match():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values_superset = {"strat": ["a", "b", "c"], "s": [1, 2, 3]}
+        params_superset = {"alpha": 0.4}
+        memo_superset = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values_superset,
+            merge_fn=merge_fn,
+        )
+        memo_superset.run(params_superset, exec_fn_grid)
+
+        axis_values_subset = {"strat": ["a"], "s": [1]}
+        params_subset = {"alpha": 0.4}
+
+        memo_subset = ShardMemo.auto_load(
+            temp_dir,
+            params_subset,
+            axis_values=axis_values_subset,
+            allow_superset=True,
+            merge_fn=merge_fn,
+        )
+        output, diag = memo_subset.run(params_subset, exec_fn_grid)
+
+        assert output
+        assert diag.cached_chunks > 0
+        assert diag.executed_chunks == 0
+
+
+def test_exclusive_prevents_redundant_subset():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
+        params_superset = {"alpha": 0.4}
+        memo_superset = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values_superset,
+            merge_fn=merge_fn,
+            exclusive=True,
+        )
+        memo_superset.run(params_superset, exec_fn_grid)
+
+        axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
+        params_subset = {"alpha": 0.4}
+
+        memo_test = ShardMemo.auto_load(
+            temp_dir,
+            params_subset,
+            axis_values=axis_values_subset,
+            exclusive=True,
+            merge_fn=merge_fn,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Cannot create subset cache: a superset cache already exists",
+        ):
+            memo_test.run(params_subset, exec_fn_grid)
+
+
+def test_allow_superset_with_different_params():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
+        params_superset = {"alpha": 0.4}
+        memo_superset = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values_superset,
+            merge_fn=merge_fn,
+        )
+        memo_superset.run(params_superset, exec_fn_grid)
+
+        axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
+        params_subset = {"alpha": 0.5, "strat": "a"}
+
+        memo_subset = ShardMemo.auto_load(
+            temp_dir,
+            params_subset,
+            axis_values=axis_values_subset,
+            allow_superset=True,
+            merge_fn=merge_fn,
+        )
+        output, diag = memo_subset.run(params_subset, exec_fn_grid)
+
+        assert output
+        assert diag.cached_chunks == 0
+        assert diag.executed_chunks > 0
+
+
+def test_allow_superset_multiple_axes_subset():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
+        params_superset = {"alpha": 0.4}
+        memo_superset = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values_superset,
+            merge_fn=merge_fn,
+        )
+        memo_superset.run(params_superset, exec_fn_grid)
+
+        axis_values_subset = {"strat": ["a"], "s": [1]}
+        params_subset = {"alpha": 0.4}
+
+        memo_subset = ShardMemo.auto_load(
+            temp_dir,
+            params_subset,
+            axis_values=axis_values_subset,
+            allow_superset=True,
+            merge_fn=merge_fn,
+        )
+        output, diag = memo_subset.run(params_subset, exec_fn_grid)
+
+        assert output
+        assert diag.cached_chunks > 0
+        assert diag.executed_chunks == 0
