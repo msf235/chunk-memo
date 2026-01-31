@@ -8,17 +8,10 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple
 
-from ._format import (
-    chunk_key_size,
-    format_params,
-    format_rate_eta,
-    format_spec,
-    print_detail,
-    print_progress,
-)
+from ._format import chunk_key_size, format_rate_eta, print_detail, print_progress
 from .memo import ChunkKey, ShardMemo, Diagnostics, _atomic_write_pickle
+from .run_utils import build_plan_lines, prepare_progress, print_chunk_summary
 
-PROGRESS_REPORT_DIVISOR = 50
 EXEC_REPORT_INTERVAL_SECONDS = 2.0
 
 
@@ -361,7 +354,6 @@ def memo_parallel_run(
     exec_outputs: list[Any] = []
     diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
     total_chunks = diagnostics.total_chunks
-    progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
 
     if collate_fn is None:
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
@@ -372,11 +364,12 @@ def memo_parallel_run(
         axis_values = cache_status.get("axis_values")
         if isinstance(axis_values, Mapping):
             axis_order = _resolve_axis_order(memo, axis_values)
-            lines = []
-            lines.extend(format_params(params_dict))
-            lines.extend(format_spec(axis_values, axis_order))
-            lines.append(
-                f"[ShardMemo] plan: cached={len(cached_chunks)} execute={len(missing_chunks)}"
+            lines = build_plan_lines(
+                params_dict,
+                axis_values,
+                axis_order,
+                len(cached_chunks),
+                len(missing_chunks),
             )
             print("\n".join(lines))
 
@@ -384,21 +377,12 @@ def memo_parallel_run(
     if not item_list:
         return [], diagnostics
     total_items = len(item_list)
-    planning_start = time.monotonic()
-    processed_items = 0
-
-    def report_progress_main(processed: int, final: bool = False) -> None:
-        if memo.verbose != 1:
-            return
-        if not final and processed % progress_step != 0 and processed != total_chunks:
-            return
-        message = format_rate_eta(
-            "planning",
-            processed_items,
-            total_items,
-            planning_start,
-        )
-        print_progress(message, final=final)
+    report_progress_main, update_processed = prepare_progress(
+        total_chunks=total_chunks,
+        total_items=total_items,
+        verbose=memo.verbose,
+        label="planning",
+    )
 
     axis_extractor = _build_item_axis_extractor(
         memo,
@@ -439,9 +423,9 @@ def memo_parallel_run(
         zip(cached_chunks, cached_chunk_items), start=1
     ):
         if not chunk_items:
-            report_progress_main(processed, final=processed == total_chunks)
+            report_progress_main(processed, processed == total_chunks)
             continue
-        processed_items += len(chunk_items)
+        update_processed(len(chunk_items))
         full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
         chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
@@ -462,7 +446,7 @@ def memo_parallel_run(
             if chunk_output is None:
                 raise ValueError("Cache payload missing required data")
             outputs.append(chunk_output)
-            report_progress_main(processed, final=processed == total_chunks)
+            report_progress_main(processed, processed == total_chunks)
             continue
         item_map = payload.get("items")
         if item_map is None:
@@ -488,7 +472,7 @@ def memo_parallel_run(
                     f"[ShardMemo] load chunk={chunk_key} items={len(item_outputs)}"
                 )
             outputs.append(collate_fn(item_outputs))
-        report_progress_main(processed, final=processed == total_chunks)
+        report_progress_main(processed, processed == total_chunks)
 
     base_index = len(cached_chunks)
     for offset, (chunk_key, chunk_items) in enumerate(
@@ -496,10 +480,10 @@ def memo_parallel_run(
     ):
         if chunk_items:
             _register_missing(chunk_key, chunk_items)
-        processed_items += len(chunk_items)
+        update_processed(len(chunk_items))
         report_progress_main(
             base_index + offset,
-            final=(base_index + offset) == total_chunks,
+            (base_index + offset) == total_chunks,
         )
 
     if not missing_items and missing_chunks:
@@ -589,7 +573,7 @@ def memo_parallel_run(
             cursor += chunk_size
             report_progress_main(
                 base_index + len(missing_chunks),
-                final=(base_index + len(missing_chunks)) == total_chunks,
+                (base_index + len(missing_chunks)) == total_chunks,
             )
     diagnostics.merges += 1
     if memo.merge_fn is not None:
@@ -598,14 +582,8 @@ def memo_parallel_run(
         merged = outputs
     if not merged and item_list:
         merged = exec_outputs if missing_items else []
-    if memo.verbose >= 2:
-        print_detail(
-            "[ShardMemo] summary "
-            f"cached={diagnostics.cached_chunks} "
-            f"executed={diagnostics.executed_chunks} "
-            f"total={diagnostics.total_chunks}"
-        )
-    report_progress_main(total_chunks, final=True)
+    print_chunk_summary(diagnostics, memo.verbose)
+    report_progress_main(total_chunks, True)
     return merged, diagnostics
 
 
@@ -638,24 +616,10 @@ def memo_parallel_run_streaming(
 
     diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
     total_chunks = diagnostics.total_chunks
-    progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile cache_status_s={time.monotonic() - profile_start:0.3f}"
         )
-
-    def report_progress_streaming(processed: int, final: bool = False) -> None:
-        if memo.verbose != 1:
-            return
-        if not final and processed % progress_step != 0 and processed != total_chunks:
-            return
-        message = format_rate_eta(
-            "planning",
-            processed_items,
-            total_items,
-            planning_start,
-        )
-        print_progress(message, final=final)
 
     if collate_fn is None:
         collate_fn = memo.merge_fn if memo.merge_fn is not None else lambda chunk: chunk
@@ -668,11 +632,12 @@ def memo_parallel_run_streaming(
         axis_values = cache_status.get("axis_values")
         if isinstance(axis_values, Mapping):
             axis_order = _resolve_axis_order(memo, axis_values)
-            lines = []
-            lines.extend(format_params(params_dict))
-            lines.extend(format_spec(axis_values, axis_order))
-            lines.append(
-                f"[ShardMemo] plan: cached={len(cached_chunks)} execute={len(missing_chunks)}"
+            lines = build_plan_lines(
+                params_dict,
+                axis_values,
+                axis_order,
+                len(cached_chunks),
+                len(missing_chunks),
             )
             print("\n".join(lines))
 
@@ -680,8 +645,12 @@ def memo_parallel_run_streaming(
     if not item_list:
         return diagnostics
     total_items = len(item_list)
-    planning_start = time.monotonic()
-    processed_items = 0
+    report_progress_streaming, update_processed = prepare_progress(
+        total_chunks=total_chunks,
+        total_items=total_items,
+        verbose=memo.verbose,
+        label="planning",
+    )
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile items_list_s={time.monotonic() - profile_start:0.3f}"
@@ -736,9 +705,9 @@ def memo_parallel_run_streaming(
         zip(cached_chunks, cached_chunk_items), start=1
     ):
         if not chunk_items:
-            report_progress_streaming(processed, final=processed == total_chunks)
+            report_progress_streaming(processed, processed == total_chunks)
             continue
-        processed_items += len(chunk_items)
+        update_processed(len(chunk_items))
         full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
         chunk_hash = memo._chunk_hash(params_dict, chunk_key)
         if use_index:
@@ -753,7 +722,7 @@ def memo_parallel_run_streaming(
             diagnostics.cached_chunks += 1
             if memo.verbose >= 2:
                 print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-            report_progress_streaming(processed, final=processed == total_chunks)
+            report_progress_streaming(processed, processed == total_chunks)
             continue
         path = memo._resolve_cache_path(params_dict, chunk_key, chunk_hash)
         with open(path, "rb") as handle:
@@ -780,7 +749,7 @@ def memo_parallel_run_streaming(
                 print_detail(
                     f"[ShardMemo] load chunk={chunk_key} items={len(chunk_items)}"
                 )
-        report_progress_streaming(processed, final=processed == total_chunks)
+        report_progress_streaming(processed, processed == total_chunks)
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile cached_scan_s={time.monotonic() - profile_start:0.3f}"
@@ -792,10 +761,10 @@ def memo_parallel_run_streaming(
     ):
         if chunk_items:
             _register_missing(chunk_key, chunk_items)
-        processed_items += len(chunk_items)
+        update_processed(len(chunk_items))
         report_progress_streaming(
             base_index + offset,
-            final=(base_index + offset) == total_chunks,
+            (base_index + offset) == total_chunks,
         )
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(
@@ -907,13 +876,7 @@ def memo_parallel_run_streaming(
         print_detail(
             f"[ShardMemo] stream_mem_max items={diagnostics.max_parallel_items}"
         )
-    if memo.verbose >= 2:
-        print_detail(
-            "[ShardMemo] summary "
-            f"cached={diagnostics.cached_chunks} "
-            f"executed={diagnostics.executed_chunks} "
-            f"total={diagnostics.total_chunks}"
-        )
-    report_progress_streaming(total_chunks, final=True)
+    print_chunk_summary(diagnostics, memo.verbose)
+    report_progress_streaming(total_chunks, True)
 
     return diagnostics
