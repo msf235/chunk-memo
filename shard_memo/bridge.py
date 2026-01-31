@@ -58,7 +58,7 @@ def _save_chunk_payload(
         existing=cached_payloads.get(chunk_key),
     )
     if spec_fn is not None:
-        payload["spec"] = spec_fn()
+        payload["axis_vals"] = spec_fn()
     _atomic_write_pickle(path, payload)
     memo._update_chunk_index(params_dict, chunk_hash, chunk_key)
     return payload

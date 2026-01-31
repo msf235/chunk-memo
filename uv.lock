@@ -96,7 +96,7 @@ wheels = [
 ]
 
 [[package]]
-name = "swarm-memo"
+name = "shard-memo"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

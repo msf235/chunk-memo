@@ -490,9 +490,9 @@ class ShardMemo:
         item_map = self._build_item_map(chunk_key, chunk_output)
         if item_map is not None:
             payload["items"] = item_map
-            item_spec = self._build_item_spec_map(chunk_key, chunk_output)
+            item_spec = self._build_item_axis_vals_map(chunk_key, chunk_output)
             if item_spec is not None:
-                payload["spec"] = item_spec
+                payload["axis_vals"] = item_spec
         else:
             payload["output"] = chunk_output
         _apply_payload_timestamps(payload, existing=existing_payload)
@@ -1293,7 +1293,7 @@ class ShardMemo:
             for values, output in zip(axis_values, chunk_output)
         }
 
-    def _build_item_spec_map(
+    def _build_item_axis_vals_map(
         self, chunk_key: ChunkKey, chunk_output: Any
     ) -> dict[str, dict[str, Any]] | None:
         if not isinstance(chunk_output, (list, tuple)):
@@ -1302,11 +1302,11 @@ class ShardMemo:
         if len(axis_values) != len(chunk_output):
             return None
         axis_names = [axis for axis, _ in chunk_key]
-        item_spec: dict[str, dict[str, Any]] = {}
+        item_axis_vals: dict[str, dict[str, Any]] = {}
         for values in axis_values:
             item_key = self._item_hash(chunk_key, values)
-            item_spec[item_key] = dict(zip(axis_names, values))
-        return item_spec
+            item_axis_vals[item_key] = dict(zip(axis_names, values))
+        return item_axis_vals
 
     def _reconstruct_output_from_items(
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
