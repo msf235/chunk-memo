@@ -385,6 +385,38 @@ class ShardMemo:
             "missing_chunk_indices": missing_chunk_indices,
         }
 
+    def _prepare_run(
+        self,
+        params: dict[str, Any],
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> tuple[
+        dict[str, Any], list[ChunkKey], Mapping[ChunkKey, list[Tuple[Any, ...]]] | None
+    ]:
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before running memoized function")
+        if not self._axis_values and (axes or axis_indices):
+            raise ValueError(
+                "Cannot pass axis arguments to a singleton cache (no axes)"
+            )
+        self._check_exclusive(params)
+        self.write_metadata(params)
+        if axis_indices is None and not axes:
+            chunk_keys = self._build_chunk_keys()
+            if self.verbose == 1:
+                self._print_run_header(params, self._axis_values, chunk_keys)
+            return self._axis_values, chunk_keys, None
+        if axis_indices is not None and axes:
+            raise ValueError("axis_indices cannot be combined with axis values")
+        if axis_indices is not None:
+            axis_values = self._normalize_axis_indices(axis_indices)
+        else:
+            axis_values = self._normalize_axes(axes)
+        chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
+        if self.verbose == 1:
+            self._print_run_header(params, axis_values, chunk_keys)
+        return axis_values, chunk_keys, requested_items
+
     def run(
         self,
         params: dict[str, Any],
@@ -398,28 +430,9 @@ class ShardMemo:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order.
         """
-        if self._axis_values is None:
-            raise ValueError("axis_values must be set before running memoized function")
-        if not self._axis_values and (axes or axis_indices):
-            raise ValueError(
-                "Cannot pass axis arguments to a singleton cache (no axes)"
-            )
-        self._check_exclusive(params)
-        self.write_metadata(params)
-        if axis_indices is None and not axes:
-            chunk_keys = self._build_chunk_keys()
-            if self.verbose == 1:
-                self._print_run_header(params, self._axis_values, chunk_keys)
-            return self._run_chunks(params, chunk_keys, exec_fn)
-        if axis_indices is not None and axes:
-            raise ValueError("axis_indices cannot be combined with axis values")
-        if axis_indices is not None:
-            axis_values = self._normalize_axis_indices(axis_indices)
-        else:
-            axis_values = self._normalize_axes(axes)
-        chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
-        if self.verbose == 1:
-            self._print_run_header(params, axis_values, chunk_keys)
+        axis_values, chunk_keys, requested_items = self._prepare_run(
+            params, axis_indices, **axes
+        )
         return self._run_chunks(
             params,
             chunk_keys,
@@ -440,28 +453,9 @@ class ShardMemo:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order.
         """
-        if self._axis_values is None:
-            raise ValueError("axis_values must be set before running memoized function")
-        if not self._axis_values and (axes or axis_indices):
-            raise ValueError(
-                "Cannot pass axis arguments to a singleton cache (no axes)"
-            )
-        self._check_exclusive(params)
-        self.write_metadata(params)
-        if axis_indices is None and not axes:
-            chunk_keys = self._build_chunk_keys()
-            if self.verbose == 1:
-                self._print_run_header(params, self._axis_values, chunk_keys)
-            return self._run_chunks_streaming(params, chunk_keys, exec_fn)
-        if axis_indices is not None and axes:
-            raise ValueError("axis_indices cannot be combined with axis values")
-        if axis_indices is not None:
-            axis_values = self._normalize_axis_indices(axis_indices)
-        else:
-            axis_values = self._normalize_axes(axes)
-        chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
-        if self.verbose == 1:
-            self._print_run_header(params, axis_values, chunk_keys)
+        axis_values, chunk_keys, requested_items = self._prepare_run(
+            params, axis_indices, **axes
+        )
         return self._run_chunks_streaming(
             params,
             chunk_keys,
