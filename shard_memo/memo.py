@@ -14,16 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple
 
-from ._format import (
-    chunk_key_size,
-    format_params,
-    format_rate_eta,
-    format_spec,
-    print_detail,
-    print_progress,
-)
-
-PROGRESS_REPORT_DIVISOR = 50
+from ._format import chunk_key_size, print_detail
+from .run_utils import build_plan_lines, prepare_progress, print_chunk_summary
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
@@ -505,7 +497,9 @@ class ShardMemo:
         ) = None,
     ) -> Tuple[Any, Diagnostics]:
         collate_fn = self.merge_fn if self.merge_fn is not None else lambda chunk: chunk
-        diagnostics, report_progress, total_chunks = self._prepare_chunk_run(chunk_keys)
+        diagnostics, report_progress, update_processed, total_chunks = (
+            self._prepare_chunk_run(chunk_keys)
+        )
 
         def process_chunk(
             chunk_key: ChunkKey, processed: int
@@ -584,63 +578,34 @@ class ShardMemo:
 
         outputs: list[Any] = []
         for processed, chunk_key in enumerate(chunk_keys, start=1):
-            self._update_processed_items(chunk_key)
+            update_processed(chunk_key_size(chunk_key))
             output, cached, _ = process_chunk(chunk_key, processed)
             if cached:
                 diagnostics.cached_chunks += 1
             outputs.append(output)
-            report_progress(processed, final=processed == total_chunks)
+            report_progress(processed, processed == total_chunks)
 
         diagnostics.merges += 1
         if self.merge_fn is not None:
             merged = self.merge_fn(outputs)
         else:
             merged = outputs
-        self._print_chunk_summary(diagnostics)
+        print_chunk_summary(diagnostics, self.verbose)
         return merged, diagnostics
 
     def _prepare_chunk_run(
         self, chunk_keys: Sequence[ChunkKey]
-    ) -> tuple[Diagnostics, Callable[[int, bool], None], int]:
+    ) -> tuple[Diagnostics, Callable[[int, bool], None], Callable[[int], None], int]:
         diagnostics = Diagnostics(total_chunks=len(chunk_keys))
         total_chunks = len(chunk_keys)
-        progress_step = max(1, total_chunks // PROGRESS_REPORT_DIVISOR)
-        start_time = time.monotonic()
-        self._run_total_items = sum(
-            chunk_key_size(chunk_key) for chunk_key in chunk_keys
+        total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+        report_progress, update_processed = prepare_progress(
+            total_chunks=total_chunks,
+            total_items=total_items,
+            verbose=self.verbose,
+            label="planning",
         )
-        self._run_processed_items = 0
-
-        def report_progress(processed: int, final: bool = False) -> None:
-            if self.verbose != 1:
-                return
-            if (
-                not final
-                and processed % progress_step != 0
-                and processed != total_chunks
-            ):
-                return
-            message = format_rate_eta(
-                "planning",
-                self._run_processed_items,
-                self._run_total_items,
-                start_time,
-            )
-            print_progress(message, final=final)
-
-        return diagnostics, report_progress, total_chunks
-
-    def _update_processed_items(self, chunk_key: ChunkKey) -> None:
-        self._run_processed_items += chunk_key_size(chunk_key)
-
-    def _print_chunk_summary(self, diagnostics: Diagnostics) -> None:
-        if self.verbose >= 2:
-            print_detail(
-                "[ShardMemo] summary "
-                f"cached={diagnostics.cached_chunks} "
-                f"executed={diagnostics.executed_chunks} "
-                f"total={diagnostics.total_chunks}"
-            )
+        return diagnostics, report_progress, update_processed, total_chunks
 
     def _run_chunks_streaming(
         self,
@@ -652,10 +617,12 @@ class ShardMemo:
             Mapping[ChunkKey, list[Tuple[Any, ...]]] | None
         ) = None,
     ) -> Diagnostics:
-        diagnostics, report_progress, total_chunks = self._prepare_chunk_run(chunk_keys)
+        diagnostics, report_progress, update_processed, total_chunks = (
+            self._prepare_chunk_run(chunk_keys)
+        )
 
         for processed, chunk_key in enumerate(chunk_keys, start=1):
-            self._update_processed_items(chunk_key)
+            update_processed(chunk_key_size(chunk_key))
             chunk_hash = self._chunk_hash(params, chunk_key)
             path = self._resolve_cache_path(params, chunk_key, chunk_hash)
             existing_payload: Mapping[str, Any] | None = None
@@ -664,7 +631,7 @@ class ShardMemo:
                     diagnostics.cached_chunks += 1
                     if self.verbose >= 2:
                         print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-                    report_progress(processed, final=processed == total_chunks)
+                    report_progress(processed, processed == total_chunks)
                     continue
                 with open(path, "rb") as handle:
                     payload = pickle.load(handle)
@@ -685,7 +652,7 @@ class ShardMemo:
                         print_detail(
                             f"[ShardMemo] load chunk={chunk_key} items={item_count}"
                         )
-                    report_progress(processed, final=processed == total_chunks)
+                    report_progress(processed, processed == total_chunks)
                     continue
 
             chunk_output, item_map = self._execute_and_save_chunk(
@@ -704,9 +671,9 @@ class ShardMemo:
                         f"[ShardMemo] run chunk={chunk_key} items={item_count}"
                     )
 
-            report_progress(processed, final=processed == total_chunks)
+            report_progress(processed, processed == total_chunks)
 
-        self._print_chunk_summary(diagnostics)
+        print_chunk_summary(diagnostics, self.verbose)
         return diagnostics
 
     def _resolve_cache_path(
@@ -937,14 +904,21 @@ class ShardMemo:
             ):
                 cached_count += 1
         execute_count = len(chunk_keys) - cached_count
-        lines = []
-        lines.extend(format_params(params))
-        lines.extend(format_spec(axis_values, axis_order))
-        lines.append(f"[ShardMemo] cache_root: {self.cache_root}")
-        lines.append(f"[ShardMemo] memo_chunk_spec: {self.memo_chunk_spec}")
-        lines.append(f"[ShardMemo] cache_version: {self.cache_version}")
-        lines.append(f"[ShardMemo] axis_order: {self.axis_order}")
-        lines.append(f"[ShardMemo] plan: cached={cached_count} execute={execute_count}")
+        lines = build_plan_lines(
+            params,
+            axis_values,
+            axis_order,
+            cached_count,
+            execute_count,
+        )
+        cache_lines = [
+            f"[ShardMemo] cache_root: {self.cache_root}",
+            f"[ShardMemo] memo_chunk_spec: {self.memo_chunk_spec}",
+            f"[ShardMemo] cache_version: {self.cache_version}",
+            f"[ShardMemo] axis_order: {self.axis_order}",
+        ]
+        for line in reversed(cache_lines):
+            lines.insert(-1, line)
 
     def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:
