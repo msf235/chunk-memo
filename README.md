@@ -120,6 +120,80 @@ Notes:
 - `warn_on_overlap`: if True, warn when caches have same `params` but partially
   overlapping `axis_values`.
 
+### axis_values: Memory-efficient lazy loading
+
+The `axis_values` parameter supports both traditional lists/tuples and **callable functions** for memory-efficient lazy loading.
+
+#### Why use callables?
+
+When working with very large datasets (millions of values), storing full lists in memory can be expensive. Callable axis_values enable:
+- **Lazy loading**: Values are computed on-demand, not upfront
+- **External data sources**: Load values from databases, files, or APIs as needed
+- **Memory efficiency**: Only required values are loaded into memory at runtime
+
+#### Callable patterns
+
+**Index-based callable** (recommended for large datasets):
+```python
+axis_values = {
+    "large_axis": lambda idx: expensive_data_source[idx],
+}
+```
+The callable receives an index and returns the value at that index.
+
+**List-returning callable** (useful when full iteration is needed):
+```python
+axis_values = {
+    "small_axis": lambda: ["a", "b", "c"],
+}
+```
+The callable takes no arguments and returns the full list.
+
+#### Mixed approach (small lists + large callables)
+
+You can mix both patterns for optimal memory usage:
+```python
+axis_values = {
+    "small_axis": ["a", "b"],  # Small list - keep in memory
+    "large_axis": lambda idx: large_db.query(idx),  # Large - lazy load
+}
+```
+
+#### Usage example
+
+```python
+from shard_memo import ShardMemo
+
+# Traditional approach - all values in memory
+axis_values_lists = {
+    "strat": ["a", "b"],
+    "s": [1, 2, 3, 4],
+}
+
+# Memory-efficient approach - lazy loading
+axis_values_callables = {
+    "strat": lambda idx: ["a", "b"][idx],  # Could load from disk/DB
+    "s": lambda idx: [1, 2, 3, 4][idx],
+}
+
+# Both work identically
+memo = ShardMemo(
+    cache_root="./cache",
+    memo_chunk_spec={"strat": 1, "s": 2},
+    axis_values=axis_values_callables,  # or axis_values_lists
+    merge_fn=merge_fn,
+)
+
+output, diag = memo.run(params, exec_fn)
+```
+
+#### Important notes
+
+- Callable axis_values are converted to a serializable representation for metadata
+- Cache lookups and chunking still work identically regardless of list vs callable
+- When using callables with external sources, ensure values are deterministic and consistent
+- See `examples/callable_axis_values.py` for a complete working example
+
 ### run
 
 ```python
@@ -480,10 +554,16 @@ or create a new one that covers your requested data.
 
 ## Running examples
 
-Run the example script:
+Run the basic example script:
 
 ```bash
 python examples/basic.py
+```
+
+Run the callable axis_values example (memory-efficient lazy loading):
+
+```bash
+python examples/callable_axis_values.py
 ```
 
 ## Notes

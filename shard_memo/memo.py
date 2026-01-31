@@ -196,7 +196,13 @@ class ShardMemo:
                 experimental and not yet thoroughly tested.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order (defaults to lexicographic).
-            axis_values: Canonical split spec for the cache.
+            axis_values: Canonical split spec for the cache. Can be:
+                - dict of iterables (lists, tuples): converted to list on init
+                - dict of callables: For memory-efficient lazy loading.
+                  Supports two patterns:
+                  * Index-based: `lambda idx: values[idx]` - called with index
+                  * List-returning: `lambda: full_list` - called once for all values
+                  Use callables for large datasets to avoid loading all values into memory.
             verbose: Verbosity flag.
             profile: Enable profiling output.
             exclusive: If True, error when creating a cache with same
@@ -219,8 +225,12 @@ class ShardMemo:
         self.warn_on_overlap = warn_on_overlap
         self._axis_values: dict[str, Any] | None = None
         self._axis_index_map: AxisIndexMap | None = None
+        self._axis_values_serializable: dict[str, Any] | None = None
         self._checked_exclusive = False
         self._set_axis_values(axis_values)
+        self._axis_values_serializable = self._make_axis_values_serializable(
+            axis_values
+        )
 
     def run_wrap(
         self, *, params_arg: str = "params"
@@ -770,7 +780,7 @@ class ShardMemo:
     def _memo_hash(self, params: dict[str, Any]) -> str:
         payload = {
             "params": self._normalized_hash_params(params),
-            "axis_values": self._axis_values,
+            "axis_values": self._axis_values_serializable,
             "memo_chunk_spec": self.memo_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
@@ -798,9 +808,11 @@ class ShardMemo:
             meta_params = metadata.get("params", {})
             meta_axis_values = metadata.get("axis_values", {})
 
-            if self._is_superset_compatible(metadata, normalized_params, self._axis_values):
+            if self._is_superset_compatible(
+                metadata, normalized_params, self._axis_values_serializable
+            ):
                 if self.exclusive:
-                    if meta_axis_values == self._axis_values:
+                    if meta_axis_values == self._axis_values_serializable:
                         raise ValueError(
                             f"Cache with same params and axis_values already exists: {cache['memo_hash']}. "
                             f"Use a different cache_version or cache_root, or set exclusive=False."
@@ -809,7 +821,7 @@ class ShardMemo:
                         raise ValueError(
                             f"Cannot create subset cache: a superset cache already exists: {cache['memo_hash']}. "
                             f"Superset cache has axis_values={meta_axis_values}, "
-                            f"requested has axis_values={self._axis_values}. "
+                            f"requested has axis_values={self._axis_values_serializable}. "
                             f"Use the existing superset cache, or set exclusive=False."
                         )
                 continue
@@ -824,18 +836,25 @@ class ShardMemo:
 
                 if merged_meta_params == normalized_params:
                     constrained_meta_axis_values = {
-                        k: v for k, v in meta_axis_values.items() if k not in constrained_meta
+                        k: v
+                        for k, v in meta_axis_values.items()
+                        if k not in constrained_meta
                     }
                     if constrained_meta_axis_values.keys() <= self._axis_values.keys():
                         for axis_name in constrained_meta_axis_values:
                             meta_vals = (
                                 set(constrained_meta_axis_values[axis_name])
-                                if isinstance(constrained_meta_axis_values[axis_name], (list, tuple))
+                                if isinstance(
+                                    constrained_meta_axis_values[axis_name],
+                                    (list, tuple),
+                                )
                                 else {constrained_meta_axis_values[axis_name]}
                             )
                             new_vals = (
                                 set(self._axis_values[axis_name])
-                                if isinstance(self._axis_values[axis_name], (list, tuple))
+                                if isinstance(
+                                    self._axis_values[axis_name], (list, tuple)
+                                )
                                 else {self._axis_values[axis_name]}
                             )
                             if not meta_vals.issubset(new_vals):
@@ -844,21 +863,26 @@ class ShardMemo:
                             raise ValueError(
                                 f"Cannot create superset cache: a subset cache already exists: {cache['memo_hash']}. "
                                 f"Subset cache has axis_values={meta_axis_values}, "
-                                f"requested has axis_values={self._axis_values}. "
+                                f"requested has axis_values={self._axis_values_serializable}. "
                                 f"Use the existing subset cache, or set exclusive=False."
                             )
 
-
-
-            if self.warn_on_overlap and meta_axis_values and self._axis_values:
-                overlap = self._detect_axis_overlap(meta_axis_values, self._axis_values)
+            if (
+                self.warn_on_overlap
+                and meta_axis_values
+                and self._axis_values_serializable
+            ):
+                overlap = self._detect_axis_overlap(
+                    meta_axis_values, self._axis_values_serializable
+                )
                 if overlap:
                     warnings.warn(
-                        f"Cache overlap detected: {cache["memo_hash"]} has axis_values={meta_axis_values}, "
-                        f"current has axis_values={self._axis_values}. Overlap: {overlap}. "
+                        f"Cache overlap detected: {cache['memo_hash']} has axis_values={meta_axis_values}, "
+                        f"current has axis_values={self._axis_values_serializable}. Overlap: {overlap}. "
                         f"Consider using exclusive=True to prevent accidental conflicts.",
                         stacklevel=2,
                     )
+
     def _detect_axis_overlap(
         self, axis_values_a: dict[str, Any], axis_values_b: dict[str, Any]
     ) -> dict[str, list[Any]] | None:
@@ -904,7 +928,7 @@ class ShardMemo:
             "created_at": created_at,
             "updated_at": _now_iso(),
             "params": self._normalized_hash_params(params),
-            "axis_values": self._axis_values,
+            "axis_values": self._axis_values_serializable,
             "memo_chunk_spec": self.memo_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
@@ -950,13 +974,87 @@ class ShardMemo:
         for axis in axis_order:
             if axis not in axis_values:
                 raise KeyError(f"Missing axis '{axis}' in axis_values")
+
         axis_index_map: AxisIndexMap = {}
+        axis_value_getters: dict[str, Callable[[int], Any]] = {}
         for axis in axis_order:
-            axis_index_map[axis] = {
-                value: index for index, value in enumerate(axis_values[axis])
-            }
-        self._axis_values = {axis: list(axis_values[axis]) for axis in axis_order}
+            axis_values_obj = axis_values[axis]
+
+            if callable(axis_values_obj):
+                try:
+                    values_result = axis_values_obj()
+                    if isinstance(values_result, (list, tuple)):
+                        values = list(values_result)
+                        axis_value_getters[axis] = lambda idx, vals=values: vals[idx]
+                    else:
+                        values = [values_result]
+                        axis_value_getters[axis] = axis_values_obj
+                except TypeError:
+                    values = []
+                    index = 0
+                    while True:
+                        try:
+                            value = axis_values_obj(index)
+                            values.append(value)
+                            index += 1
+                        except (IndexError, KeyError):
+                            break
+                        except Exception:
+                            values.append(axis_values_obj(index))
+                            index += 1
+                            if index > 10000:
+                                break
+                    axis_value_getters[axis] = axis_values_obj
+                axis_index_map[axis] = {
+                    value: index for index, value in enumerate(values)
+                }
+            else:
+                values = list(axis_values_obj)
+                axis_value_getters[axis] = lambda idx, values=values: values[idx]
+                axis_index_map[axis] = {
+                    value: index for index, value in enumerate(values)
+                }
+
+        self._axis_values = axis_value_getters
         self._axis_index_map = axis_index_map
+
+    def _make_axis_values_serializable(
+        self, axis_values: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert axis_values to a JSON-serializable representation."""
+        axis_order = self._resolve_axis_order(axis_values)
+        result = {}
+        for axis in axis_order:
+            axis_values_obj = axis_values[axis]
+            if callable(axis_values_obj):
+                result[axis] = {"type": "callable", "signature": str(axis_values_obj)}
+            else:
+                result[axis] = list(axis_values_obj)
+        return result
+
+    def _get_all_axis_values(self, axis: str) -> list[Any]:
+        """Get all values for an axis, handling both callables and lists."""
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before getting axis values")
+        axis_values_obj = self._axis_values[axis]
+        if callable(axis_values_obj):
+            values = []
+            index = 0
+            while True:
+                try:
+                    value = axis_values_obj(index)
+                    values.append(value)
+                    index += 1
+                except (IndexError, KeyError):
+                    break
+                except Exception:
+                    values.append(axis_values_obj(index))
+                    index += 1
+                    if index > 10000:
+                        break
+            return values
+        else:
+            return list(axis_values_obj)
 
     def _normalize_axes(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
         if self._axis_values is None or self._axis_index_map is None:
@@ -964,7 +1062,7 @@ class ShardMemo:
         axis_values: dict[str, list[Any]] = {}
         for axis in self._axis_values:
             if axis not in axes:
-                axis_values[axis] = list(self._axis_values[axis])
+                axis_values[axis] = self._get_all_axis_values(axis)
                 continue
             values = axes[axis]
             if isinstance(values, (list, tuple)):
@@ -988,13 +1086,21 @@ class ShardMemo:
         axis_values: dict[str, list[Any]] = {}
         for axis in self._axis_values:
             if axis not in axis_indices:
-                axis_values[axis] = list(self._axis_values[axis])
+                axis_values_obj = self._axis_values[axis]
+                if callable(axis_values_obj):
+                    axis_values[axis] = list(axis_values_obj())
+                else:
+                    axis_values[axis] = list(axis_values_obj)
                 continue
             values = axis_indices[axis]
-            indices = self._expand_axis_indices(
-                values, axis, len(self._axis_values[axis])
-            )
-            axis_values[axis] = [self._axis_values[axis][index] for index in indices]
+            axis_values_obj = self._axis_values[axis]
+            if callable(axis_values_obj):
+                full_values = self._get_all_axis_values(axis)
+                indices = self._expand_axis_indices(values, axis, len(full_values))
+                axis_values[axis] = [axis_values_obj(index) for index in indices]
+            else:
+                indices = self._expand_axis_indices(values, axis, len(axis_values_obj))
+                axis_values[axis] = [axis_values_obj[index] for index in indices]
         return axis_values
 
     def _expand_axis_indices(self, values: Any, axis: str, axis_len: int) -> list[int]:
@@ -1104,6 +1210,10 @@ class ShardMemo:
         self, axis_values: Mapping[str, Sequence[Any]]
     ) -> list[ChunkKey]:
         if self.memo_chunk_enumerator is not None:
+            if self._axis_values_serializable is not None:
+                return list(
+                    self.memo_chunk_enumerator(dict(self._axis_values_serializable))
+                )
             return list(self.memo_chunk_enumerator(dict(axis_values)))
 
         axis_order = self._resolve_axis_order(dict(axis_values))
@@ -1113,6 +1223,8 @@ class ShardMemo:
             if values is None:
                 raise KeyError(f"Missing axis '{axis}' in axis_values")
             size = self._resolve_axis_chunk_size(axis)
+            if callable(values):
+                values = self._get_all_axis_values(axis)
             axis_chunks.append(_chunk_values(values, size))
 
         chunk_keys: list[ChunkKey] = []
@@ -1135,7 +1247,7 @@ class ShardMemo:
             if not requested_values:
                 raise ValueError(f"Missing values for axis '{axis}'")
             size = self._resolve_axis_chunk_size(axis)
-            full_values = list(self._axis_values[axis])
+            full_values = self._get_all_axis_values(axis)
             chunk_map: dict[int, dict[str, Any]] = {}
             for value in requested_values:
                 index = self._axis_index_map[axis].get(value)
