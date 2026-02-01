@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple
 
 from ._format import chunk_key_size, print_detail
+from .cache_index import load_chunk_index, update_chunk_index
+from .cache_layout import memo_root as layout_memo_root, resolve_cache_path
 from .cache_utils import (
     _apply_payload_timestamps,
     _atomic_write_json,
@@ -74,20 +76,6 @@ def _stream_item_count(output: Any) -> int:
     if isinstance(output, (list, tuple, dict)):
         return len(output)
     return 1
-
-
-def _build_chunk_index_entry(
-    existing_entry: Mapping[str, Any] | None,
-    chunk_key: ChunkKey,
-) -> dict[str, Any]:
-    created_at = None if existing_entry is None else existing_entry.get("created_at")
-    if created_at is None:
-        created_at = _now_iso()
-    return {
-        "created_at": created_at,
-        "updated_at": _now_iso(),
-        "chunk_key": chunk_key,
-    }
 
 
 class ShardMemo:
@@ -611,30 +599,17 @@ class ShardMemo:
     def _resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
     ) -> Path:
-        memo_root = self._memo_root(params)
-        if self.cache_path_fn is None:
-            return memo_root / "chunks" / f"{chunk_hash}.pkl"
-        path = self.cache_path_fn(params, chunk_key, self.cache_version, chunk_hash)
-        path_obj = Path(path)
-        if path_obj.is_absolute():
-            return path_obj
-        return memo_root / path_obj
-
-    def _chunk_index_path(self, params: dict[str, Any]) -> Path:
-        return self._memo_root(params) / "chunks_index.json"
+        return resolve_cache_path(
+            memo_root_path=self._memo_root(params),
+            cache_path_fn=self.cache_path_fn,
+            params=params,
+            chunk_key=chunk_key,
+            cache_version=self.cache_version,
+            chunk_hash=chunk_hash,
+        )
 
     def _load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any]:
-        path = self._chunk_index_path(params)
-        if not path.exists():
-            return {}
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(data, dict):
-            return data
-        return {}
+        return load_chunk_index(self._memo_root(params))
 
     def _update_chunk_index(
         self,
@@ -642,10 +617,7 @@ class ShardMemo:
         chunk_hash: str,
         chunk_key: ChunkKey,
     ) -> None:
-        index = self._load_chunk_index(params)
-        entry = _build_chunk_index_entry(index.get(chunk_hash), chunk_key)
-        index[chunk_hash] = entry
-        _atomic_write_json(self._chunk_index_path(params), index)
+        update_chunk_index(self._memo_root(params), chunk_hash, chunk_key)
 
     @staticmethod
     def _normalized_hash_params_for_axis_values(
@@ -795,7 +767,7 @@ class ShardMemo:
         return overlap
 
     def _memo_root(self, params: dict[str, Any]) -> Path:
-        return self.cache_root / self._memo_hash(params)
+        return layout_memo_root(self.cache_root, self._memo_hash(params))
 
     def write_metadata(self, params: dict[str, Any]) -> Path:
         memo_root = self._memo_root(params)
