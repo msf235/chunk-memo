@@ -5,16 +5,19 @@ import inspect
 import itertools
 import json
 import math
-import os
 import pickle
-import tempfile
 import time
 import warnings
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple
 
 from ._format import chunk_key_size, print_detail
+from .cache_utils import (
+    _apply_payload_timestamps,
+    _atomic_write_json,
+    _atomic_write_pickle,
+    _now_iso,
+)
 from .run_utils import build_plan_lines, prepare_progress, print_chunk_summary
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
@@ -57,14 +60,6 @@ def default_chunk_hash(
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
-def _normalized_params_for_hash(
-    params: dict[str, Any], axis_values: dict[str, Any]
-) -> dict[str, Any]:
-    if not axis_values:
-        return params
-    return {key: value for key, value in params.items() if key not in axis_values}
-
-
 def _chunk_values(values: Sequence[Any], size: int) -> list[Tuple[Any, ...]]:
     if size <= 0:
         raise ValueError("chunk size must be > 0")
@@ -81,59 +76,6 @@ def _stream_item_count(output: Any) -> int:
     return 1
 
 
-def _atomic_write_pickle(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            delete=False,
-            dir=path.parent,
-            prefix=f".{path.name}.",
-        ) as handle:
-            tmp_path = Path(handle.name)
-            pickle.dump(payload, handle, protocol=5)
-        os.replace(tmp_path, path)
-    finally:
-        if tmp_path is not None and tmp_path.exists():
-            tmp_path.unlink()
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            delete=False,
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            encoding="utf-8",
-        ) as handle:
-            tmp_path = Path(handle.name)
-            json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
-        os.replace(tmp_path, path)
-    finally:
-        if tmp_path is not None and tmp_path.exists():
-            tmp_path.unlink()
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _apply_payload_timestamps(
-    payload: dict[str, Any],
-    existing: Mapping[str, Any] | None = None,
-) -> None:
-    now = _now_iso()
-    created_at = None if existing is None else existing.get("created_at")
-    if created_at is None:
-        created_at = now
-    payload["created_at"] = created_at
-    payload["updated_at"] = now
-
-
 def _build_chunk_index_entry(
     existing_entry: Mapping[str, Any] | None,
     chunk_key: ChunkKey,
@@ -146,16 +88,6 @@ def _build_chunk_index_entry(
         "updated_at": _now_iso(),
         "chunk_key": chunk_key,
     }
-
-
-def _format_progress(
-    processed: int, total: int, cached: int, executed: int, width: int = 30
-) -> str:
-    if total <= 0:
-        total = 1
-    filled = int(width * processed / total)
-    bar = "=" * filled + "-" * (width - filled)
-    return f"[ShardMemo] progress {processed}/{total} [{bar}] cached={cached}"
 
 
 class ShardMemo:
@@ -715,12 +647,17 @@ class ShardMemo:
         index[chunk_hash] = entry
         _atomic_write_json(self._chunk_index_path(params), index)
 
-    def _normalized_hash_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        if not self._axis_values:
+    @staticmethod
+    def _normalized_hash_params_for_axis_values(
+        params: dict[str, Any], axis_values: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        if not axis_values:
             return params
-        return {
-            key: value for key, value in params.items() if key not in self._axis_values
-        }
+        return {key: value for key, value in params.items() if key not in axis_values}
+
+    def _normalized_hash_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        axis_values = self._axis_values or {}
+        return self._normalized_hash_params_for_axis_values(params, axis_values)
 
     def _chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
         normalized = self._normalized_hash_params(params)
@@ -924,6 +861,35 @@ class ShardMemo:
         if self.axis_order is not None:
             return self.axis_order
         return tuple(sorted(axis_values))
+
+    def _axis_values_from_cache_status(
+        self, cache_status: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        axis_values = cache_status.get("axis_values")
+        if not isinstance(axis_values, Mapping):
+            raise ValueError("cache_status must include axis_values for memo axes")
+        return axis_values
+
+    def _axis_order_for_cache_status(
+        self, cache_status: Mapping[str, Any]
+    ) -> Tuple[str, ...]:
+        axis_values = self._axis_values_from_cache_status(cache_status)
+        return self._resolve_axis_order(dict(axis_values))
+
+    def _axis_chunk_maps(
+        self, axis_values: Mapping[str, Any], axis_order: Sequence[str]
+    ) -> dict[str, dict[Any, int]]:
+        axis_chunk_maps: dict[str, dict[Any, int]] = {}
+        for axis in axis_order:
+            values = axis_values.get(axis)
+            if values is None:
+                raise KeyError(f"Missing axis '{axis}' in axis_values")
+            size = self._resolve_axis_chunk_size(axis)
+            value_to_chunk_id: dict[Any, int] = {}
+            for index, value in enumerate(values):
+                value_to_chunk_id[value] = index // size
+            axis_chunk_maps[axis] = value_to_chunk_id
+        return axis_chunk_maps
 
     def _set_axis_values(self, axis_values: dict[str, Any]) -> None:
         axis_order = self._resolve_axis_order(axis_values)
@@ -1612,7 +1578,7 @@ class ShardMemo:
                 memo_chunk_spec, or if multiple superset caches match.
         """
         cache_root = Path(cache_root)
-        normalized_params = _normalized_params_for_hash(params, {})
+        normalized_params = cls._normalized_hash_params_for_axis_values(params, {})
 
         if axis_values is not None:
             if allow_superset:
@@ -1655,9 +1621,11 @@ class ShardMemo:
                 )
             if memo_chunk_spec is None:
                 memo_chunk_spec = {
-                    axis: len(axis_values[axis])
-                    if isinstance(axis_values[axis], (list, tuple))
-                    else 1
+                    axis: (
+                        len(axis_values[axis])
+                        if isinstance(axis_values[axis], (list, tuple))
+                        else 1
+                    )
                     for axis in axis_values
                 }
             return cls(

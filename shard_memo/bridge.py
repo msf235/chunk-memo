@@ -3,13 +3,13 @@ import functools
 import inspect
 import pickle
 import time
-from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple
 
 from ._format import chunk_key_size, format_rate_eta, print_detail, print_progress
-from .memo import ChunkKey, ShardMemo, Diagnostics, _atomic_write_pickle
+from .cache_utils import _apply_payload_timestamps, _atomic_write_pickle
+from .memo import ChunkKey, ShardMemo, Diagnostics
 from .run_utils import build_plan_lines, prepare_progress, print_chunk_summary
 
 EXEC_REPORT_INTERVAL_SECONDS = 2.0
@@ -108,24 +108,13 @@ def _ensure_iterable(items: Iterable[Any]) -> list[Any]:
     return list(items)
 
 
-def _resolve_axis_order(
-    memo: ShardMemo, axis_values: Mapping[str, Any]
-) -> Tuple[str, ...]:
-    if memo.axis_order is not None:
-        return tuple(memo.axis_order)
-    return tuple(sorted(axis_values))
-
-
 def _build_item_axis_extractor(
     memo: ShardMemo,
     cache_status: Mapping[str, Any],
     items: Sequence[Any],
     exec_fn: Callable[..., Any],
 ) -> Callable[[Any], Tuple[Any, ...]]:
-    axis_values = cache_status.get("axis_values")
-    if not isinstance(axis_values, Mapping):
-        raise ValueError("cache_status must include axis_values for memo axes")
-    axis_order = _resolve_axis_order(memo, axis_values)
+    axis_order = memo._axis_order_for_cache_status(cache_status)
 
     if items:
         sample = items[0]
@@ -209,22 +198,6 @@ def _chunk_key_matches_axes(axis_values: Tuple[Any, ...], chunk_key: ChunkKey) -
     return True
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _apply_payload_timestamps(
-    payload: dict[str, Any],
-    existing: Mapping[str, Any] | None = None,
-) -> None:
-    now = _now_iso()
-    created_at = None if existing is None else existing.get("created_at")
-    if created_at is None:
-        created_at = now
-    payload["created_at"] = created_at
-    payload["updated_at"] = now
-
-
 def _expand_items_to_chunks_slow(
     items: Sequence[Any],
     chunk_keys: Sequence[ChunkKey],
@@ -240,24 +213,6 @@ def _expand_items_to_chunks_slow(
     return chunked
 
 
-def _build_axis_chunk_maps(
-    memo: ShardMemo,
-    axis_values: Mapping[str, Any],
-    axis_order: Sequence[str],
-) -> dict[str, dict[Any, int]]:
-    axis_chunk_maps: dict[str, dict[Any, int]] = {}
-    for axis in axis_order:
-        values = axis_values.get(axis)
-        if values is None:
-            raise KeyError(f"Missing axis '{axis}' in axis_values")
-        size = memo._resolve_axis_chunk_size(axis)
-        value_to_chunk_id: dict[Any, int] = {}
-        for index, value in enumerate(values):
-            value_to_chunk_id[value] = index // size
-        axis_chunk_maps[axis] = value_to_chunk_id
-    return axis_chunk_maps
-
-
 def _expand_items_to_chunks_fast(
     memo: ShardMemo,
     cache_status: Mapping[str, Any],
@@ -267,11 +222,12 @@ def _expand_items_to_chunks_fast(
 ) -> list[list[Any]]:
     if not chunk_keys:
         return [[] for _ in chunk_keys]
-    axis_values = cache_status.get("axis_values")
-    if not isinstance(axis_values, Mapping):
+    try:
+        axis_values = memo._axis_values_from_cache_status(cache_status)
+    except ValueError:
         return _expand_items_to_chunks_slow(items, chunk_keys, axis_extractor)
-    axis_order = _resolve_axis_order(memo, axis_values)
-    axis_chunk_maps = _build_axis_chunk_maps(memo, axis_values, axis_order)
+    axis_order = memo._axis_order_for_cache_status(cache_status)
+    axis_chunk_maps = memo._axis_chunk_maps(axis_values, axis_order)
     chunk_index_map: dict[Tuple[int, ...], int] = {}
     for index, chunk_key in enumerate(chunk_keys):
         chunk_ids: list[int] = []
@@ -363,7 +319,7 @@ def memo_parallel_run(
     if memo.verbose == 1:
         axis_values = cache_status.get("axis_values")
         if isinstance(axis_values, Mapping):
-            axis_order = _resolve_axis_order(memo, axis_values)
+            axis_order = memo._axis_order_for_cache_status(cache_status)
             lines = build_plan_lines(
                 params_dict,
                 axis_values,
@@ -631,7 +587,7 @@ def memo_parallel_run_streaming(
     if memo.verbose == 1:
         axis_values = cache_status.get("axis_values")
         if isinstance(axis_values, Mapping):
-            axis_order = _resolve_axis_order(memo, axis_values)
+            axis_order = memo._axis_order_for_cache_status(cache_status)
             lines = build_plan_lines(
                 params_dict,
                 axis_values,
