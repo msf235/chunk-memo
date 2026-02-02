@@ -604,22 +604,17 @@ class ChunkCache:
         *,
         axis_indices: Mapping[str, Any] | None = None,
     ) -> dict[str, list[Any]]:
+        if axis_indices is not None:
+            if axes:
+                raise ValueError("axis_indices cannot be combined with axis values")
+            return self._normalize_axis_indices(axis_indices)
+        return self._normalize_axis_values(axes or {})
+
+    def _normalize_axis_values(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
         if self._axis_values is None or self._axis_index_map is None:
             raise ValueError("axis_values must be set before running memoized function")
-        if axis_indices is not None and axes:
-            raise ValueError("axis_indices cannot be combined with axis values")
-        axes = axes or {}
         axis_values: dict[str, list[Any]] = {}
         for axis in self._axis_values:
-            if axis_indices is not None:
-                if axis not in axis_indices:
-                    axis_values[axis] = self._get_all_axis_values(axis)
-                    continue
-                values = axis_indices[axis]
-                axis_values_obj = self._axis_values[axis]
-                indices = self._expand_axis_indices(values, axis, len(axis_values_obj))
-                axis_values[axis] = [axis_values_obj[index] for index in indices]
-                continue
             if axis not in axes:
                 axis_values[axis] = self._get_all_axis_values(axis)
                 continue
@@ -634,6 +629,23 @@ class ChunkCache:
                         f"Value '{value}' not found in axis_values for axis '{axis}'"
                     )
             axis_values[axis] = normalized
+        return axis_values
+
+    def _normalize_axis_indices(
+        self, axis_indices: Mapping[str, Any]
+    ) -> dict[str, list[Any]]:
+        """Normalize axis_indices into axis values using canonical split order."""
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before running memoized function")
+        axis_values: dict[str, list[Any]] = {}
+        for axis in self._axis_values:
+            if axis not in axis_indices:
+                axis_values[axis] = self._get_all_axis_values(axis)
+                continue
+            values = axis_indices[axis]
+            axis_values_obj = self._axis_values[axis]
+            indices = self._expand_axis_indices(values, axis, len(axis_values_obj))
+            axis_values[axis] = [axis_values_obj[index] for index in indices]
         return axis_values
 
     def _expand_axis_indices(self, values: Any, axis: str, axis_len: int) -> list[int]:
