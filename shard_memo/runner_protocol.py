@@ -17,19 +17,18 @@ class MinimalCacheStatus(TypedDict):
     missing_chunks: list[ChunkKey]
 
 
-class CacheStatus(MinimalCacheStatus, total=False):
-    """Cache status payload consumed by runners.
+class ChunkIndexEntry(TypedDict):
+    axis: str
+    start: int
+    end: int
 
-    Required keys in practice:
-    - params
-    - axis_values
-    - cached_chunks
-    - missing_chunks
-    """
+
+class CacheStatus(MinimalCacheStatus, total=False):
+    """Cache status payload consumed by runners."""
 
     total_chunks: int
-    cached_chunk_indices: list[dict[str, Any]]
-    missing_chunk_indices: list[dict[str, Any]]
+    cached_chunk_indices: list[ChunkIndexEntry]
+    missing_chunk_indices: list[ChunkIndexEntry]
 
 
 class MemoRunnerBackend(Protocol):

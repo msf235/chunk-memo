@@ -1,7 +1,12 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .memo import ChunkCache
-from .runner_protocol import CacheStatus, MemoRunnerBackend, MinimalCacheStatus
+from .runner_protocol import (
+    CacheStatus,
+    ChunkIndexEntry,
+    MemoRunnerBackend,
+    MinimalCacheStatus,
+)
 from .runners import (
     Diagnostics,
     memo_parallel_run,
@@ -29,5 +34,6 @@ __all__ = [
     "run_streaming",
     "MemoRunnerBackend",
     "CacheStatus",
+    "ChunkIndexEntry",
     "MinimalCacheStatus",
 ]
