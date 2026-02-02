@@ -18,8 +18,8 @@ repository. - Keep changes minimal, focused, and aligned with existing style.
 `pyproject.toml`. - If adding one, prefer `ruff` + `mypy` with minimal rules.
 
 ### Test Suite - Full suite: `pytest` - Single test file: `pytest
-tests/test_shard_memo.py` - Single test by node id: `pytest
-tests/test_shard_memo.py::test_basic_cache_reuse` - With keyword filter: `pytest
+tests/test_chunk_memo.py` - Single test by node id: `pytest
+tests/test_chunk_memo.py::test_basic_cache_reuse` - With keyword filter: `pytest
 -k "cache_reuse"` - Markers: `flaky` marker is defined in `pyproject.toml`.
 
 ### Example / Manual Runs - Example script: `python examples/basic.py`
@@ -83,10 +83,10 @@ changes. - Keep docstrings concise and focused on usage.
 ## File-Specific Guidance
 
 ### `shard_memo/core.py` - Core logic and API entry points. - Preserve method
-signatures on `ShardMemo` unless necessary. - Maintain deterministic ordering
+signatures on `ChunkMemo` unless necessary. - Maintain deterministic ordering
 and chunk behavior.
 
-### `tests/test_shard_memo.py` - Tests are written in a straightforward,
+### `tests/test_chunk_memo.py` - Tests are written in a straightforward,
 functional style. - Follow existing patterns for new tests.
 
 ### `examples/` - Keep examples minimal and runnable without extra setup.

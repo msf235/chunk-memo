@@ -8,7 +8,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     Memory = None
 
-from shard_memo import ShardMemo
+from shard_memo import ChunkMemo
 from shard_memo.runners import run
 
 
@@ -21,7 +21,7 @@ def run_warm_benchmark(*, n_points, chunk_size, repeats):
     axis_values = {"s": list(range(n_points))}
     params = {"scale": 2}
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = ShardMemo(
+        memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"s": chunk_size},
             axis_values=axis_values,

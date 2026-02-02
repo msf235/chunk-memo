@@ -76,7 +76,7 @@ class ChunkCache:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> None:
-        """Initialize a ShardMemo cache.
+        """Initialize a ChunkMemo cache.
 
         Args:
             cache_root: Directory for chunk cache files.
@@ -248,7 +248,7 @@ class ChunkCache:
         use_index = bool(chunk_index)
         if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
-                f"[ShardMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
+                f"[ChunkMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
             )
         cached_chunks: list[ChunkKey] = []
         cached_chunk_indices: list[dict[str, Any]] = []
@@ -270,7 +270,7 @@ class ChunkCache:
                 missing_chunk_indices.append(indices)
         if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
-                f"[ShardMemo] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
+                f"[ChunkMemo] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
             )
         return {
             "params": params,
@@ -701,30 +701,26 @@ class ChunkCache:
         if format_kind == "int":
             return indices[:]
         if format_kind == "range":
-            return self._indices_to_range(indices)
+            return self._indices_to_span(indices, kind="range")
         if format_kind == "slice":
-            return self._indices_to_slice(indices) or indices[:]
+            return self._indices_to_span(indices, kind="slice") or indices[:]
         return indices[:]
 
-    def _indices_to_range(self, indices: list[int]) -> range | None:
+    def _indices_to_span(
+        self, indices: list[int], *, kind: str
+    ) -> range | slice | None:
         if not indices:
-            return range(0, 0)
+            return range(0, 0) if kind == "range" else slice(0, 0, None)
         if len(indices) == 1:
-            return range(indices[0], indices[0] + 1)
+            start = indices[0]
+            stop = indices[0] + 1
+            return range(start, stop) if kind == "range" else slice(start, stop, None)
         step = self._indices_step(indices)
         if step is None:
             return None
-        return range(indices[0], indices[-1] + step, step)
-
-    def _indices_to_slice(self, indices: list[int]) -> slice | None:
-        if not indices:
-            return slice(0, 0, None)
-        if len(indices) == 1:
-            return slice(indices[0], indices[0] + 1, None)
-        step = self._indices_step(indices)
-        if step is None:
-            return None
-        return slice(indices[0], indices[-1] + step, step)
+        start = indices[0]
+        stop = indices[-1] + step
+        return range(start, stop, step) if kind == "range" else slice(start, stop, step)
 
     def _build_chunk_keys_for_axes(
         self, axis_values: Mapping[str, Sequence[Any]]
@@ -800,26 +796,20 @@ class ChunkCache:
             requested_items[chunk_key] = item_values
         return chunk_keys, requested_items
 
-    def _build_item_map_from_axis_values(
+    def _build_item_maps_from_axis_values(
         self,
         chunk_key: ChunkKey,
         axis_values: Sequence[Tuple[Any, ...]],
         outputs: Sequence[Any],
-    ) -> dict[str, Any]:
-        return {
-            self._item_hash(chunk_key, values): output
-            for values, output in zip(axis_values, outputs)
-        }
-
-    def _build_item_axis_vals_map_from_axis_values(
-        self, chunk_key: ChunkKey, axis_values: Sequence[Tuple[Any, ...]]
-    ) -> dict[str, dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         axis_names = [axis for axis, _ in chunk_key]
+        item_map: dict[str, Any] = {}
         item_axis_vals: dict[str, dict[str, Any]] = {}
-        for values in axis_values:
+        for values, output in zip(axis_values, outputs):
             item_key = self._item_hash(chunk_key, values)
+            item_map[item_key] = output
             item_axis_vals[item_key] = dict(zip(axis_names, values))
-        return item_axis_vals
+        return item_map, item_axis_vals
 
     def _build_item_map(
         self, chunk_key: ChunkKey, chunk_output: Any
@@ -827,11 +817,12 @@ class ChunkCache:
         axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
         if axis_values is None:
             return None
-        return self._build_item_map_from_axis_values(
+        item_map, _ = self._build_item_maps_from_axis_values(
             chunk_key,
             axis_values,
             chunk_output,
         )
+        return item_map
 
     def _build_item_axis_vals_map(
         self, chunk_key: ChunkKey, chunk_output: Any
@@ -839,7 +830,12 @@ class ChunkCache:
         axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
         if axis_values is None:
             return None
-        return self._build_item_axis_vals_map_from_axis_values(chunk_key, axis_values)
+        _, item_axis_vals = self._build_item_maps_from_axis_values(
+            chunk_key,
+            axis_values,
+            chunk_output,
+        )
+        return item_axis_vals
 
     def _item_axis_values_for_output(
         self, chunk_key: ChunkKey, chunk_output: Any
@@ -1250,7 +1246,7 @@ class ChunkCache:
                 that contain all requested data.
 
         Returns:
-            A ShardMemo instance ready for execution.
+            A ChunkMemo instance ready for execution.
 
         Raises:
             ValueError: If multiple caches match (ambiguous), if axis_values
@@ -1297,7 +1293,7 @@ class ChunkCache:
                 raise ValueError(
                     f"Ambiguous: {len(compatible_caches)} caches match the given criteria. "
                     f"Matching hashes: {matches}. "
-                    f"Use one of ShardMemo.load_from_cache() to pick a specific cache."
+                    f"Use one of ChunkMemo.load_from_cache() to pick a specific cache."
                 )
             if memo_chunk_spec is None:
                 memo_chunk_spec = {
@@ -1350,7 +1346,7 @@ class ChunkCache:
             raise ValueError(
                 f"Ambiguous: {len(matching_caches)} caches match the given params. "
                 f"Use axis_values parameter to disambiguate, or use one of "
-                f"ShardMemo.load_from_cache() to pick a specific cache.\n"
+                f"ChunkMemo.load_from_cache() to pick a specific cache.\n"
                 f"Matches:\n  " + "\n  ".join(matches)
             )
         return cls(
@@ -1383,7 +1379,7 @@ class ChunkCache:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> "ChunkCache":
-        """Load a ShardMemo instance from an existing cache by memo_hash.
+        """Load a ChunkMemo instance from an existing cache by memo_hash.
 
         Raises:
             FileNotFoundError: If the cache directory or metadata.json does not exist.
@@ -1456,7 +1452,7 @@ class ChunkCache:
             return None
 
 
-class ShardMemo:
+class ChunkMemo:
     """Facade that pairs a cache with runner helpers."""
 
     def __init__(
@@ -1495,7 +1491,7 @@ class ShardMemo:
         return getattr(self.cache, name)
 
     @classmethod
-    def from_cache(cls, cache: ChunkCache) -> "ShardMemo":
+    def from_cache(cls, cache: ChunkCache) -> "ChunkMemo":
         instance = cls.__new__(cls)
         instance.cache = cache
         return instance
@@ -1518,7 +1514,7 @@ class ShardMemo:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
         allow_superset: bool = False,
-    ) -> "ShardMemo":
+    ) -> "ChunkMemo":
         cache = ChunkCache.auto_load(
             cache_root=cache_root,
             params=params,
@@ -1551,7 +1547,7 @@ class ShardMemo:
         profile: bool = False,
         exclusive: bool = False,
         warn_on_overlap: bool = False,
-    ) -> "ShardMemo":
+    ) -> "ChunkMemo":
         cache = ChunkCache.load_from_cache(
             cache_root=cache_root,
             memo_hash=memo_hash,

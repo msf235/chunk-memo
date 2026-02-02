@@ -1,6 +1,6 @@
 import tempfile
 
-from shard_memo import ShardMemo, memo_parallel_run
+from shard_memo import ChunkMemo, memo_parallel_run
 from shard_memo.runners import run as memo_run
 
 from .utils import exec_fn_grid, flatten_outputs, item_from_index
@@ -12,7 +12,7 @@ def test_memo_parallel_run_returns_requested_points():
     items = [(0, 0), (1, 2), (0, 1), (1, 0)]
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = ShardMemo(
+        memo = ChunkMemo(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,

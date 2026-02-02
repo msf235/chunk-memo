@@ -45,7 +45,7 @@ pip install -e .
 ## Quick start
 
 ```python
-from shard_memo import ShardMemo
+from shard_memo import ChunkMemo
 from shard_memo.runners import run
 
 
@@ -68,7 +68,7 @@ def merge_fn(chunks):
 
 params = {"alpha": 0.4}
 axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-memo = ShardMemo(
+memo = ChunkMemo(
     cache_root="./memo_cache",
     memo_chunk_spec={"strat": 1, "s": 3},
     axis_values=axis_values,
@@ -81,20 +81,20 @@ print(diag)
 
 ## Module layout
 
-- `shard_memo/memo.py`: cache logic (`ChunkCache`) and facade (`ShardMemo`).
+- `shard_memo/memo.py`: cache logic (`ChunkCache`) and facade (`ChunkMemo`).
 - `shard_memo/runners.py`: execution runners (serial and parallel).
 - `shard_memo/bridge.py`: removed (parallel runners live in `shard_memo.runners`).
 - `shard_memo/__init__.py`: re-exports public APIs, including `auto_load()`.
 
 ## API overview
 
-### ShardMemo
+### ChunkMemo
 
-`ShardMemo` is a facade that owns a `ChunkCache` and exposes the cache
+`ChunkMemo` is a facade that owns a `ChunkCache` and exposes the cache
 interface, including `run_wrap` and `streaming_wrap`.
 
 ```python
-ShardMemo(
+ChunkMemo(
     cache_root: str | Path,
     memo_chunk_spec: dict[str, int | dict],
     axis_values: dict[str, Any],
@@ -168,7 +168,7 @@ axis_values = {
 #### Usage example
 
 ```python
-from shard_memo import ShardMemo
+from shard_memo import ChunkMemo
 
 # Traditional approach - all values in memory
 axis_values_lists = {
@@ -183,7 +183,7 @@ axis_values_callables = {
 }
 
 # Both work identically
-memo = ShardMemo(
+memo = ChunkMemo(
     cache_root="./cache",
     memo_chunk_spec={"strat": 1, "s": 2},
     axis_values=axis_values_callables,  # or axis_values_lists
@@ -276,7 +276,7 @@ status["missing_chunk_indices"]
 #### discover_caches
 
 ```python
-caches = ShardMemo.discover_caches(cache_root)
+caches = ChunkMemo.discover_caches(cache_root)
 ```
 
 Lists all existing caches in `cache_root`. Returns a list of dictionaries with:
@@ -287,7 +287,7 @@ Lists all existing caches in `cache_root`. Returns a list of dictionaries with:
 #### find_compatible_caches
 
 ```python
-caches = ShardMemo.find_compatible_caches(
+caches = ChunkMemo.find_compatible_caches(
     cache_root,
     params=params_dict,
     axis_values=axis_values_dict,
@@ -310,7 +310,7 @@ Returns a list of compatible cache entries (same structure as `discover_caches`)
 #### find_overlapping_caches
 
 ```python
-overlaps = ShardMemo.find_overlapping_caches(
+overlaps = ChunkMemo.find_overlapping_caches(
     cache_root,
     params=params_dict,
     axis_values=axis_values_dict,
@@ -326,7 +326,7 @@ Returns a list of overlapping cache entries with an additional `overlap` key con
 #### load_from_cache
 
 ```python
-memo = ShardMemo.load_from_cache(
+memo = ChunkMemo.load_from_cache(
     cache_root,
     memo_hash="abc123...",
     merge_fn=merge_fn,
@@ -336,12 +336,12 @@ memo = ShardMemo.load_from_cache(
 )
 ```
 
-Load a `ShardMemo` instance from an existing cache by its hash. Raises `FileNotFoundError` if the cache doesn't exist, or `ValueError` if metadata is invalid.
+Load a `ChunkMemo` instance from an existing cache by its hash. Raises `FileNotFoundError` if the cache doesn't exist, or `ValueError` if metadata is invalid.
 
 #### singleton cache
 
 ```python
-memo = ShardMemo(
+memo = ChunkMemo(
     cache_root,
     memo_chunk_spec={},
     axis_values={},
@@ -350,10 +350,10 @@ memo = ShardMemo(
 
 Create a singleton cache with no axes (empty `axis_values`). Useful for memoizing functions that depend only on `params`, not on split variables. Uses `memo_chunk_spec={}` and `axis_values={}`.
 
-#### auto_load (ShardMemo classmethod)
+#### auto_load (ChunkMemo classmethod)
 
 ```python
-memo = ShardMemo.auto_load(
+memo = ChunkMemo.auto_load(
     cache_root,
     params=params_dict,
     axis_values=axis_values_dict,
@@ -406,7 +406,7 @@ memo = auto_load(
 )
 ```
 
-Convenience wrapper for `ShardMemo.auto_load()`. Automatically finds an existing
+Convenience wrapper for `ChunkMemo.auto_load()`. Automatically finds an existing
 cache or creates a new one based on your `params` and `axis_values`.
 
 Use cases:
@@ -454,7 +454,7 @@ Parallel runner notes:
 
 ```python
 memo_parallel_run(
-    memo: ShardMemo | ChunkCache,
+    memo: ChunkMemo | ChunkCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -469,7 +469,7 @@ memo_parallel_run(
 
 ```python
 memo_parallel_run_streaming(
-    memo: ShardMemo | ChunkCache,
+    memo: ChunkMemo | ChunkCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -502,9 +502,9 @@ more specific requests using `allow_superset=True`:
 
 ```python
 # Create a broad cache with strat=["a", "b"]
-from shard_memo import ShardMemo
+from shard_memo import ChunkMemo
 
-broad_cache = ShardMemo(
+broad_cache = ChunkMemo(
     cache_root="./memo_cache",
     memo_chunk_spec={"strat": 1, "s": 3},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
@@ -537,7 +537,7 @@ fixed parameter value, depending on your workflow:
 
 ```python
 # Option 1: Include strat as axis (full sweep over strat values)
-memo_full = ShardMemo.auto_load(
+memo_full = ChunkMemo.auto_load(
     cache_root="./cache",
     params={"alpha": 0.4},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
@@ -546,7 +546,7 @@ memo_full = ShardMemo.auto_load(
 
 # Option 2: Fix strat as a parameter (single value)
 # Useful when you only need one value or plan to iterate externally
-memo_fixed = ShardMemo.auto_load(
+memo_fixed = ChunkMemo.auto_load(
     cache_root="./cache",
     params={"alpha": 0.4, "strat": "a"},  # strat as param
     axis_values={"s": [1, 2, 3]},  # Reduced axes
