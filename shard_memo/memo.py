@@ -522,6 +522,36 @@ class ChunkCache:
             return self.axis_order
         return tuple(sorted(axis_values))
 
+    def _ordered_axis_values(
+        self,
+        axis_values: Mapping[str, Sequence[Any]],
+        axis_order: Sequence[str] | None = None,
+    ) -> tuple[Tuple[str, ...], list[tuple[str, Sequence[Any], int]]]:
+        if axis_order is None:
+            axis_order = self._resolve_axis_order(dict(axis_values))
+        ordered: list[tuple[str, Sequence[Any], int]] = []
+        for axis in axis_order:
+            values = axis_values.get(axis)
+            if values is None:
+                raise KeyError(f"Missing axis '{axis}' in axis_values")
+            size = self._resolve_axis_chunk_size(axis)
+            ordered.append((axis, values, size))
+        return tuple(axis_order), ordered
+
+    def _ordered_axis_requests(
+        self,
+        axis_values: Mapping[str, Sequence[Any]],
+        axis_order: Sequence[str],
+    ) -> list[tuple[str, list[Any], int]]:
+        ordered: list[tuple[str, list[Any], int]] = []
+        for axis in axis_order:
+            requested_values = list(axis_values.get(axis, []))
+            if not requested_values:
+                raise ValueError(f"Missing values for axis '{axis}'")
+            size = self._resolve_axis_chunk_size(axis)
+            ordered.append((axis, requested_values, size))
+        return ordered
+
     def expand_cache_status(
         self, cache_status: Mapping[str, Any]
     ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]:
@@ -536,11 +566,8 @@ class ChunkCache:
         self, axis_values: Mapping[str, Any], axis_order: Sequence[str]
     ) -> dict[str, dict[Any, int]]:
         axis_chunk_maps: dict[str, dict[Any, int]] = {}
-        for axis in axis_order:
-            values = axis_values.get(axis)
-            if values is None:
-                raise KeyError(f"Missing axis '{axis}' in axis_values")
-            size = self._resolve_axis_chunk_size(axis)
+        _, ordered = self._ordered_axis_values(axis_values, axis_order)
+        for axis, values, size in ordered:
             value_to_chunk_id: dict[Any, int] = {}
             for index, value in enumerate(values):
                 value_to_chunk_id[value] = index // size
@@ -729,14 +756,8 @@ class ChunkCache:
                 )
             return list(self.memo_chunk_enumerator(dict(axis_values)))
 
-        axis_order = self._resolve_axis_order(dict(axis_values))
-        axis_chunks: list[list[Tuple[Any, ...]]] = []
-        for axis in axis_order:
-            values = axis_values.get(axis)
-            if values is None:
-                raise KeyError(f"Missing axis '{axis}' in axis_values")
-            size = self._resolve_axis_chunk_size(axis)
-            axis_chunks.append(_chunk_values(values, size))
+        axis_order, ordered = self._ordered_axis_values(axis_values)
+        axis_chunks = [_chunk_values(values, size) for _, values, size in ordered]
 
         chunk_keys: list[ChunkKey] = []
         for product in itertools.product(*axis_chunks):
@@ -753,11 +774,9 @@ class ChunkCache:
             raise ValueError("axis_values must be set before running memoized function")
         axis_order = self._resolve_axis_order(self._axis_values)
         per_axis_chunks: list[list[dict[str, Any]]] = []
-        for axis in axis_order:
-            requested_values = list(axis_values.get(axis, []))
-            if not requested_values:
-                raise ValueError(f"Missing values for axis '{axis}'")
-            size = self._resolve_axis_chunk_size(axis)
+        for axis, requested_values, size in self._ordered_axis_requests(
+            axis_values, axis_order
+        ):
             full_values = self._get_all_axis_values(axis)
             chunk_map: dict[int, dict[str, Any]] = {}
             for value in requested_values:
