@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
-from typing import Any, Mapping, Tuple
+from typing import Any, Tuple
 
-from .cache_utils import _atomic_write_json, _now_iso
+from .cache_utils import _apply_payload_timestamps, _atomic_write_json
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 
@@ -32,13 +32,9 @@ def update_chunk_index(
 ) -> None:
     index = load_chunk_index(memo_root)
     existing_entry = index.get(chunk_hash)
-    created_at = None if existing_entry is None else existing_entry.get("created_at")
-    if created_at is None:
-        created_at = _now_iso()
     entry = {
-        "created_at": created_at,
-        "updated_at": _now_iso(),
         "chunk_key": chunk_key,
     }
+    _apply_payload_timestamps(entry, existing=existing_entry)
     index[chunk_hash] = entry
     _atomic_write_json(chunk_index_path(memo_root), index)
