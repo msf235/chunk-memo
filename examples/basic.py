@@ -67,9 +67,9 @@ def main():
         memo,
         items,
         exec_fn=exec_fn,
-        cache_status=memo.cache_status(
-            params, strat=axis_values["strat"], s=axis_values["s"]
-        ),
+        params=params,
+        strat=axis_values["strat"],
+        s=axis_values["s"],
         map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         map_fn_kwargs={"chunksize": 1},
     )
@@ -83,9 +83,9 @@ def main():
             memo,
             items,
             exec_fn=exec_fn,
-            cache_status=memo.cache_status(
-                params, strat=axis_values["strat"], s=axis_values["s"]
-            ),
+            params=params,
+            strat=axis_values["strat"],
+            s=axis_values["s"],
             map_fn=executor.map,
             map_fn_kwargs={"chunksize": 1},
         )
