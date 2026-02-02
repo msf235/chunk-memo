@@ -115,14 +115,12 @@ class ChunkCache:
         self.profile = profile
         self.exclusive = exclusive
         self.warn_on_overlap = warn_on_overlap
-        self._axis_values: dict[str, Any] | None = None
+        self._axis_values: dict[str, list[Any]] | None = None
         self._axis_index_map: AxisIndexMap | None = None
         self._axis_values_serializable: dict[str, Any] | None = None
         self._checked_exclusive = False
         self._set_axis_values(axis_values)
-        self._axis_values_serializable = self._make_axis_values_serializable(
-            axis_values
-        )
+        self._axis_values_serializable = self._make_axis_values_serializable()
 
     def run_wrap(
         self, *, params_arg: str = "params"
@@ -449,20 +447,11 @@ class ChunkCache:
                     }
                     if constrained_meta_axis_values.keys() <= self._axis_values.keys():
                         for axis_name in constrained_meta_axis_values:
-                            meta_vals = (
-                                set(constrained_meta_axis_values[axis_name])
-                                if isinstance(
-                                    constrained_meta_axis_values[axis_name],
-                                    (list, tuple),
-                                )
-                                else {constrained_meta_axis_values[axis_name]}
+                            meta_vals = self._axis_value_set(
+                                constrained_meta_axis_values[axis_name]
                             )
-                            new_vals = (
-                                set(self._axis_values[axis_name])
-                                if isinstance(
-                                    self._axis_values[axis_name], (list, tuple)
-                                )
-                                else {self._axis_values[axis_name]}
+                            new_vals = self._axis_value_set(
+                                self._axis_values[axis_name]
                             )
                             if not meta_vals.issubset(new_vals):
                                 break
@@ -565,39 +554,28 @@ class ChunkCache:
                 raise KeyError(f"Missing axis '{axis}' in axis_values")
 
         axis_index_map: AxisIndexMap = {}
-        axis_value_getters: dict[str, Callable[[int], Any]] = {}
+        axis_value_lists: dict[str, list[Any]] = {}
         for axis in axis_order:
             axis_values_obj = axis_values[axis]
-            values, getter = self._materialize_axis_values(axis_values_obj)
-            axis_value_getters[axis] = getter
+            values = self._materialize_axis_values(axis_values_obj)
+            axis_value_lists[axis] = values
             axis_index_map[axis] = {value: index for index, value in enumerate(values)}
 
-        self._axis_values = axis_value_getters
+        self._axis_values = axis_value_lists
         self._axis_index_map = axis_index_map
 
-    def _make_axis_values_serializable(
-        self, axis_values: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _make_axis_values_serializable(self) -> dict[str, Any]:
         """Convert axis_values to a JSON-serializable representation."""
-        axis_order = self._resolve_axis_order(axis_values)
-        result = {}
-        for axis in axis_order:
-            axis_values_obj = axis_values[axis]
-            if callable(axis_values_obj):
-                result[axis] = {"type": "callable", "signature": str(axis_values_obj)}
-            else:
-                result[axis] = list(axis_values_obj)
-        return result
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before serializing")
+        axis_order = self._resolve_axis_order(self._axis_values)
+        return {axis: list(self._axis_values[axis]) for axis in axis_order}
 
     def _get_all_axis_values(self, axis: str) -> list[Any]:
-        """Get all values for an axis, handling both callables and lists."""
-        if self._axis_index_map is None:
+        """Get all values for an axis."""
+        if self._axis_values is None:
             raise ValueError("axis_values must be set before getting axis values")
-        axis_map = self._axis_index_map[axis]
-        values: list[Any] = [None] * len(axis_map)
-        for value, index in axis_map.items():
-            values[index] = value
-        return values
+        return list(self._axis_values[axis])
 
     def _normalize_axes(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
         if self._axis_values is None or self._axis_index_map is None:
@@ -633,13 +611,8 @@ class ChunkCache:
                 continue
             values = axis_indices[axis]
             axis_values_obj = self._axis_values[axis]
-            if callable(axis_values_obj):
-                full_values = self._get_all_axis_values(axis)
-                indices = self._expand_axis_indices(values, axis, len(full_values))
-                axis_values[axis] = [axis_values_obj(index) for index in indices]
-            else:
-                indices = self._expand_axis_indices(values, axis, len(axis_values_obj))
-                axis_values[axis] = [axis_values_obj[index] for index in indices]
+            indices = self._expand_axis_indices(values, axis, len(axis_values_obj))
+            axis_values[axis] = [axis_values_obj[index] for index in indices]
         return axis_values
 
     def _expand_axis_indices(self, values: Any, axis: str, axis_len: int) -> list[int]:
@@ -763,8 +736,6 @@ class ChunkCache:
             if values is None:
                 raise KeyError(f"Missing axis '{axis}' in axis_values")
             size = self._resolve_axis_chunk_size(axis)
-            if callable(values):
-                values = self._get_all_axis_values(axis)
             axis_chunks.append(_chunk_values(values, size))
 
         chunk_keys: list[ChunkKey] = []
@@ -947,24 +918,24 @@ class ChunkCache:
                     break
         return values
 
-    def _materialize_axis_values(
-        self, axis_values_obj: Any
-    ) -> tuple[list[Any], Callable[[int], Any]]:
+    def _materialize_axis_values(self, axis_values_obj: Any) -> list[Any]:
         if callable(axis_values_obj):
             try:
                 values_result = axis_values_obj()
                 if isinstance(values_result, (list, tuple)):
                     values = list(values_result)
-                    getter = lambda idx, vals=values: vals[idx]
                 else:
                     values = [values_result]
-                    getter = axis_values_obj
             except TypeError:
                 values = self._collect_indexed_callable_values(axis_values_obj)
-                getter = axis_values_obj
-            return values, getter
-        values = list(axis_values_obj)
-        return values, lambda idx, values=values: values[idx]
+        else:
+            values = list(axis_values_obj)
+        return self._canonicalize_axis_values(values)
+
+    def _canonicalize_axis_values(self, values: list[Any]) -> list[Any]:
+        if len(values) <= 1:
+            return values
+        return sorted(values, key=_stable_serialize)
 
     def _resolve_axis_chunk_size(self, axis: str) -> int:
         spec = self.memo_chunk_spec.get(axis)
