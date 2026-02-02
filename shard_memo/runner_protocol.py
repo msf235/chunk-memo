@@ -53,11 +53,21 @@ class MemoRunnerBackend(Protocol):
 
     def chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str: ...
 
+    def cache_hash(self, params: dict[str, Any]) -> str: ...
+
     def resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
     ) -> Path: ...
 
     def load_payload(self, path: Path) -> dict[str, Any] | None: ...
+
+    def write_chunk_payload(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+        *,
+        existing: Mapping[str, Any] | None = None,
+    ) -> Path: ...
 
     def load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any] | None: ...
 
@@ -93,7 +103,7 @@ class MemoRunnerBackend(Protocol):
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
     ) -> list[Any] | None: ...
 
-    def load_cached_output(
+    def collect_chunk_data(
         self,
         payload: Mapping[str, Any],
         chunk_key: ChunkKey,

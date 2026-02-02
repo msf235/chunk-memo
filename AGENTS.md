@@ -48,7 +48,7 @@ necessary; narrow when possible. - When a callable signature is important,
 specify it with `Callable`.
 
 ### Naming - Functions/variables: `snake_case`. - Classes: `PascalCase`. -
-Constants: `UPPER_SNAKE_CASE`. - Use descriptive names (e.g., `memo_chunk_spec`,
+Constants: `UPPER_SNAKE_CASE`. - Use descriptive names (e.g., `cache_chunk_spec`,
 `exec_chunk_size`).
 
 ### Public APIs - The public API is exported from `shard_memo/__init__.py`. -

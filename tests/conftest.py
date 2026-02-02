@@ -37,13 +37,13 @@ _ORIGINAL_INIT = _ChunkCache.__init__
 
 def _wrap_chunk_init(start_time):
     def wrapped_init(self, *args, **kwargs):
-        memo_chunk_spec = kwargs.get("memo_chunk_spec")
-        if memo_chunk_spec is None and len(args) > 1:
-            memo_chunk_spec = args[1]
+        cache_chunk_spec = kwargs.get("cache_chunk_spec")
+        if cache_chunk_spec is None and len(args) > 1:
+            cache_chunk_spec = args[1]
         elapsed = time.perf_counter() - start_time
         prefix = f"[{elapsed:8.3f}s] "
-        if memo_chunk_spec is not None:
-            print(f"{prefix}memo_chunk_spec {memo_chunk_spec}")
+        if cache_chunk_spec is not None:
+            print(f"{prefix}cache_chunk_spec {cache_chunk_spec}")
         return _ORIGINAL_INIT(self, *args, **kwargs)
 
     return wrapped_init

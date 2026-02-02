@@ -26,7 +26,7 @@ def main():
     output_root.mkdir(exist_ok=True)
     memo = ChunkCache(
         cache_root=output_root / "memo_cache",
-        memo_chunk_spec={"strat": 1, "s": 2},
+        cache_chunk_spec={"strat": 1, "s": 2},
         axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
         merge_fn=merge_fn,
     )

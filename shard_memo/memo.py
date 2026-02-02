@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
 from .cache_index import load_chunk_index, update_chunk_index
-from .cache_layout import resolve_cache_path
-from .cache_utils import (
+from .data_write_utils import (
     _apply_payload_timestamps,
     _atomic_write_json,
     _atomic_write_pickle,
@@ -62,10 +61,10 @@ class ChunkCache:
     def __init__(
         self,
         cache_root: str | Path,
-        memo_chunk_spec: dict[str, Any],
+        cache_chunk_spec: dict[str, Any] | None,
         axis_values: dict[str, Any],
         merge_fn: MergeFn | None = None,
-        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_path_fn: CachePathFn | None = None,
         cache_version: str = "v1",
@@ -79,10 +78,11 @@ class ChunkCache:
 
         Args:
             cache_root: Directory for chunk cache files.
-            memo_chunk_spec: Per-axis chunk sizes (e.g., {"strat": 1, "s": 3}).
+            cache_chunk_spec: Per-axis chunk sizes (e.g., {"strat": 1, "s": 3}).
+                If None, defaults to size 1 for each axis.
             merge_fn: Optional merge function for the list of chunk outputs.
-            memo_chunk_enumerator: Optional chunk enumerator that defines the
-                memo chunk order.
+            cache_chunk_enumerator: Optional chunk enumerator that defines the
+                cache chunk order.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_path_fn: Optional override for cache file paths. This hook is
                 experimental and not yet thoroughly tested.
@@ -101,12 +101,33 @@ class ChunkCache:
                 params and axis_values as an existing cache.
             warn_on_overlap: If True, warn when caches overlap (same params but
                 partially overlapping axis_values).
+
+        Example:
+            >>> cache = ChunkCache(
+            ...     cache_root="/tmp/shard-memo",
+            ...     cache_chunk_spec={"strat": 1, "s": 3},
+            ...     axis_values={"strat": ["a"], "s": [1, 2, 3]},
+            ... )
+            >>> params = {"alpha": 0.4}
+            >>> paths = cache.paths_for(params)
+            >>> for chunk_key, chunk_hash, path in paths["chunk_paths"]:
+            ...     payload = {"output": []}
+            ...     cache.write_chunk_payload(path, payload)
         """
         self.cache_root = Path(cache_root)
         self.cache_root.mkdir(parents=True, exist_ok=True)
-        self.memo_chunk_spec = memo_chunk_spec
+        if cache_chunk_spec is None:
+            cache_chunk_spec = {
+                axis: (
+                    len(axis_values[axis])
+                    if isinstance(axis_values[axis], (list, tuple))
+                    else 1
+                )
+                for axis in axis_values
+            }
+        self.cache_chunk_spec = cache_chunk_spec
         self.merge_fn = merge_fn
-        self.memo_chunk_enumerator = memo_chunk_enumerator
+        self.cache_chunk_enumerator = cache_chunk_enumerator
         self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash
         self.cache_path_fn = cache_path_fn
         self.cache_version = cache_version
@@ -260,7 +281,8 @@ class ChunkCache:
         """Return cached vs missing chunk info for a subset of axes.
 
         axis_indices selects axes by index (int, slice, range, or list/tuple of
-        those), based on the canonical split spec order.
+        those), based on the canonical split spec order. Chunk indices are
+        returned as lists of ints.
         """
         profile_start = time.monotonic() if self.profile else None
         if self._axis_values is None:
@@ -268,7 +290,6 @@ class ChunkCache:
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
         axis_values = self._normalize_axes(axes, axis_indices=axis_indices)
-        index_format = self._infer_index_format(axis_indices)
         chunk_keys = self._build_chunk_keys(axis_values)
         chunk_index = self.load_chunk_index(params)
         use_index = bool(chunk_index)
@@ -282,7 +303,7 @@ class ChunkCache:
         missing_chunk_indices: list[dict[str, Any]] = []
         for chunk_key in chunk_keys:
             chunk_hash = self.chunk_hash(params, chunk_key)
-            indices = self._chunk_indices_from_key(chunk_key, index_format)
+            indices = self._chunk_indices_from_key(chunk_key)
             if use_index:
                 exists = chunk_hash in chunk_index
             else:
@@ -337,14 +358,108 @@ class ChunkCache:
     def resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
     ) -> Path:
-        return resolve_cache_path(
-            memo_root_path=self._memo_root(params),
-            cache_path_fn=self.cache_path_fn,
-            params=params,
-            chunk_key=chunk_key,
-            cache_version=self.cache_version,
-            chunk_hash=chunk_hash,
+        memo_root = self._memo_root(params)
+        if self.cache_path_fn is None:
+            return memo_root / "chunks" / f"{chunk_hash}.pkl"
+        path = self.cache_path_fn(params, chunk_key, self.cache_version, chunk_hash)
+        path_obj = Path(path)
+        if path_obj.is_absolute():
+            return path_obj
+        return memo_root / path_obj
+
+    def _chunk_keys_for(
+        self,
+        params: dict[str, Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> list[ChunkKey]:
+        if self._axis_values is None:
+            raise ValueError("axis_values must be set before building chunk keys")
+        if not self._axis_values and (axes or axis_indices):
+            raise ValueError(
+                "Cannot pass axis arguments to a singleton cache (no axes)"
+            )
+        if axis_indices is None and not axes:
+            return self._build_chunk_keys()
+        if axis_indices is not None and axes:
+            raise ValueError("axis_indices cannot be combined with axis values")
+        axis_values = self._normalize_axes(axes, axis_indices=axis_indices)
+        chunk_keys, _ = self._build_chunk_plan_for_axes(axis_values)
+        return chunk_keys
+
+    def chunk_hashes_for(
+        self,
+        params: dict[str, Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> list[tuple[ChunkKey, str]]:
+        """Return chunk keys with their hashes for the requested axes."""
+        chunk_keys = self._chunk_keys_for(
+            params,
+            axis_indices=axis_indices,
+            **axes,
         )
+        return [
+            (chunk_key, self.chunk_hash(params, chunk_key)) for chunk_key in chunk_keys
+        ]
+
+    def paths_for(
+        self,
+        params: dict[str, Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> dict[str, Any]:
+        """Return cache paths for the requested axes."""
+        memo_root = self._memo_root(params)
+        chunk_keys = self._chunk_keys_for(
+            params,
+            axis_indices=axis_indices,
+            **axes,
+        )
+        chunk_paths: list[tuple[ChunkKey, str, Path]] = []
+        for chunk_key in chunk_keys:
+            chunk_hash = self.chunk_hash(params, chunk_key)
+            path = self.resolve_cache_path(params, chunk_key, chunk_hash)
+            chunk_paths.append((chunk_key, chunk_hash, path))
+        return {
+            "memo_root": memo_root,
+            "metadata_path": memo_root / "metadata.json",
+            "chunk_paths": chunk_paths,
+        }
+
+    def apply_payload_timestamps(
+        self,
+        payload: dict[str, Any],
+        *,
+        existing: Mapping[str, Any] | None = None,
+    ) -> None:
+        _apply_payload_timestamps(payload, existing=existing)
+
+    def write_chunk_payload(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+        *,
+        existing: Mapping[str, Any] | None = None,
+    ) -> Path:
+        self.apply_payload_timestamps(payload, existing=existing)
+        _atomic_write_pickle(path, payload)
+        return path
+
+    def write_memo_json(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+        *,
+        existing: Mapping[str, Any] | None = None,
+    ) -> Path:
+        if existing is not None:
+            self.apply_payload_timestamps(payload, existing=existing)
+        _atomic_write_json(path, payload)
+        return path
 
     def load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any]:
         return load_chunk_index(self._memo_root(params))
@@ -373,15 +488,15 @@ class ChunkCache:
         normalized = self._normalized_hash_params(params)
         return self.chunk_hash_fn(normalized, chunk_key, self.cache_version)
 
-    def memo_hash(self, params: dict[str, Any]) -> str:
-        payload = {
+    def cache_hash(self, params: dict[str, Any]) -> str:
+        specs = {
             "params": self._normalized_hash_params(params),
             "axis_values": self._axis_values_serializable,
-            "memo_chunk_spec": self.memo_chunk_spec,
+            "cache_chunk_spec": self.cache_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
         }
-        data = _stable_serialize(payload)
+        data = _stable_serialize(specs)
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
     def _check_exclusive(self, params: dict[str, Any]) -> None:
@@ -413,12 +528,12 @@ class ChunkCache:
                 if self.exclusive:
                     if meta_axis_values == self._axis_values_serializable:
                         raise ValueError(
-                            f"Cache with same params and axis_values already exists: {cache['memo_hash']}. "
+                            f"Cache with same params and axis_values already exists: {cache['cache_hash']}. "
                             f"Use a different cache_version or cache_root, or set exclusive=False."
                         )
                     else:
                         raise ValueError(
-                            f"Cannot create subset cache: a superset cache already exists: {cache['memo_hash']}. "
+                            f"Cannot create subset cache: a superset cache already exists: {cache['cache_hash']}. "
                             f"Superset cache has axis_values={meta_axis_values}, "
                             f"requested has axis_values={self._axis_values_serializable}. "
                             f"Use the existing superset cache, or set exclusive=False."
@@ -451,7 +566,7 @@ class ChunkCache:
                                 break
                         else:
                             raise ValueError(
-                                f"Cannot create superset cache: a subset cache already exists: {cache['memo_hash']}. "
+                                f"Cannot create superset cache: a subset cache already exists: {cache['cache_hash']}. "
                                 f"Subset cache has axis_values={meta_axis_values}, "
                                 f"requested has axis_values={self._axis_values_serializable}. "
                                 f"Use the existing subset cache, or set exclusive=False."
@@ -463,7 +578,7 @@ class ChunkCache:
                 )
                 if overlap:
                     warnings.warn(
-                        f"Cache overlap detected: {cache['memo_hash']} has axis_values={meta_axis_values}, "
+                        f"Cache overlap detected: {cache['cache_hash']} has axis_values={meta_axis_values}, "
                         f"current has axis_values={axis_values_serializable}. Overlap: {overlap}. "
                         f"Consider using exclusive=True to prevent accidental conflicts.",
                         stacklevel=2,
@@ -487,7 +602,7 @@ class ChunkCache:
         return overlap
 
     def _memo_root(self, params: dict[str, Any]) -> Path:
-        return self.cache_root / self.memo_hash(params)
+        return self.cache_root / self.cache_hash(params)
 
     def write_metadata(self, params: dict[str, Any]) -> Path:
         memo_root = self._memo_root(params)
@@ -502,13 +617,12 @@ class ChunkCache:
         payload = {
             "params": self._normalized_hash_params(params),
             "axis_values": self._axis_values_serializable,
-            "memo_chunk_spec": self.memo_chunk_spec,
+            "cache_chunk_spec": self.cache_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
-            "memo_hash": self.memo_hash(params),
+            "cache_hash": self.cache_hash(params),
         }
-        _apply_payload_timestamps(payload, existing=existing_meta)
-        _atomic_write_json(path, payload)
+        self.write_memo_json(path, payload, existing=existing_meta)
         return path
 
     def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
@@ -682,12 +796,12 @@ class ChunkCache:
                     "axis_values must be set before running memoized function"
                 )
             axis_values = self._axis_values
-        if self.memo_chunk_enumerator is not None:
+        if self.cache_chunk_enumerator is not None:
             if self._axis_values_serializable is not None:
                 return list(
-                    self.memo_chunk_enumerator(dict(self._axis_values_serializable))
+                    self.cache_chunk_enumerator(dict(self._axis_values_serializable))
                 )
-            return list(self.memo_chunk_enumerator(dict(axis_values)))
+            return list(self.cache_chunk_enumerator(dict(axis_values)))
 
         axis_order, ordered = self._ordered_axis_values(axis_values)
         axis_chunks = [_chunk_values(values, size) for _, values, size in ordered]
@@ -700,9 +814,7 @@ class ChunkCache:
             chunk_keys.append(chunk_key)
         return chunk_keys
 
-    def _chunk_indices_from_key(
-        self, chunk_key: ChunkKey, index_format: Mapping[str, str] | None
-    ) -> dict[str, Any]:
+    def _chunk_indices_from_key(self, chunk_key: ChunkKey) -> dict[str, Any]:
         if self._axis_index_map is None:
             raise ValueError("axis_values must be set before checking cache status")
         indices: dict[str, Any] = {}
@@ -711,69 +823,8 @@ class ChunkCache:
             if axis_map is None:
                 raise KeyError(f"Unknown axis '{axis}'")
             raw_indices = [axis_map[value] for value in values]
-            format_kind = None if index_format is None else index_format.get(axis)
-            indices[axis] = self._format_indices(raw_indices, format_kind)
+            indices[axis] = raw_indices
         return indices
-
-    def _infer_index_format(
-        self, axis_indices: Mapping[str, Any] | None
-    ) -> dict[str, str] | None:
-        if axis_indices is None:
-            return None
-        formats: dict[str, str] = {}
-        for axis, values in axis_indices.items():
-            formats[axis] = self._detect_index_format(values)
-        return formats
-
-    def _detect_index_format(self, values: Any) -> str:
-        if isinstance(values, range):
-            return "range"
-        if isinstance(values, slice):
-            return "slice"
-        if isinstance(values, (list, tuple)):
-            kinds = {self._detect_index_format(value) for value in values}
-            if len(kinds) == 1:
-                return kinds.pop()
-            return "list"
-        if isinstance(values, int):
-            return "int"
-        return "list"
-
-    def _indices_step(self, indices: list[int]) -> int | None:
-        if len(indices) < 2:
-            return 1
-        step = indices[1] - indices[0]
-        if step == 0:
-            return None
-        for prev, current in zip(indices, indices[1:]):
-            if current - prev != step:
-                return None
-        return step
-
-    def _format_indices(self, indices: list[int], format_kind: str | None) -> Any:
-        if format_kind == "int":
-            return indices[:]
-        if format_kind == "range":
-            return self._indices_to_span(indices, kind="range")
-        if format_kind == "slice":
-            return self._indices_to_span(indices, kind="slice") or indices[:]
-        return indices[:]
-
-    def _indices_to_span(
-        self, indices: list[int], *, kind: str
-    ) -> range | slice | None:
-        if not indices:
-            return range(0, 0) if kind == "range" else slice(0, 0, None)
-        if len(indices) == 1:
-            start = indices[0]
-            stop = indices[0] + 1
-            return range(start, stop) if kind == "range" else slice(start, stop, None)
-        step = self._indices_step(indices)
-        if step is None:
-            return None
-        start = indices[0]
-        stop = indices[-1] + step
-        return range(start, stop, step) if kind == "range" else slice(start, stop, step)
 
     def _build_chunk_plan_for_axes(
         self, axis_values: Mapping[str, Sequence[Any]]
@@ -900,7 +951,7 @@ class ChunkCache:
             payload = pickle.load(handle)
         return cast(dict[str, Any], payload)
 
-    def load_cached_output(
+    def collect_chunk_data(
         self,
         payload: Mapping[str, Any],
         chunk_key: ChunkKey,
@@ -926,48 +977,14 @@ class ChunkCache:
             return None
         return collate_fn([cached_outputs])
 
-    def _collect_indexed_callable_values(
-        self, axis_values_obj: Callable[[int], Any]
-    ) -> list[Any]:
-        values: list[Any] = []
-        index = 0
-        while True:
-            try:
-                value = axis_values_obj(index)
-                values.append(value)
-                index += 1
-            except (IndexError, KeyError):
-                break
-            except Exception:
-                values.append(axis_values_obj(index))
-                index += 1
-                if index > 10000:
-                    break
-        return values
-
     def _materialize_axis_values(self, axis_values_obj: Any) -> list[Any]:
-        if callable(axis_values_obj):
-            try:
-                values_result = axis_values_obj()
-                if isinstance(values_result, (list, tuple)):
-                    values = list(values_result)
-                else:
-                    values = [values_result]
-            except TypeError:
-                values = self._collect_indexed_callable_values(axis_values_obj)
-        else:
-            values = list(axis_values_obj)
-        return self._canonicalize_axis_values(values)
-
-    def _canonicalize_axis_values(self, values: list[Any]) -> list[Any]:
-        if len(values) <= 1:
-            return values
+        values = list(axis_values_obj)
         return sorted(values, key=_stable_serialize)
 
     def _resolve_axis_chunk_size(self, axis: str) -> int:
-        spec = self.memo_chunk_spec.get(axis)
+        spec = self.cache_chunk_spec.get(axis)
         if spec is None:
-            raise KeyError(f"Missing memo_chunk_spec for axis '{axis}'")
+            raise KeyError(f"Missing cache_chunk_spec for axis '{axis}'")
         if isinstance(spec, dict):
             size = spec.get("size")
             if size is None:
@@ -980,7 +997,7 @@ class ChunkCache:
         """Discover all existing caches in cache_root.
 
         Returns a list of cache metadata dictionaries, each containing:
-        - memo_hash: The unique hash of the cache
+        - cache_hash: The unique hash of the cache
         - path: Path to the cache directory
         - metadata: Full metadata dict if available, None otherwise
 
@@ -998,7 +1015,7 @@ class ChunkCache:
             metadata = cls._read_metadata_file(metadata_path, required=False)
             caches.append(
                 {
-                    "memo_hash": entry.name,
+                    "cache_hash": entry.name,
                     "path": entry,
                     "metadata": metadata,
                 }
@@ -1008,9 +1025,9 @@ class ChunkCache:
     @classmethod
     def _is_superset_compatible(
         cls,
-        cache_metadata: dict[str, Any],
-        req_params: dict[str, Any],
-        req_axis_values: dict[str, Any],
+        cache_metadata: dict[str, Any] | None,
+        req_params: dict[str, Any] | None,
+        req_axis_values: dict[str, Any] | None,
     ) -> bool:
         """Check if an existing cache is a superset of the requested configuration.
 
@@ -1022,6 +1039,8 @@ class ChunkCache:
         Returns:
             True if the cache is a superset and compatible, False otherwise.
         """
+        if cache_metadata is None or req_params is None or req_axis_values is None:
+            return False
         meta_params = cache_metadata.get("params", {})
         meta_axis_values = cache_metadata.get("axis_values", {})
         req_axis_set = set(req_axis_values.keys())
@@ -1047,12 +1066,70 @@ class ChunkCache:
         return True
 
     @classmethod
+    def cache_is_compatible(
+        cls,
+        cache,
+        params: dict[str, Any] | None = None,
+        axis_values: dict[str, Any] | None = None,
+        cache_chunk_spec: dict[str, Any] | None = None,
+        cache_version: str | None = None,
+        axis_order: Sequence[str] | None = None,
+        allow_superset: bool = False,
+    ) -> bool:
+        """Find caches compatible with the given criteria.
+
+        Matching rules:
+        - If a criterion is provided, it must match exactly.
+        - If a criterion is None (omitted), it is ignored (wildcard).
+        - If allow_superset is True with params and axis_values provided,
+          also finds caches that are supersets (contain all requested data).
+
+        Args:
+            cache: Cache.
+            params: Optional params dict (axis values excluded) to match.
+            axis_values: Optional axis_values dict to match.
+            cache_chunk_spec: Optional cache_chunk_spec dict to match.
+            cache_version: Optional cache_version string to match.
+            axis_order: Optional axis_order sequence to match.
+            allow_superset: If True, find superset caches when params and
+                axis_values are both provided.
+        """
+        metadata = cache.get("metadata")
+
+        if allow_superset:
+            return cls._is_superset_compatible(metadata, params, axis_values)
+
+        if metadata is None:
+            return False
+        if params is not None:
+            meta_params = metadata.get("params", {})
+            if _stable_serialize(meta_params) != _stable_serialize(params):
+                return False
+        if axis_values is not None:
+            meta_axis_values = metadata.get("axis_values", {})
+            if _stable_serialize(meta_axis_values) != _stable_serialize(axis_values):
+                return False
+        if cache_chunk_spec is not None:
+            meta_spec = metadata.get("cache_chunk_spec", {})
+            if _stable_serialize(meta_spec) != _stable_serialize(cache_chunk_spec):
+                return False
+        if cache_version is not None:
+            if metadata.get("cache_version") != cache_version:
+                return False
+        if axis_order is not None:
+            meta_axis_order = metadata.get("axis_order")
+            meta_tuple = tuple(meta_axis_order) if meta_axis_order is not None else None
+            if meta_tuple != tuple(axis_order):
+                return False
+        return True
+
+    @classmethod
     def find_compatible_caches(
         cls,
         cache_root: str | Path,
         params: dict[str, Any] | None = None,
         axis_values: dict[str, Any] | None = None,
-        memo_chunk_spec: dict[str, Any] | None = None,
+        cache_chunk_spec: dict[str, Any] | None = None,
         cache_version: str | None = None,
         axis_order: Sequence[str] | None = None,
         allow_superset: bool = False,
@@ -1066,7 +1143,7 @@ class ChunkCache:
           also finds caches that are supersets (contain all requested data).
 
         Returns a list of compatible cache entries, each containing:
-        - memo_hash: The unique hash of the cache
+        - cache_hash: The unique hash of the cache
         - path: Path to the cache directory
         - metadata: Full metadata dict
 
@@ -1074,7 +1151,7 @@ class ChunkCache:
             cache_root: Directory to scan for caches.
             params: Optional params dict (axis values excluded) to match.
             axis_values: Optional axis_values dict to match.
-            memo_chunk_spec: Optional memo_chunk_spec dict to match.
+            cache_chunk_spec: Optional cache_chunk_spec dict to match.
             cache_version: Optional cache_version string to match.
             axis_order: Optional axis_order sequence to match.
             allow_superset: If True, find superset caches when params and
@@ -1083,95 +1160,19 @@ class ChunkCache:
         all_caches = cls.discover_caches(cache_root)
         compatible: list[dict[str, Any]] = []
 
-        if allow_superset and params is not None and axis_values is not None:
-            for cache in all_caches:
-                metadata = cache.get("metadata")
-                if metadata is None:
-                    continue
-                if cls._is_superset_compatible(metadata, params, axis_values):
-                    compatible.append(cache)
-            return compatible
-
         for cache in all_caches:
-            metadata = cache.get("metadata")
-            if metadata is None:
-                continue
-            if params is not None:
-                meta_params = metadata.get("params", {})
-                if _stable_serialize(meta_params) != _stable_serialize(params):
-                    continue
-            if axis_values is not None:
-                meta_axis_values = metadata.get("axis_values", {})
-                if _stable_serialize(meta_axis_values) != _stable_serialize(
-                    axis_values
-                ):
-                    continue
-            if memo_chunk_spec is not None:
-                meta_spec = metadata.get("memo_chunk_spec", {})
-                if _stable_serialize(meta_spec) != _stable_serialize(memo_chunk_spec):
-                    continue
-            if cache_version is not None:
-                if metadata.get("cache_version") != cache_version:
-                    continue
-            if axis_order is not None:
-                meta_axis_order = metadata.get("axis_order")
-                meta_tuple = (
-                    tuple(meta_axis_order) if meta_axis_order is not None else None
-                )
-                if meta_tuple != tuple(axis_order):
-                    continue
-            compatible.append(cache)
+            if cls.cache_is_compatible(
+                cache,
+                params,
+                axis_values,
+                cache_chunk_spec,
+                cache_version,
+                axis_order,
+                allow_superset,
+            ):
+                compatible.append(cache)
+
         return compatible
-
-    @classmethod
-    def find_overlapping_caches(
-        cls,
-        cache_root: str | Path,
-        params: dict[str, Any],
-        axis_values: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """Find caches that overlap with the given params and axis_values.
-
-        Overlap means caches have the same params and at least one
-        intersecting axis with shared values.
-
-        Returns a list of overlapping cache entries, each containing:
-        - memo_hash: The unique hash of the cache
-        - path: Path to the cache directory
-        - metadata: Full metadata dict
-        - overlap: Dict of axis names to overlapping values
-
-        Args:
-            cache_root: Directory to scan for caches.
-            params: Params dict (axis values excluded) to match.
-            axis_values: axis_values dict to check for overlap.
-        """
-        all_caches = cls.discover_caches(cache_root)
-        overlapping: list[dict[str, Any]] = []
-        for cache in all_caches:
-            metadata = cache.get("metadata")
-            if metadata is None:
-                continue
-            meta_params = metadata.get("params", {})
-            if _stable_serialize(meta_params) != _stable_serialize(params):
-                continue
-            meta_axis_values = metadata.get("axis_values", {})
-            if not meta_axis_values or not axis_values:
-                continue
-            overlap_dict = {}
-            has_all_intersections = True
-            for axis in set(meta_axis_values) & set(axis_values):
-                meta_vals = cls._axis_value_set(meta_axis_values[axis])
-                vals = cls._axis_value_set(axis_values[axis])
-                intersection = meta_vals & vals
-                if intersection:
-                    overlap_dict[axis] = sorted(intersection)
-                else:
-                    has_all_intersections = False
-                    break
-            if has_all_intersections and overlap_dict:
-                overlapping.append({**cache, "overlap": overlap_dict})
-        return overlapping
 
     @classmethod
     def auto_load(
@@ -1179,9 +1180,9 @@ class ChunkCache:
         cache_root: str | Path,
         params: dict[str, Any],
         axis_values: dict[str, Any] | None = None,
-        memo_chunk_spec: dict[str, Any] | None = None,
+        cache_chunk_spec: dict[str, Any] | None = None,
         merge_fn: MergeFn | None = None,
-        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_path_fn: CachePathFn | None = None,
         cache_version: str = "v1",
@@ -1200,7 +1201,7 @@ class ChunkCache:
         If axis_values is None, requires exactly one cache matching params
         (otherwise raises ambiguity error).
 
-        When creating a new cache with axis_values, if memo_chunk_spec is
+        When creating a new cache with axis_values, if cache_chunk_spec is
         not provided, uses chunk size 1 for all axes as default.
 
         Args:
@@ -1210,11 +1211,11 @@ class ChunkCache:
                 - With allow_superset=False: requires exact match
                 - With allow_superset=True: finds exact or superset matches
                 - If None: finds caches with matching params (must be exactly 1)
-            memo_chunk_spec: Optional chunk spec. Required when creating
+            cache_chunk_spec: Optional chunk spec. Required when creating
                 a new cache with axis_values. Defaults to size 1 for
                 all axes.
             merge_fn: Optional merge function.
-            memo_chunk_enumerator: Optional chunk enumerator.
+            cache_chunk_enumerator: Optional chunk enumerator.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_path_fn: Optional override for cache file paths.
             cache_version: Cache namespace/version tag.
@@ -1234,110 +1235,57 @@ class ChunkCache:
         Raises:
             ValueError: If multiple caches match (ambiguous), if axis_values
                 provided without matching cache and axis_names missing from
-                memo_chunk_spec, or if multiple superset caches match.
+                cache_chunk_spec, or if multiple superset caches match.
         """
         cache_root = Path(cache_root)
+        axis_values_map = axis_values or {}
+
+        # resolve memo hash / cache selection
         normalized_params = cls._normalized_hash_params_for_axis_values(params, {})
-
-        if axis_values is not None:
-            if allow_superset:
-                compatible_caches = cls.find_compatible_caches(
-                    cache_root,
-                    params=normalized_params,
-                    axis_values=axis_values,
-                    allow_superset=True,
-                )
-            else:
-                compatible_caches = cls.find_compatible_caches(
-                    cache_root,
-                    params=normalized_params,
-                    axis_values=axis_values,
-                )
-
-            if len(compatible_caches) == 1:
-                cache = compatible_caches[0]
-                return cls.load_from_cache(
-                    cache_root=cache_root,
-                    memo_hash=cache["memo_hash"],
-                    merge_fn=merge_fn,
-                    memo_chunk_enumerator=memo_chunk_enumerator,
-                    chunk_hash_fn=chunk_hash_fn,
-                    cache_path_fn=cache_path_fn,
-                    verbose=verbose,
-                    profile=profile,
-                    exclusive=exclusive,
-                    warn_on_overlap=warn_on_overlap,
-                )
-            if len(compatible_caches) > 1:
-                matches = [
-                    f"{c['memo_hash']} (axis_values={c.get('metadata', {}).get('axis_values')})"
-                    for c in compatible_caches
-                ]
-                raise ValueError(
-                    f"Ambiguous: {len(compatible_caches)} caches match the given criteria. "
-                    f"Matching hashes: {matches}. "
-                    f"Use ChunkCache.load_from_cache() to pick a specific cache."
-                )
-            if memo_chunk_spec is None:
-                memo_chunk_spec = {
-                    axis: (
-                        len(axis_values[axis])
-                        if isinstance(axis_values[axis], (list, tuple))
-                        else 1
-                    )
-                    for axis in axis_values
-                }
-            return cls(
-                cache_root=cache_root,
-                memo_chunk_spec=memo_chunk_spec,
-                axis_values=axis_values,
-                merge_fn=merge_fn,
-                memo_chunk_enumerator=memo_chunk_enumerator,
-                chunk_hash_fn=chunk_hash_fn,
-                cache_path_fn=cache_path_fn,
-                cache_version=cache_version,
-                axis_order=axis_order,
-                verbose=verbose,
-                profile=profile,
-                exclusive=exclusive,
-                warn_on_overlap=warn_on_overlap,
-            )
-
-        matching_caches = cls.find_compatible_caches(
+        compatible_caches = cls.find_compatible_caches(
             cache_root,
             params=normalized_params,
+            axis_values=axis_values,
+            allow_superset=allow_superset,
         )
-        if len(matching_caches) == 1:
-            cache = matching_caches[0]
-            return cls.load_from_cache(
-                cache_root=cache_root,
-                memo_hash=cache["memo_hash"],
-                merge_fn=merge_fn,
-                memo_chunk_enumerator=memo_chunk_enumerator,
-                chunk_hash_fn=chunk_hash_fn,
-                cache_path_fn=cache_path_fn,
-                verbose=verbose,
-                profile=profile,
-                exclusive=exclusive,
-                warn_on_overlap=warn_on_overlap,
-            )
-        if len(matching_caches) > 1:
+
+        cache_hash: str | None
+        if len(compatible_caches) == 1:
+            cache_hash = compatible_caches[0]["cache_hash"]
+        elif len(compatible_caches) > 1:
             matches = [
-                f"{c['memo_hash']} (axis_values={c.get('metadata', {}).get('axis_values')})"
-                for c in matching_caches
+                f"{c['cache_hash']} (axis_values={c.get('metadata', {}).get('axis_values')})"
+                for c in compatible_caches
             ]
             raise ValueError(
-                f"Ambiguous: {len(matching_caches)} caches match the given params. "
+                f"Ambiguous: {len(compatible_caches)} caches match the given params. "
                 f"Use axis_values parameter to disambiguate, or use one of "
                 f"ChunkCache.load_from_cache() to pick a specific cache.\n"
                 f"Matches:\n  " + "\n  ".join(matches)
             )
+        else:
+            cache_hash = None
+
+        # load existing cache or create new
+        if cache_hash is not None:
+            return cls.load_from_cache(
+                cache_root=cache_root,
+                cache_hash=cache_hash,
+                merge_fn=merge_fn,
+                cache_chunk_enumerator=cache_chunk_enumerator,
+                chunk_hash_fn=chunk_hash_fn,
+                cache_path_fn=cache_path_fn,
+                verbose=verbose,
+                profile=profile,
+                exclusive=exclusive,
+                warn_on_overlap=warn_on_overlap,
+            )
         return cls(
             cache_root=cache_root,
-            memo_chunk_spec={},
-            axis_values={},
+            cache_chunk_spec=cache_chunk_spec,
+            axis_values=axis_values_map,
             merge_fn=merge_fn,
-            memo_chunk_enumerator=memo_chunk_enumerator,
+            cache_chunk_enumerator=cache_chunk_enumerator,
             chunk_hash_fn=chunk_hash_fn,
             cache_path_fn=cache_path_fn,
             cache_version=cache_version,
@@ -1352,9 +1300,9 @@ class ChunkCache:
     def load_from_cache(
         cls,
         cache_root: str | Path,
-        memo_hash: str,
+        cache_hash: str,
         merge_fn: MergeFn | None = None,
-        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_path_fn: CachePathFn | None = None,
         verbose: int = 1,
@@ -1362,7 +1310,7 @@ class ChunkCache:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> "ChunkCache":
-        """Load a ChunkCache instance from an existing cache by memo_hash.
+        """Load a ChunkCache instance from an existing cache by cache_hash.
 
         Raises:
             FileNotFoundError: If the cache directory or metadata.json does not exist.
@@ -1370,9 +1318,9 @@ class ChunkCache:
 
         Args:
             cache_root: Directory containing caches.
-            memo_hash: The hash identifying the specific cache.
+            cache_hash: The hash identifying the specific cache.
             merge_fn: Optional merge function for the list of chunk outputs.
-            memo_chunk_enumerator: Optional chunk enumerator.
+            cache_chunk_enumerator: Optional chunk enumerator.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_path_fn: Optional override for cache file paths.
             verbose: Verbosity flag.
@@ -1382,7 +1330,7 @@ class ChunkCache:
             warn_on_overlap: If True, warn when caches overlap.
         """
         cache_root = Path(cache_root)
-        cache_path = cache_root / memo_hash
+        cache_path = cache_root / cache_hash
         metadata_path = cache_path / "metadata.json"
         if not cache_path.exists():
             raise FileNotFoundError(f"Cache directory not found: {cache_path}")
@@ -1392,15 +1340,15 @@ class ChunkCache:
         axis_values = metadata.get("axis_values")
         if axis_values is None:
             raise ValueError("Metadata missing 'axis_values'")
-        memo_chunk_spec = metadata.get("memo_chunk_spec")
-        if memo_chunk_spec is None:
-            raise ValueError("Metadata missing 'memo_chunk_spec'")
+        cache_chunk_spec = metadata.get("cache_chunk_spec")
+        if cache_chunk_spec is None:
+            raise ValueError("Metadata missing 'cache_chunk_spec'")
         instance = cls(
             cache_root=cache_root,
-            memo_chunk_spec=memo_chunk_spec,
+            cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
             merge_fn=merge_fn,
-            memo_chunk_enumerator=memo_chunk_enumerator,
+            cache_chunk_enumerator=cache_chunk_enumerator,
             chunk_hash_fn=chunk_hash_fn,
             cache_path_fn=cache_path_fn,
             cache_version=metadata.get("cache_version", "v1"),

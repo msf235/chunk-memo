@@ -1,7 +1,6 @@
 import dataclasses
 import functools
 import inspect
-import itertools
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -16,7 +15,6 @@ from ._format import (
     print_detail,
     print_progress,
 )
-from .cache_utils import _apply_payload_timestamps, _atomic_write_pickle
 from .runner_protocol import CacheStatus, MemoRunnerBackend
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
@@ -85,7 +83,8 @@ def _payload_item_map(
     chunk_key: ChunkKey,
     payload: dict[str, Any],
     *,
-    path: Path | None = None,
+    params: dict[str, Any] | None = None,
+    chunk_hash: str | None = None,
     write_back: bool = False,
 ) -> dict[str, Any] | None:
     item_map = payload.get("items")
@@ -98,8 +97,11 @@ def _payload_item_map(
             payload["items"] = item_map
             if item_axis_vals is not None:
                 payload["axis_vals"] = item_axis_vals
-            if write_back and path is not None:
-                _atomic_write_pickle(path, payload)
+            if write_back:
+                if params is None or chunk_hash is None:
+                    raise ValueError("params and chunk_hash required for write_back")
+                path = memo.resolve_cache_path(params, chunk_key, chunk_hash)
+                memo.write_chunk_payload(path, payload, existing=payload)
     return item_map
 
 
@@ -112,7 +114,6 @@ def _save_chunk_payload(
     cached_payloads: dict[ChunkKey, Mapping[str, Any]],
     diagnostics: Diagnostics,
     chunk_hash: str,
-    path: Path,
     missing_chunks: list[ChunkKey],
     spec_fn: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -132,13 +133,14 @@ def _save_chunk_payload(
         payload["items"] = merged_items
         if "output" not in payload and chunk_output is not None and item_map is None:
             payload["output"] = chunk_output
-    _apply_payload_timestamps(
+    if spec_fn is not None:
+        payload["axis_vals"] = spec_fn()
+    path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
+    memo.write_chunk_payload(
+        path,
         payload,
         existing=cached_payloads.get(chunk_key),
     )
-    if spec_fn is not None:
-        payload["axis_vals"] = spec_fn()
-    _atomic_write_pickle(path, payload)
     memo.update_chunk_index(params_dict, chunk_hash, chunk_key)
     return payload
 
@@ -649,7 +651,6 @@ def execute_and_save_chunk(
     params: dict[str, Any],
     chunk_key: ChunkKey,
     exec_fn: Callable[..., Any],
-    path: Path,
     chunk_hash: str,
     diagnostics: Diagnostics,
     existing_payload: Mapping[str, Any] | None = None,
@@ -673,8 +674,12 @@ def execute_and_save_chunk(
             payload["axis_vals"] = item_axis_vals
     else:
         payload["output"] = chunk_output
-    _apply_payload_timestamps(payload, existing=existing_payload)
-    _atomic_write_pickle(path, payload)
+    path = cache.resolve_cache_path(params, chunk_key, chunk_hash)
+    cache.write_chunk_payload(
+        path,
+        payload,
+        existing=existing_payload,
+    )
     cache.update_chunk_index(params, chunk_hash, chunk_key)
     return chunk_output, item_map
 
@@ -702,7 +707,7 @@ def run_chunks(
         if requested_items_by_chunk is not None:
             requested_items = requested_items_by_chunk.get(chunk_key)
         if payload is not None:
-            cached_output = cache.load_cached_output(
+            cached_output = cache.collect_chunk_data(
                 payload,
                 chunk_key,
                 requested_items,
@@ -724,7 +729,6 @@ def run_chunks(
             params,
             chunk_key,
             exec_fn,
-            path,
             chunk_hash,
             diagnostics,
             existing_payload,
@@ -796,7 +800,8 @@ def run_chunks_streaming(
                 cache,
                 chunk_key,
                 payload,
-                path=path,
+                params=params,
+                chunk_hash=chunk_hash,
                 write_back=True,
             )
             if item_map is not None:
@@ -817,7 +822,6 @@ def run_chunks_streaming(
             params,
             chunk_key,
             exec_fn,
-            path,
             chunk_hash,
             diagnostics,
             None,
@@ -969,7 +973,6 @@ def memo_parallel_run(
                 chunk_outputs,
             )
             chunk_hash = memo.chunk_hash(params_dict, chunk_key)
-            path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
             _save_chunk_payload(
                 memo,
                 params_dict,
@@ -979,7 +982,6 @@ def memo_parallel_run(
                 cached_payloads,
                 diagnostics,
                 chunk_hash,
-                path,
                 missing_chunks,
                 lambda: item_axis_vals,
             )
@@ -1173,7 +1175,6 @@ def memo_parallel_run_streaming(
                 chunk_outputs,
             )
             chunk_hash = memo.chunk_hash(params_dict, chunk_key)
-            path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
             _save_chunk_payload(
                 memo,
                 params_dict,
@@ -1183,7 +1184,6 @@ def memo_parallel_run_streaming(
                 cached_payloads,
                 diagnostics,
                 chunk_hash,
-                path,
                 missing_chunks,
                 lambda: item_axis_vals,
             )

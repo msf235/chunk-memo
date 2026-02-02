@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Any, Tuple
 
-from .cache_utils import _apply_payload_timestamps, _atomic_write_json
+from .data_write_utils import _apply_payload_timestamps, _atomic_write_json
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 

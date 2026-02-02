@@ -34,7 +34,7 @@ def main():
 
     memo = ChunkCache(
         cache_root=output_root / "memo_run_cache",
-        memo_chunk_spec={"strat": 1, "s": 3},
+        cache_chunk_spec={"strat": 1, "s": 3},
         axis_values=axis_values,
         merge_fn=merge_fn,
         verbose=1,

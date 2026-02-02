@@ -16,7 +16,7 @@ def test_memo_parallel_run_caches_missing_points():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )
@@ -50,7 +50,7 @@ def test_memo_parallel_run_reuses_partial_chunks():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )

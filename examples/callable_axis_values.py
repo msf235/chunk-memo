@@ -41,14 +41,14 @@ def example_with_lists():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo_chunk_spec = {"strat": 1, "s": 2}
+        cache_chunk_spec = {"strat": 1, "s": 2}
 
         def exec_fn(params, strat, s):
             return [{"result": f"{strat[0]}-{s[0]}"}]
 
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec=memo_chunk_spec,
+            cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
@@ -63,14 +63,14 @@ def example_with_callables():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = make_lazy_axis_values()
-        memo_chunk_spec = {"strat": 1, "s": 2}
+        cache_chunk_spec = {"strat": 1, "s": 2}
 
         def exec_fn(params, strat, s):
             return [{"result": f"{strat[0]}-{s[0]}"}]
 
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec=memo_chunk_spec,
+            cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
@@ -90,14 +90,14 @@ def example_mixed():
             "strat": ["a", "b"],
             "s": lambda idx: [1, 2, 3, 4][idx],
         }
-        memo_chunk_spec = {"strat": 1, "s": 2}
+        cache_chunk_spec = {"strat": 1, "s": 2}
 
         def exec_fn(params, strat, s):
             return [{"result": f"{strat[0]}-{s[0]}"}]
 
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec=memo_chunk_spec,
+            cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )

@@ -14,7 +14,7 @@ def test_memo_parallel_run_returns_requested_points():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
         memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])

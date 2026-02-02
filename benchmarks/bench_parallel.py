@@ -23,7 +23,7 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     cache_root = root / f"exec_{exec_chunk_size}" / scenario
     memo = ChunkCache(
         cache_root=str(cache_root),
-        memo_chunk_spec={"s": 100},
+        cache_chunk_spec={"s": 100},
         axis_values=axis_values,
     )
 

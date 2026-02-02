@@ -61,7 +61,7 @@ def exec_point_extra_param(params, strat, s, extra=2):
 def run_memo(cache_root, *, merge=True, chunk_spec=None, axis_values):
     return ChunkCache(
         cache_root=cache_root,
-        memo_chunk_spec=chunk_spec or {"strat": 1, "s": 3},
+        cache_chunk_spec=chunk_spec or {"strat": 1, "s": 3},
         axis_values=axis_values,
         merge_fn=merge_fn if merge else None,
     )
@@ -181,7 +181,7 @@ def test_run_wrap_param_merge():
         )
         assert status["total_chunks"] == 1
         assert status["cached_chunks"]
-        assert isinstance(status["cached_chunk_indices"][0]["s"], slice)
+        assert status["cached_chunk_indices"][0]["s"] == [0, 1, 2]
 
 
 def test_run_wrap_duplicate_params_arg():
@@ -228,15 +228,15 @@ def test_run_axis_indices_range_slice():
         assert diag2.executed_chunks == 0
 
 
-def test_memo_chunk_enumerator_order():
-    memo_chunk_spec = {"strat": 1, "s": 2}
+def test_cache_chunk_enumerator_order():
+    cache_chunk_spec = {"strat": 1, "s": 2}
 
     def build_chunk_keys(axis_values):
         axis_order = sorted(axis_values)
         axis_chunks = []
         for axis in axis_order:
             values = axis_values[axis]
-            size = memo_chunk_spec[axis]
+            size = cache_chunk_spec[axis]
             axis_chunks.append(
                 [tuple(values[i : i + size]) for i in range(0, len(values), size)]
             )
@@ -248,7 +248,7 @@ def test_memo_chunk_enumerator_order():
             chunk_keys.append(chunk_key)
         return chunk_keys
 
-    def memo_chunk_enumerator(axis_values):
+    def cache_chunk_enumerator(axis_values):
         return list(reversed(build_chunk_keys(axis_values)))
 
     def exec_fn_marker(params, strat, s):
@@ -261,16 +261,16 @@ def test_memo_chunk_enumerator_order():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec=memo_chunk_spec,
+            cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
             merge_fn=merge_markers,
-            memo_chunk_enumerator=memo_chunk_enumerator,
+            cache_chunk_enumerator=cache_chunk_enumerator,
         )
         params = {"alpha": 0.4}
         output, diag = memo_run(memo, params, exec_fn_marker)
         assert diag.executed_chunks == 4
         expected = []
-        for chunk_key in memo_chunk_enumerator(axis_values):
+        for chunk_key in cache_chunk_enumerator(axis_values):
             chunk_axes = {axis: list(values) for axis, values in chunk_key}
             expected.append(f"{chunk_axes['strat'][0]}-{chunk_axes['s'][0]}")
         assert output == expected
@@ -394,8 +394,8 @@ def test_load_from_cache():
         params = {"alpha": 0.4}
         output1, diag1 = memo.run(params, exec_fn_grid)
 
-        memo_hash = memo.memo_hash(params)
-        memo2 = ChunkCache.load_from_cache(temp_dir, memo_hash, merge_fn=merge_fn)
+        cache_hash = memo.cache_hash(params)
+        memo2 = ChunkCache.load_from_cache(temp_dir, cache_hash, merge_fn=merge_fn)
         output2, diag2 = memo2.run(params, exec_fn_grid)
 
         assert output1 == output2
@@ -414,7 +414,7 @@ def test_singleton_cache_basic():
         params = {"alpha": 0.4}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
         output, diag = memo.run(params, exec_fn_singleton)
@@ -429,7 +429,7 @@ def test_singleton_cache_reuse():
         params = {"alpha": 0.4}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
         output1, diag1 = memo.run(params, exec_fn_singleton)
@@ -445,7 +445,7 @@ def test_singleton_cache_param_change():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
         output1, diag1 = memo.run({"alpha": 0.4}, exec_fn_singleton)
@@ -461,7 +461,7 @@ def test_singleton_cache_no_axes_allowed():
         params = {"alpha": 0.4}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
 
@@ -477,7 +477,7 @@ def test_singleton_cache_streaming():
         params = {"alpha": 0.4}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
         diag1 = memo.run_streaming(params, exec_fn_singleton)
@@ -493,7 +493,7 @@ def test_singleton_via_regular_constructor():
         params = {"alpha": 0.4}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
             merge_fn=None,
         )
@@ -513,7 +513,7 @@ def test_exclusive_mode_exact_match():
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values,
             merge_fn=merge_fn,
             exclusive=True,
@@ -533,7 +533,7 @@ def test_exclusive_mode_rejects_different_chunking():
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
             merge_fn=merge_fn,
             exclusive=True,
@@ -549,7 +549,7 @@ def test_warn_on_overlap():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo1 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
             merge_fn=merge_fn,
         )
@@ -558,7 +558,7 @@ def test_warn_on_overlap():
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values={"strat": ["a"], "s": [1, 2, 3, 4]},
             merge_fn=merge_fn,
             warn_on_overlap=True,
@@ -566,40 +566,6 @@ def test_warn_on_overlap():
         with pytest.warns(UserWarning, match="Cache overlap detected"):
             output, diag = memo2.run(params, exec_fn_grid)
             assert diag.executed_chunks == 2
-
-
-def test_find_overlapping_caches():
-    with tempfile.TemporaryDirectory() as temp_dir:
-        memo1 = ChunkCache(
-            cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
-            axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
-            merge_fn=merge_fn,
-        )
-        params = {"alpha": 0.4}
-        memo1.run(params, exec_fn_grid)
-
-        overlapping = ChunkCache.find_overlapping_caches(
-            temp_dir,
-            params,
-            {"strat": ["a"], "s": [1, 2, 3, 4]},
-        )
-        assert len(overlapping) == 1
-        assert overlapping[0]["overlap"] == {"s": [1, 2, 3], "strat": ["a"]}
-
-        no_overlap = ChunkCache.find_overlapping_caches(
-            temp_dir,
-            params,
-            {"strat": ["c"], "s": [1, 2, 3]},
-        )
-        assert len(no_overlap) == 0
-
-        different_params = ChunkCache.find_overlapping_caches(
-            temp_dir,
-            {"alpha": 0.5},
-            {"strat": ["a"], "s": [1, 2, 3]},
-        )
-        assert len(different_params) == 0
 
 
 def test_auto_load_no_existing_creates_new():
@@ -617,7 +583,7 @@ def test_auto_load_finds_singleton():
         params = {"alpha": 0.4}
         memo1 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
         output1, diag1 = memo1.run(params, exec_fn_singleton)
@@ -653,14 +619,14 @@ def test_auto_load_ambiguous_no_axis_values():
         params = {"alpha": 0.4}
         memo1 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={},
+            cache_chunk_spec={},
             axis_values={},
         )
         memo1.run(params, exec_fn_singleton)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 1},
+            cache_chunk_spec={"strat": 1, "s": 1},
             axis_values={"strat": ["a", "b"], "s": [1, 2]},
             merge_fn=merge_fn,
         )
@@ -681,7 +647,7 @@ def test_auto_load_ambiguous_with_axis_values():
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 2, "s": 3},
+            cache_chunk_spec={"strat": 2, "s": 3},
             axis_values=axis_values,
             merge_fn=merge_fn,
         )
@@ -691,7 +657,7 @@ def test_auto_load_ambiguous_with_axis_values():
             ChunkCache.auto_load(temp_dir, params, axis_values=axis_values)
 
 
-def test_auto_load_with_memo_chunk_spec():
+def test_auto_load_with_cache_chunk_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
@@ -699,7 +665,7 @@ def test_auto_load_with_memo_chunk_spec():
             temp_dir,
             params,
             axis_values=axis_values,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             merge_fn=merge_fn,
         )
         output, diag = memo.run(params, exec_fn_grid)
@@ -726,7 +692,7 @@ def test_allow_superset_finds_superset_cache():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )
@@ -756,7 +722,7 @@ def test_allow_superset_false_requires_exact_match():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )
@@ -786,7 +752,7 @@ def test_allow_superset_multiple_supersets_raises_error():
 
         memo1 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values1,
             merge_fn=merge_fn,
         )
@@ -794,7 +760,7 @@ def test_allow_superset_multiple_supersets_raises_error():
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values2,
             merge_fn=merge_fn,
         )
@@ -818,7 +784,7 @@ def test_exclusive_prevents_subset_cache_creation():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
             exclusive=True,
@@ -849,7 +815,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
             exclusive=True,
@@ -879,7 +845,7 @@ def test_find_compatible_caches_with_allow_superset():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )
@@ -912,7 +878,7 @@ def test_allow_superset_no_superset_creates_new():
 
         memo_subset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_subset,
             merge_fn=merge_fn,
         )
@@ -942,7 +908,7 @@ def test_allow_superset_mixed_params_and_axes():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )
@@ -971,7 +937,7 @@ def test_allow_superset_partial_subset_match():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )
@@ -1000,7 +966,7 @@ def test_exclusive_prevents_redundant_subset():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
             exclusive=True,
@@ -1031,7 +997,7 @@ def test_allow_superset_with_different_params():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )
@@ -1060,7 +1026,7 @@ def test_allow_superset_multiple_axes_subset():
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 3},
+            cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             merge_fn=merge_fn,
         )

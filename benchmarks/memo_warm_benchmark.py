@@ -23,7 +23,7 @@ def run_warm_benchmark(*, n_points, chunk_size, repeats):
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"s": chunk_size},
+            cache_chunk_spec={"s": chunk_size},
             axis_values=axis_values,
             verbose=0,
         )

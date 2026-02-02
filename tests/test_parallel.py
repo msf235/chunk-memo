@@ -13,7 +13,7 @@ def test_memo_parallel_run_missing_only():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
 
@@ -50,7 +50,7 @@ def test_memo_parallel_run_with_memoized_cache_status():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
         memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3, 4])
@@ -90,7 +90,7 @@ def test_memo_parallel_run_cache_reuse():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
 
@@ -139,7 +139,7 @@ def test_parallel_run_populates_memo_cache():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
 
@@ -177,7 +177,7 @@ def test_parallel_run_streaming_populates_cache():
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
             cache_root=temp_dir,
-            memo_chunk_spec={"strat": 1, "s": 2},
+            cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
 
