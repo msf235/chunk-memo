@@ -245,7 +245,7 @@ class ChunkCache:
             axis_values = self._normalize_axes(axes)
         index_format = self._infer_index_format(axis_indices)
         chunk_keys = self._build_chunk_keys_for_axes(axis_values)
-        chunk_index = self._load_chunk_index(params)
+        chunk_index = self.load_chunk_index(params)
         use_index = bool(chunk_index)
         if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
@@ -256,12 +256,12 @@ class ChunkCache:
         missing_chunks: list[ChunkKey] = []
         missing_chunk_indices: list[dict[str, Any]] = []
         for chunk_key in chunk_keys:
-            chunk_hash = self._chunk_hash(params, chunk_key)
+            chunk_hash = self.chunk_hash(params, chunk_key)
             indices = self._chunk_indices_from_key(chunk_key, index_format)
             if use_index:
                 exists = chunk_hash in chunk_index
             else:
-                path = self._resolve_cache_path(params, chunk_key, chunk_hash)
+                path = self.resolve_cache_path(params, chunk_key, chunk_hash)
                 exists = path.exists()
             if exists:
                 cached_chunks.append(chunk_key)
@@ -284,7 +284,7 @@ class ChunkCache:
         }
         return cast(CacheStatus, payload)
 
-    def _prepare_run(
+    def prepare_run(
         self,
         params: dict[str, Any],
         axis_indices: Mapping[str, Any] | None = None,
@@ -312,7 +312,7 @@ class ChunkCache:
         chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
         return axis_values, chunk_keys, requested_items
 
-    def _resolve_cache_path(
+    def resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
     ) -> Path:
         return resolve_cache_path(
@@ -324,10 +324,10 @@ class ChunkCache:
             chunk_hash=chunk_hash,
         )
 
-    def _load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any]:
+    def load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any]:
         return load_chunk_index(self._memo_root(params))
 
-    def _update_chunk_index(
+    def update_chunk_index(
         self,
         params: dict[str, Any],
         chunk_hash: str,
@@ -347,11 +347,11 @@ class ChunkCache:
         axis_values = self._axis_values or {}
         return self._normalized_hash_params_for_axis_values(params, axis_values)
 
-    def _chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
+    def chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
         normalized = self._normalized_hash_params(params)
         return self.chunk_hash_fn(normalized, chunk_key, self.cache_version)
 
-    def _memo_hash(self, params: dict[str, Any]) -> str:
+    def memo_hash(self, params: dict[str, Any]) -> str:
         payload = {
             "params": self._normalized_hash_params(params),
             "axis_values": self._axis_values_serializable,
@@ -474,7 +474,7 @@ class ChunkCache:
         return overlap
 
     def _memo_root(self, params: dict[str, Any]) -> Path:
-        return self.cache_root / self._memo_hash(params)
+        return self.cache_root / self.memo_hash(params)
 
     def write_metadata(self, params: dict[str, Any]) -> Path:
         memo_root = self._memo_root(params)
@@ -497,7 +497,7 @@ class ChunkCache:
             "memo_chunk_spec": self.memo_chunk_spec,
             "cache_version": self.cache_version,
             "axis_order": self.axis_order,
-            "memo_hash": self._memo_hash(params),
+            "memo_hash": self.memo_hash(params),
         }
         _atomic_write_json(path, payload)
         return path
@@ -521,7 +521,7 @@ class ChunkCache:
         axis_values = self._axis_values_from_cache_status(cache_status)
         return self._resolve_axis_order(dict(axis_values))
 
-    def _expand_cache_status(
+    def expand_cache_status(
         self, cache_status: Mapping[str, Any]
     ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]:
         axis_values = self._axis_values_from_cache_status(cache_status)
@@ -806,7 +806,7 @@ class ChunkCache:
             requested_items[chunk_key] = item_values
         return chunk_keys, requested_items
 
-    def _build_item_maps_from_axis_values(
+    def build_item_maps_from_axis_values(
         self,
         chunk_key: ChunkKey,
         axis_values: Sequence[Tuple[Any, ...]],
@@ -816,7 +816,7 @@ class ChunkCache:
         item_map: dict[str, Any] = {}
         item_axis_vals: dict[str, dict[str, Any]] = {}
         for values, output in zip(axis_values, outputs):
-            item_key = self._item_hash(chunk_key, values)
+            item_key = self.item_hash(chunk_key, values)
             item_map[item_key] = output
             item_axis_vals[item_key] = dict(zip(axis_names, values))
         return item_map, item_axis_vals
@@ -827,7 +827,7 @@ class ChunkCache:
         axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
         if axis_values is None:
             return None
-        item_map, _ = self._build_item_maps_from_axis_values(
+        item_map, _ = self.build_item_maps_from_axis_values(
             chunk_key,
             axis_values,
             chunk_output,
@@ -840,7 +840,7 @@ class ChunkCache:
         axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
         if axis_values is None:
             return None
-        _, item_axis_vals = self._build_item_maps_from_axis_values(
+        _, item_axis_vals = self.build_item_maps_from_axis_values(
             chunk_key,
             axis_values,
             chunk_output,
@@ -857,7 +857,7 @@ class ChunkCache:
             return None
         return axis_values
 
-    def _reconstruct_output_from_items(
+    def reconstruct_output_from_items(
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
     ) -> list[Any] | None:
         axis_values = list(self._iter_chunk_axis_values(chunk_key))
@@ -865,7 +865,7 @@ class ChunkCache:
             return None
         outputs: list[Any] = []
         for values in axis_values:
-            item_key = self._item_hash(chunk_key, values)
+            item_key = self.item_hash(chunk_key, values)
             if item_key not in items:
                 return None
             outputs.append(items[item_key])
@@ -878,9 +878,9 @@ class ChunkCache:
         requested_items: list[Tuple[Any, ...]],
     ) -> list[Any] | None:
         item_map = payload.get("items")
-        return self._extract_items_from_map(item_map, chunk_key, requested_items)
+        return self.extract_items_from_map(item_map, chunk_key, requested_items)
 
-    def _extract_items_from_map(
+    def extract_items_from_map(
         self,
         item_map: Mapping[str, Any] | None,
         chunk_key: ChunkKey,
@@ -890,13 +890,13 @@ class ChunkCache:
             return None
         outputs: list[Any] = []
         for values in requested_items:
-            item_key = self._item_hash(chunk_key, values)
+            item_key = self.item_hash(chunk_key, values)
             if item_key not in item_map:
                 return None
             outputs.append(item_map[item_key])
         return outputs
 
-    def _item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str:
+    def item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str:
         payload = {
             "axis_values": tuple(
                 (axis, value) for (axis, _), value in zip(chunk_key, axis_values)
@@ -910,14 +910,14 @@ class ChunkCache:
         axis_values = [values for _, values in chunk_key]
         return list(itertools.product(*axis_values))
 
-    def _load_payload(self, path: Path) -> dict[str, Any] | None:
+    def load_payload(self, path: Path) -> dict[str, Any] | None:
         if not path.exists():
             return None
         with open(path, "rb") as handle:
             payload = pickle.load(handle)
         return cast(dict[str, Any], payload)
 
-    def _load_cached_output(
+    def load_cached_output(
         self,
         payload: Mapping[str, Any],
         chunk_key: ChunkKey,
@@ -929,7 +929,7 @@ class ChunkCache:
             if chunk_output is None:
                 items = payload.get("items")
                 if items is not None:
-                    chunk_output = self._reconstruct_output_from_items(chunk_key, items)
+                    chunk_output = self.reconstruct_output_from_items(chunk_key, items)
             if chunk_output is None:
                 raise ValueError("Cache payload missing required data")
             return chunk_output
@@ -941,18 +941,6 @@ class ChunkCache:
         if cached_outputs is None:
             return None
         return collate_fn([cached_outputs])
-
-    def _ensure_item_map(
-        self, payload: Mapping[str, Any], chunk_key: ChunkKey, path: Path
-    ) -> Mapping[str, Any] | None:
-        item_map = payload.get("items")
-        if item_map is None:
-            item_map = self._build_item_map(chunk_key, payload.get("output"))
-            if item_map is not None:
-                payload_dict = cast(dict[str, Any], payload)
-                payload_dict["items"] = item_map
-                _atomic_write_pickle(path, payload_dict)
-        return item_map
 
     def _collect_indexed_callable_values(
         self, axis_values_obj: Callable[[int], Any]
@@ -1499,6 +1487,8 @@ class ChunkMemo:
         )
 
     def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
         return getattr(self.cache, name)
 
     @property
@@ -1513,7 +1503,7 @@ class ChunkMemo:
     def merge_fn(self) -> MergeFn | None:
         return self.cache.merge_fn
 
-    def _prepare_run(
+    def prepare_run(
         self,
         params: dict[str, Any],
         axis_indices: Mapping[str, Any] | None = None,
@@ -1523,7 +1513,7 @@ class ChunkMemo:
         list[ChunkKey],
         Mapping[ChunkKey, list[Tuple[Any, ...]]] | None,
     ]:
-        return self.cache._prepare_run(params, axis_indices, **axes)
+        return self.cache.prepare_run(params, axis_indices, **axes)
 
     def cache_status(
         self,
@@ -1534,105 +1524,71 @@ class ChunkMemo:
     ) -> CacheStatus:
         return self.cache.cache_status(params, axis_indices=axis_indices, **axes)
 
-    def _chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
-        return self.cache._chunk_hash(params, chunk_key)
+    def chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
+        return self.cache.chunk_hash(params, chunk_key)
 
-    def _resolve_cache_path(
+    def resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
     ) -> Path:
-        return self.cache._resolve_cache_path(params, chunk_key, chunk_hash)
+        return self.cache.resolve_cache_path(params, chunk_key, chunk_hash)
 
-    def _load_payload(self, path: Path) -> dict[str, Any] | None:
-        return self.cache._load_payload(path)
+    def load_payload(self, path: Path) -> dict[str, Any] | None:
+        return self.cache.load_payload(path)
 
-    def _load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any]:
-        return self.cache._load_chunk_index(params)
+    def load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any] | None:
+        return self.cache.load_chunk_index(params)
 
-    def _update_chunk_index(
+    def update_chunk_index(
         self, params: dict[str, Any], chunk_hash: str, chunk_key: ChunkKey
     ) -> None:
-        self.cache._update_chunk_index(params, chunk_hash, chunk_key)
+        self.cache.update_chunk_index(params, chunk_hash, chunk_key)
 
-    def _build_item_map(
-        self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> dict[str, Any] | None:
-        return self.cache._build_item_map(chunk_key, chunk_output)
-
-    def _build_item_axis_vals_map(
-        self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> dict[str, dict[str, Any]] | None:
-        return self.cache._build_item_axis_vals_map(chunk_key, chunk_output)
-
-    def _build_item_maps_from_axis_values(
+    def build_item_maps_from_axis_values(
         self,
         chunk_key: ChunkKey,
         axis_values: Sequence[Tuple[Any, ...]],
         outputs: Sequence[Any],
     ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-        return self.cache._build_item_maps_from_axis_values(
+        return self.cache.build_item_maps_from_axis_values(
             chunk_key,
             axis_values,
             outputs,
         )
 
-    def _extract_items_from_map(
+    def extract_items_from_map(
         self,
         item_map: Mapping[str, Any] | None,
         chunk_key: ChunkKey,
         requested_items: list[Tuple[Any, ...]],
     ) -> list[Any] | None:
-        return self.cache._extract_items_from_map(
-            item_map,
-            chunk_key,
-            requested_items,
-        )
+        return self.cache.extract_items_from_map(item_map, chunk_key, requested_items)
 
-    def _reconstruct_output_from_items(
+    def reconstruct_output_from_items(
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
     ) -> list[Any] | None:
-        return self.cache._reconstruct_output_from_items(chunk_key, items)
+        return self.cache.reconstruct_output_from_items(chunk_key, items)
 
-    def _ensure_item_map(
-        self, payload: Mapping[str, Any], chunk_key: ChunkKey, path: Path
-    ) -> Mapping[str, Any] | None:
-        return self.cache._ensure_item_map(payload, chunk_key, path)
-
-    def _load_cached_output(
+    def load_cached_output(
         self,
         payload: Mapping[str, Any],
         chunk_key: ChunkKey,
         requested_items: list[Tuple[Any, ...]] | None,
         collate_fn: Callable[[list[Any]], Any],
     ) -> Any | None:
-        return self.cache._load_cached_output(
+        return self.cache.load_cached_output(
             payload,
             chunk_key,
             requested_items,
             collate_fn,
         )
 
-    def _item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str:
-        return self.cache._item_hash(chunk_key, axis_values)
+    def item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str:
+        return self.cache.item_hash(chunk_key, axis_values)
 
-    def _axis_values_from_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        return self.cache._axis_values_from_cache_status(cache_status)
-
-    def _axis_order_for_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> Tuple[str, ...]:
-        return self.cache._axis_order_for_cache_status(cache_status)
-
-    def _axis_chunk_maps(
-        self, axis_values: Mapping[str, Any], axis_order: Sequence[str]
-    ) -> dict[str, dict[Any, int]]:
-        return self.cache._axis_chunk_maps(axis_values, axis_order)
-
-    def _expand_cache_status(
+    def expand_cache_status(
         self, cache_status: Mapping[str, Any]
     ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]:
-        return self.cache._expand_cache_status(cache_status)
+        return self.cache.expand_cache_status(cache_status)
 
     def write_metadata(self, params: dict[str, Any]) -> Path:
         return self.cache.write_metadata(params)
