@@ -78,6 +78,19 @@ def _stream_item_count(output: Any) -> int:
     return 1
 
 
+def _format_item_count(count: int | None) -> str:
+    return "all" if count is None else str(count)
+
+
+def _log_chunk(
+    memo: MemoRunnerBackend, action: str, chunk_key: ChunkKey, item_count: int | None
+) -> None:
+    if memo.verbose >= 2:
+        print_detail(
+            f"[ShardMemo] {action} chunk={chunk_key} items={_format_item_count(item_count)}"
+        )
+
+
 def _payload_item_map(
     memo: MemoRunnerBackend,
     chunk_key: ChunkKey,
@@ -327,8 +340,7 @@ def _scan_cached_chunk_items(
             continue
         if full_chunk and not load_full_chunk_payload:
             diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+            _log_chunk(memo, "load", chunk_key, None)
             report_progress(processed, processed == total_chunks)
             continue
         payload = memo.load_payload(path)
@@ -337,8 +349,7 @@ def _scan_cached_chunk_items(
             continue
         if full_chunk:
             diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+            _log_chunk(memo, "load", chunk_key, None)
             if outputs is not None and collate_fn is not None:
                 chunk_output = payload.get("output")
                 if chunk_output is None:
@@ -372,10 +383,7 @@ def _scan_cached_chunk_items(
                 item_outputs.append(item_map[item_key])
         if not missing:
             diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(
-                    f"[ShardMemo] load chunk={chunk_key} items={len(chunk_items)}"
-                )
+            _log_chunk(memo, "load", chunk_key, len(chunk_items))
             if outputs is not None and collate_fn is not None and item_outputs:
                 outputs.append(collate_fn(item_outputs))
         report_progress(processed, processed == total_chunks)
@@ -577,6 +585,15 @@ def _extract_axis_values(
     return [axis_extractor(item) for item in items]
 
 
+def _merge_outputs(
+    memo: MemoRunnerBackend, outputs: list[Any], diagnostics: Diagnostics
+) -> Any:
+    diagnostics.merges += 1
+    if memo.merge_fn is not None:
+        return memo.merge_fn(outputs)
+    return outputs
+
+
 def _load_chunk_payload(
     cache: MemoRunnerBackend,
     params: dict[str, Any],
@@ -703,9 +720,11 @@ def run_chunks(
     def process_chunk(chunk_key: ChunkKey, processed: int) -> tuple[Any, bool, bool]:
         chunk_hash, path, payload = _load_chunk_payload(cache, params, chunk_key)
         existing_payload = payload
-        requested_items = None
-        if requested_items_by_chunk is not None:
-            requested_items = requested_items_by_chunk.get(chunk_key)
+        requested_items = (
+            requested_items_by_chunk.get(chunk_key)
+            if requested_items_by_chunk is not None
+            else None
+        )
         if payload is not None:
             cached_output = cache.collect_chunk_data(
                 payload,
@@ -714,14 +733,12 @@ def run_chunks(
                 collate_fn,
             )
             if cached_output is not None:
-                if cache.verbose >= 2:
-                    if requested_items is None:
-                        item_count = "all"
-                    else:
-                        item_count = len(requested_items)
-                    print_detail(
-                        f"[ShardMemo] load chunk={chunk_key} items={item_count}"
-                    )
+                _log_chunk(
+                    cache,
+                    "load",
+                    chunk_key,
+                    None if requested_items is None else len(requested_items),
+                )
                 return cached_output, True, False
 
         chunk_output, item_map = execute_and_save_chunk(
@@ -734,19 +751,10 @@ def run_chunks(
             existing_payload,
         )
 
-        if requested_items_by_chunk is None:
-            if cache.verbose >= 2:
-                print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
-            return chunk_output, False, False
-        requested_items = requested_items_by_chunk.get(chunk_key)
         if requested_items is None:
-            if cache.verbose >= 2:
-                print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
+            _log_chunk(cache, "run", chunk_key, None)
             return chunk_output, False, False
-        if cache.verbose >= 2:
-            print_detail(
-                f"[ShardMemo] run chunk={chunk_key} items={len(requested_items)}"
-            )
+        _log_chunk(cache, "run", chunk_key, len(requested_items))
         extracted = cache.extract_items_from_map(
             item_map,
             chunk_key,
@@ -764,11 +772,7 @@ def run_chunks(
         outputs.append(output)
         report_progress(processed, processed == total_chunks)
 
-    diagnostics.merges += 1
-    if cache.merge_fn is not None:
-        merged = cache.merge_fn(outputs)
-    else:
-        merged = outputs
+    merged = _merge_outputs(cache, outputs, diagnostics)
     print_chunk_summary(diagnostics, cache.verbose)
     return merged, diagnostics
 
@@ -792,8 +796,7 @@ def run_chunks_streaming(
         if payload is not None:
             if requested_items_by_chunk is None:
                 diagnostics.cached_chunks += 1
-                if cache.verbose >= 2:
-                    print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+                _log_chunk(cache, "load", chunk_key, None)
                 report_progress(processed, processed == total_chunks)
                 continue
             item_map = _payload_item_map(
@@ -806,14 +809,13 @@ def run_chunks_streaming(
             )
             if item_map is not None:
                 diagnostics.cached_chunks += 1
-                if cache.verbose >= 2:
-                    requested_items = requested_items_by_chunk.get(chunk_key)
-                    item_count = (
-                        "all" if requested_items is None else len(requested_items)
-                    )
-                    print_detail(
-                        f"[ShardMemo] load chunk={chunk_key} items={item_count}"
-                    )
+                requested_items = requested_items_by_chunk.get(chunk_key)
+                _log_chunk(
+                    cache,
+                    "load",
+                    chunk_key,
+                    None if requested_items is None else len(requested_items),
+                )
                 report_progress(processed, processed == total_chunks)
                 continue
 
@@ -827,13 +829,17 @@ def run_chunks_streaming(
             None,
         )
 
-        if cache.verbose >= 2:
-            if requested_items_by_chunk is None:
-                print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
-            else:
-                requested_items = requested_items_by_chunk.get(chunk_key)
-                item_count = "all" if requested_items is None else len(requested_items)
-                print_detail(f"[ShardMemo] run chunk={chunk_key} items={item_count}")
+        requested_items = (
+            requested_items_by_chunk.get(chunk_key)
+            if requested_items_by_chunk is not None
+            else None
+        )
+        _log_chunk(
+            cache,
+            "run",
+            chunk_key,
+            None if requested_items is None else len(requested_items),
+        )
 
         report_progress(processed, processed == total_chunks)
 
@@ -985,19 +991,14 @@ def memo_parallel_run(
                 missing_chunks,
                 lambda: item_axis_vals,
             )
-            if memo.verbose >= 2:
-                print_detail(f"[ShardMemo] run chunk={chunk_key} items={chunk_size}")
+            _log_chunk(memo, "run", chunk_key, chunk_size)
             outputs.append(chunk_output)
             cursor += chunk_size
             report_progress_main(
                 base_index + len(missing_chunks),
                 (base_index + len(missing_chunks)) == total_chunks,
             )
-    diagnostics.merges += 1
-    if memo.merge_fn is not None:
-        merged = memo.merge_fn(outputs)
-    else:
-        merged = outputs
+    merged = _merge_outputs(memo, outputs, diagnostics)
     if not merged and item_list:
         merged = exec_outputs if missing_items else []
     print_chunk_summary(diagnostics, memo.verbose)
@@ -1188,10 +1189,7 @@ def memo_parallel_run_streaming(
                 lambda: item_axis_vals,
             )
             diagnostics.stream_flushes += 1
-            if memo.verbose >= 2:
-                print_detail(
-                    f"[ShardMemo] run chunk={chunk_key} items={len(chunk_items)}"
-                )
+            _log_chunk(memo, "run", chunk_key, len(chunk_items))
             current_buffer_items -= len(chunk_items)
             buffers.pop(chunk_key, None)
 

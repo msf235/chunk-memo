@@ -225,7 +225,9 @@ Executes missing chunks and flushes them to disk without returning outputs.
 ### run_wrap (memoized wrapper)
 
 ```python
-@memo.run_wrap()
+wrapper = ChunkMemo(memo)
+
+@wrapper.run_wrap()
 def exec_point(params, strat, s, extra=1):
     ...
 
@@ -243,7 +245,9 @@ output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
 ### streaming_wrap (memoized streaming wrapper)
 
 ```python
-@memo.streaming_wrap()
+wrapper = ChunkMemo(memo)
+
+@wrapper.streaming_wrap()
 def exec_point(params, strat, s):
     ...
 

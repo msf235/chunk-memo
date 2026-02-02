@@ -4,7 +4,7 @@ import time
 
 import pytest  # type: ignore[import-not-found]
 
-from shard_memo import ChunkCache
+from shard_memo import ChunkCache, ChunkMemo
 from shard_memo.runners import run as memo_run
 from shard_memo.runners import run_streaming as memo_run_streaming
 
@@ -135,8 +135,9 @@ def test_run_wrap_positional_params():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
+        wrapper = ChunkMemo(memo)
 
-        exec_point = memo.run_wrap()(exec_point_extra_default)
+        exec_point = wrapper.run_wrap()(exec_point_extra_default)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
@@ -147,8 +148,9 @@ def test_run_wrap_executes_with_axis_values():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
+        wrapper = ChunkMemo(memo)
 
-        exec_point = memo.run_wrap()(exec_fn_grid)
+        exec_point = wrapper.run_wrap()(exec_fn_grid)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
@@ -159,8 +161,9 @@ def test_run_wrap_param_merge():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
+        wrapper = ChunkMemo(memo)
 
-        exec_point = memo.run_wrap()(exec_point_extra_param)
+        exec_point = wrapper.run_wrap()(exec_point_extra_param)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=3)
         assert diag.executed_chunks == 1
@@ -188,8 +191,9 @@ def test_run_wrap_duplicate_params_arg():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
+        wrapper = ChunkMemo(memo)
 
-        exec_point = memo.run_wrap()(exec_fn_grid)
+        exec_point = wrapper.run_wrap()(exec_fn_grid)
         params = {"alpha": 0.4}
         with pytest.raises(ValueError, match="both positional and keyword"):
             exec_point(params, params=params, strat=["a"], s=[1, 2, 3])

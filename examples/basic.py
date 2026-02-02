@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from shard_memo import ChunkCache, memo_parallel_run
+from shard_memo import ChunkCache, ChunkMemo, memo_parallel_run
 from shard_memo.runners import run
 
 
@@ -44,7 +44,8 @@ def main():
     print("Output:", output)
     print("Diagnostics:", diag)
 
-    memoized_exec = memo.run_wrap()(exec_fn)
+    wrapper = ChunkMemo(memo)
+    memoized_exec = wrapper.run_wrap()(exec_fn)
     wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3, 4])
     print("Wrapped output:", wrapped_output)
     print("Wrapped diagnostics:", wrapped_diag)

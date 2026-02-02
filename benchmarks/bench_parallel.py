@@ -19,28 +19,27 @@ def exec_fn(params, s):
 
 
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
+    start_case = time.perf_counter()
     axis_values = {"s": list(range(n_points))}
     cache_root = root / f"exec_{exec_chunk_size}" / scenario
     memo = ChunkCache(
         cache_root=str(cache_root),
         cache_chunk_spec={"s": 100},
         axis_values=axis_values,
+        verbose=0,
     )
 
     params = {"sleep_s": sleep_s}
     if scenario == "half":
-        run(
-            memo,
-            params,
-            exec_fn=exec_fn,
-            s=axis_values["s"][: n_points // 2],
-        )
+        s_vals = axis_values["s"][: n_points // 2]
+        run(memo, params, exec_fn, s=s_vals)
     elif scenario == "warm":
         run(memo, params, exec_fn)
 
     status = memo.cache_status(params, s=axis_values["s"])
 
     items = [{"s": value} for value in axis_values["s"]]
+    load_time = time.perf_counter() - start_case
     start = time.perf_counter()
     with ProcessPoolExecutor(max_workers=8) as executor:
         memo_parallel_run(
@@ -51,9 +50,11 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
             map_fn=executor.map,
             map_fn_kwargs={"chunksize": exec_chunk_size},
         )
-    run_time = time.perf_counter() - start
+    end_time = time.perf_counter()
+    run_time = end_time - start
+    all_time = end_time - start_case
 
-    return run_time
+    return run_time, load_time, all_time
 
 
 def main():
@@ -74,10 +75,15 @@ def main():
 
     for exec_chunk_size in [1, 10]:
         for scenario in ["cold", "half", "warm"]:
-            run_time = run_case(root, n_points, sleep_s, exec_chunk_size, scenario)
+            run_time, load_time, all_time = run_case(
+                root, n_points, sleep_s, exec_chunk_size, scenario
+            )
             print(
-                f"scenario={scenario:4s} chunksize={exec_chunk_size:4d} "
-                f"run_time_s: {run_time:10.3f}"
+                f"scenario={scenario:4s} chunksize={exec_chunk_size:4d} ",
+                "\t",
+                f"run_time_s: {run_time:7.3f}",
+                "\t",
+                f"load_time_s: {load_time:7.3f}",
             )
 
 

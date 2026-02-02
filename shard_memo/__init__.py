@@ -1,6 +1,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
-from .memo import ChunkCache
+from .cache import ChunkCache
+from .memo import ChunkMemo
 from .runner_protocol import (
     CacheStatus,
     MemoRunnerBackend,
@@ -24,6 +25,7 @@ except PackageNotFoundError:
 
 __all__ = [
     "ChunkCache",
+    "ChunkMemo",
     "Diagnostics",
     "__version__",
     "auto_load",
