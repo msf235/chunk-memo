@@ -272,7 +272,7 @@ class ChunkCache:
         else:
             axis_values = self._normalize_axes(axes)
         index_format = self._infer_index_format(axis_indices)
-        chunk_keys = self._build_chunk_keys_for_axes(axis_values)
+        chunk_keys = self._build_chunk_keys(axis_values)
         chunk_index = self.load_chunk_index(params)
         use_index = bool(chunk_index)
         if self.profile and self.verbose >= 1 and profile_start is not None:
@@ -666,10 +666,32 @@ class ChunkCache:
                 resolved.append(index)
         return resolved
 
-    def _build_chunk_keys(self) -> list[ChunkKey]:
-        if self._axis_values is None:
-            raise ValueError("axis_values must be set before running memoized function")
-        return self._build_chunk_keys_for_axes(self._axis_values)
+    def _build_chunk_keys(
+        self, axis_values: Mapping[str, Sequence[Any]] | None = None
+    ) -> list[ChunkKey]:
+        if axis_values is None:
+            if self._axis_values is None:
+                raise ValueError(
+                    "axis_values must be set before running memoized function"
+                )
+            axis_values = self._axis_values
+        if self.memo_chunk_enumerator is not None:
+            if self._axis_values_serializable is not None:
+                return list(
+                    self.memo_chunk_enumerator(dict(self._axis_values_serializable))
+                )
+            return list(self.memo_chunk_enumerator(dict(axis_values)))
+
+        axis_order, ordered = self._ordered_axis_values(axis_values)
+        axis_chunks = [_chunk_values(values, size) for _, values, size in ordered]
+
+        chunk_keys: list[ChunkKey] = []
+        for product in itertools.product(*axis_chunks):
+            chunk_key = tuple(
+                (axis, tuple(values)) for axis, values in zip(axis_order, product)
+            )
+            chunk_keys.append(chunk_key)
+        return chunk_keys
 
     def _chunk_indices_from_key(
         self, chunk_key: ChunkKey, index_format: Mapping[str, str] | None
@@ -745,27 +767,6 @@ class ChunkCache:
         start = indices[0]
         stop = indices[-1] + step
         return range(start, stop, step) if kind == "range" else slice(start, stop, step)
-
-    def _build_chunk_keys_for_axes(
-        self, axis_values: Mapping[str, Sequence[Any]]
-    ) -> list[ChunkKey]:
-        if self.memo_chunk_enumerator is not None:
-            if self._axis_values_serializable is not None:
-                return list(
-                    self.memo_chunk_enumerator(dict(self._axis_values_serializable))
-                )
-            return list(self.memo_chunk_enumerator(dict(axis_values)))
-
-        axis_order, ordered = self._ordered_axis_values(axis_values)
-        axis_chunks = [_chunk_values(values, size) for _, values, size in ordered]
-
-        chunk_keys: list[ChunkKey] = []
-        for product in itertools.product(*axis_chunks):
-            chunk_key = tuple(
-                (axis, tuple(values)) for axis, values in zip(axis_order, product)
-            )
-            chunk_keys.append(chunk_key)
-        return chunk_keys
 
     def _build_chunk_plan_for_axes(
         self, axis_values: Mapping[str, Sequence[Any]]
