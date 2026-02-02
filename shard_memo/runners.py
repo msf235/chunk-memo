@@ -7,10 +7,17 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
 
-from ._format import chunk_key_size, format_rate_eta, print_detail, print_progress
+from ._format import (
+    build_plan_lines,
+    chunk_key_size,
+    format_rate_eta,
+    prepare_progress,
+    print_chunk_summary,
+    print_detail,
+    print_progress,
+)
 from .cache_utils import _apply_payload_timestamps, _atomic_write_pickle
 from .runner_protocol import CacheStatus, MemoRunnerBackend
-from .run_utils import build_plan_lines, prepare_progress, print_chunk_summary
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MergeFn = Callable[[list[Any]], Any]
@@ -73,29 +80,6 @@ def _stream_item_count(output: Any) -> int:
     return 1
 
 
-def _iter_chunk_axis_values(chunk_key: ChunkKey) -> list[Tuple[Any, ...]]:
-    axis_values = [values for _, values in chunk_key]
-    return list(itertools.product(*axis_values))
-
-
-def _build_item_maps_from_chunk_output(
-    memo: MemoRunnerBackend,
-    chunk_key: ChunkKey,
-    chunk_output: Any,
-) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
-    if not isinstance(chunk_output, (list, tuple)):
-        return None, None
-    axis_values = _iter_chunk_axis_values(chunk_key)
-    if len(axis_values) != len(chunk_output):
-        return None, None
-    item_map, item_axis_vals = memo.build_item_maps_from_axis_values(
-        chunk_key,
-        axis_values,
-        chunk_output,
-    )
-    return item_map, item_axis_vals
-
-
 def _payload_item_map(
     memo: MemoRunnerBackend,
     chunk_key: ChunkKey,
@@ -107,10 +91,9 @@ def _payload_item_map(
     item_map = payload.get("items")
     item_axis_vals = None
     if item_map is None:
-        item_map, item_axis_vals = _build_item_maps_from_chunk_output(
-            memo,
+        item_map, item_axis_vals = memo.build_item_maps_from_chunk_output(
             chunk_key,
-            payload.get("output"),
+            chunk_output=payload.get("output"),
         )
         if item_map is not None:
             payload["items"] = item_map
@@ -596,10 +579,9 @@ def execute_and_save_chunk(
         _stream_item_count(chunk_output),
     )
     payload: dict[str, Any] = {}
-    item_map, item_axis_vals = _build_item_maps_from_chunk_output(
-        cache,
+    item_map, item_axis_vals = cache.build_item_maps_from_chunk_output(
         chunk_key,
-        chunk_output,
+        chunk_output=chunk_output,
     )
     if item_map is not None:
         payload["items"] = item_map

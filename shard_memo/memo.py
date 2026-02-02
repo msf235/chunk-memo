@@ -14,9 +14,9 @@ from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 from .cache_index import load_chunk_index, update_chunk_index
 from .cache_layout import resolve_cache_path
 from .cache_utils import (
+    _apply_payload_timestamps,
     _atomic_write_json,
     _atomic_write_pickle,
-    _now_iso,
 )
 from .runner_protocol import CacheStatus, MemoRunnerBackend
 from .runners import Diagnostics, run, run_streaming
@@ -518,12 +518,7 @@ class ChunkCache:
                     existing_meta = json.load(handle)
             except json.JSONDecodeError:
                 existing_meta = None
-        created_at = None if existing_meta is None else existing_meta.get("created_at")
-        if created_at is None:
-            created_at = _now_iso()
         payload = {
-            "created_at": created_at,
-            "updated_at": _now_iso(),
             "params": self._normalized_hash_params(params),
             "axis_values": self._axis_values_serializable,
             "memo_chunk_spec": self.memo_chunk_spec,
@@ -531,6 +526,7 @@ class ChunkCache:
             "axis_order": self.axis_order,
             "memo_hash": self.memo_hash(params),
         }
+        _apply_payload_timestamps(payload, existing=existing_meta)
         _atomic_write_json(path, payload)
         return path
 
@@ -840,6 +836,22 @@ class ChunkCache:
             item_map[item_key] = output
             item_axis_vals[item_key] = dict(zip(axis_names, values))
         return item_map, item_axis_vals
+
+    def build_item_maps_from_chunk_output(
+        self,
+        chunk_key: ChunkKey,
+        chunk_output: Any,
+    ) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
+        if not isinstance(chunk_output, (list, tuple)):
+            return None, None
+        axis_values = list(self.iter_chunk_axis_values(chunk_key))
+        if len(axis_values) != len(chunk_output):
+            return None, None
+        return self.build_item_maps_from_axis_values(
+            chunk_key,
+            axis_values,
+            chunk_output,
+        )
 
     def reconstruct_output_from_items(
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
