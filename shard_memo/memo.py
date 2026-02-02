@@ -611,6 +611,7 @@ class ChunkCache:
         return self._normalize_axis_values(axes or {})
 
     def _normalize_axis_values(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
+        """Normalize axis value selections into full axis lists."""
         if self._axis_values is None or self._axis_index_map is None:
             raise ValueError("axis_values must be set before running memoized function")
         axis_values: dict[str, list[Any]] = {}
