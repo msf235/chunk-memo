@@ -87,9 +87,8 @@ def _payload_item_map(
     *,
     path: Path | None = None,
     write_back: bool = False,
-) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
+) -> dict[str, Any] | None:
     item_map = payload.get("items")
-    item_axis_vals = None
     if item_map is None:
         item_map, item_axis_vals = memo.build_item_maps_from_chunk_output(
             chunk_key,
@@ -101,16 +100,14 @@ def _payload_item_map(
                 payload["axis_vals"] = item_axis_vals
             if write_back and path is not None:
                 _atomic_write_pickle(path, payload)
-    return item_map, item_axis_vals
+    return item_map
 
 
 def _save_chunk_payload(
     memo: MemoRunnerBackend,
     params_dict: dict[str, Any],
     chunk_key: ChunkKey,
-    chunk_items: list[Any],
     chunk_output: Any,
-    axis_extractor: Callable[[Any], tuple[Any, ...]],
     item_map: dict[str, Any] | None,
     cached_payloads: dict[ChunkKey, Mapping[str, Any]],
     diagnostics: Diagnostics,
@@ -708,7 +705,7 @@ def run_chunks_streaming(
                     print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
                 report_progress(processed, processed == total_chunks)
                 continue
-            item_map, _ = _payload_item_map(
+            item_map = _payload_item_map(
                 cache,
                 chunk_key,
                 payload,
@@ -852,7 +849,7 @@ def memo_parallel_run(
             outputs.append(chunk_output)
             report_progress_main(processed, processed == total_chunks)
             continue
-        item_map, _ = _payload_item_map(memo, chunk_key, payload)
+        item_map = _payload_item_map(memo, chunk_key, payload)
         if item_map is None:
             cached_payloads[chunk_key] = payload
             tracker.register(chunk_key, chunk_items)
@@ -929,9 +926,7 @@ def memo_parallel_run(
                 memo,
                 params_dict,
                 chunk_key,
-                chunk_items,
                 chunk_output,
-                axis_extractor,
                 item_map,
                 cached_payloads,
                 diagnostics,
@@ -1069,7 +1064,7 @@ def memo_parallel_run_streaming(
         if payload is None:
             tracker.register(chunk_key, chunk_items)
             continue
-        item_map, _ = _payload_item_map(memo, chunk_key, payload)
+        item_map = _payload_item_map(memo, chunk_key, payload)
         if item_map is None:
             cached_payloads[chunk_key] = payload
             tracker.register(chunk_key, chunk_items)
@@ -1164,9 +1159,7 @@ def memo_parallel_run_streaming(
                 memo,
                 params_dict,
                 chunk_key,
-                chunk_items,
                 chunk_output,
-                axis_extractor,
                 item_map,
                 cached_payloads,
                 diagnostics,
