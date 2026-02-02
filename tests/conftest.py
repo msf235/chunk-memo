@@ -33,7 +33,6 @@ class _StartTime:
 
 
 _ORIGINAL_INIT = _ChunkMemo.__init__
-_ORIGINAL_RUN = _ChunkMemo.run
 
 
 def _wrap_chunk_init(start_time):
@@ -50,27 +49,14 @@ def _wrap_chunk_init(start_time):
     return wrapped_init
 
 
-def _wrap_chunk_run(start_time):
-    def wrapped_run(self, params, exec_fn, *args, **kwargs):
-        elapsed = time.perf_counter() - start_time
-        prefix = f"[{elapsed:8.3f}s] "
-        axis_values = getattr(self, "_axis_values", None)
-        print(f"{prefix}axis_values {axis_values}")
-        return _ORIGINAL_RUN(self, params, exec_fn, *args, **kwargs)
-
-    return wrapped_run
-
-
 def pytest_runtest_setup(item):
     item._swarm_test_start = time.perf_counter()
     print(f"\n=== {item.name} ===")
     _ChunkMemo.__init__ = _wrap_chunk_init(item._swarm_test_start)
-    _ChunkMemo.run = _wrap_chunk_run(item._swarm_test_start)
 
 
 def pytest_runtest_teardown(item):
     _ChunkMemo.__init__ = _ORIGINAL_INIT
-    _ChunkMemo.run = _ORIGINAL_RUN
     for attr in ("_swarm_stdout", "_swarm_stderr"):
         stream = getattr(item, attr, None)
         if stream is None:

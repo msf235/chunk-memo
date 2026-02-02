@@ -9,35 +9,22 @@ import pickle
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, Tuple
+from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
-from ._format import chunk_key_size, print_detail
 from .cache_index import load_chunk_index, update_chunk_index
 from .cache_layout import memo_root as layout_memo_root, resolve_cache_path
 from .cache_utils import (
-    _apply_payload_timestamps,
     _atomic_write_json,
     _atomic_write_pickle,
     _now_iso,
 )
-from .run_utils import build_plan_lines, prepare_progress, print_chunk_summary
+from .runners import Diagnostics, run, run_streaming
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
 MergeFn = Callable[[list[Any]], Any]
 AxisIndexMap = dict[str, dict[Any, int]]
 CachePathFn = Callable[[dict[str, Any], ChunkKey, str, str], Path | str]
-
-
-@dataclasses.dataclass
-class Diagnostics:
-    total_chunks: int = 0
-    cached_chunks: int = 0
-    executed_chunks: int = 0
-    merges: int = 0
-    max_stream_items: int = 0
-    stream_flushes: int = 0
-    max_parallel_items: int = 0
 
 
 def _stable_serialize(value: Any) -> str:
@@ -72,13 +59,7 @@ def _chunk_values(values: Sequence[Any], size: int) -> list[Tuple[Any, ...]]:
     return chunks
 
 
-def _stream_item_count(output: Any) -> int:
-    if isinstance(output, (list, tuple, dict)):
-        return len(output)
-    return 1
-
-
-class ShardMemo:
+class ShardMemoCache:
     def __init__(
         self,
         cache_root: str | Path,
@@ -95,7 +76,7 @@ class ShardMemo:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> None:
-        """Initialize a ShardMemo runner.
+        """Initialize a ShardMemo cache.
 
         Args:
             cache_root: Directory for chunk cache files.
@@ -150,6 +131,7 @@ class ShardMemo:
         """Decorator for running memoized execution with output.
 
         Supports axis selection by value or by index via axis_indices.
+        Uses runners.run under the hood.
         """
         return self._build_wrapper(params_arg=params_arg, streaming=False)
 
@@ -159,6 +141,7 @@ class ShardMemo:
         """Decorator for streaming memoized execution to disk only.
 
         Supports axis selection by value or by index via axis_indices.
+        Uses runners.run_streaming under the hood.
         """
         return self._build_wrapper(params_arg=params_arg, streaming=True)
 
@@ -205,13 +188,15 @@ class ShardMemo:
 
                 exec_fn = functools.partial(func, **exec_extras)
                 if streaming:
-                    return self.run_streaming(
+                    return run_streaming(
+                        self,
                         merged_params,
                         exec_fn=exec_fn,
                         axis_indices=axis_indices,
                         **axis_inputs,
                     )
-                return self.run(
+                return run(
+                    self,
                     merged_params,
                     exec_fn=exec_fn,
                     axis_indices=axis_indices,
@@ -315,8 +300,6 @@ class ShardMemo:
         self.write_metadata(params)
         if axis_indices is None and not axes:
             chunk_keys = self._build_chunk_keys()
-            if self.verbose == 1:
-                self._print_run_header(params, self._axis_values, chunk_keys)
             return self._axis_values, chunk_keys, None
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
@@ -325,276 +308,7 @@ class ShardMemo:
         else:
             axis_values = self._normalize_axes(axes)
         chunk_keys, requested_items = self._build_chunk_plan_for_axes(axis_values)
-        if self.verbose == 1:
-            self._print_run_header(params, axis_values, chunk_keys)
         return axis_values, chunk_keys, requested_items
-
-    def run(
-        self,
-        params: dict[str, Any],
-        exec_fn: Callable[..., Any],
-        *,
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> Tuple[Any, Diagnostics]:
-        """Run memoized execution over the canonical grid or a subset.
-
-        axis_indices selects axes by index (int, slice, range, or list/tuple of
-        those), based on the canonical split spec order.
-        """
-        axis_values, chunk_keys, requested_items = self._prepare_run(
-            params, axis_indices, **axes
-        )
-        return self._run_chunks(
-            params,
-            chunk_keys,
-            exec_fn,
-            requested_items_by_chunk=requested_items,
-        )
-
-    def run_streaming(
-        self,
-        params: dict[str, Any],
-        exec_fn: Callable[..., Any],
-        *,
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> Diagnostics:
-        """Run streaming memoized execution without returning outputs.
-
-        axis_indices selects axes by index (int, slice, range, or list/tuple of
-        those), based on the canonical split spec order.
-        """
-        axis_values, chunk_keys, requested_items = self._prepare_run(
-            params, axis_indices, **axes
-        )
-        return self._run_chunks_streaming(
-            params,
-            chunk_keys,
-            exec_fn,
-            requested_items_by_chunk=requested_items,
-        )
-
-    def _execute_and_save_chunk(
-        self,
-        params: dict[str, Any],
-        chunk_key: ChunkKey,
-        exec_fn: Callable[..., Any],
-        path: Path,
-        chunk_hash: str,
-        diagnostics: Diagnostics,
-        existing_payload: Mapping[str, Any] | None = None,
-    ) -> tuple[Any, dict[str, Any] | None]:
-        diagnostics.executed_chunks += 1
-        chunk_axes = {axis: list(values) for axis, values in chunk_key}
-        chunk_output = exec_fn(params, **chunk_axes)
-        diagnostics.max_stream_items = max(
-            diagnostics.max_stream_items,
-            _stream_item_count(chunk_output),
-        )
-        payload: dict[str, Any] = {}
-        item_map = self._build_item_map(chunk_key, chunk_output)
-        if item_map is not None:
-            payload["items"] = item_map
-            item_spec = self._build_item_axis_vals_map(chunk_key, chunk_output)
-            if item_spec is not None:
-                payload["axis_vals"] = item_spec
-        else:
-            payload["output"] = chunk_output
-        _apply_payload_timestamps(payload, existing=existing_payload)
-        _atomic_write_pickle(path, payload)
-        self._update_chunk_index(params, chunk_hash, chunk_key)
-        return chunk_output, item_map
-
-    def _run_chunks(
-        self,
-        params: dict[str, Any],
-        chunk_keys: Sequence[ChunkKey],
-        exec_fn: Callable[..., Any],
-        *,
-        requested_items_by_chunk: (
-            Mapping[ChunkKey, list[Tuple[Any, ...]]] | None
-        ) = None,
-    ) -> Tuple[Any, Diagnostics]:
-        collate_fn = self.merge_fn if self.merge_fn is not None else lambda chunk: chunk
-        diagnostics, report_progress, update_processed, total_chunks = (
-            self._prepare_chunk_run(chunk_keys)
-        )
-
-        def process_chunk(
-            chunk_key: ChunkKey, processed: int
-        ) -> tuple[Any, bool, bool]:
-            chunk_hash = self._chunk_hash(params, chunk_key)
-            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
-            existing_payload: Mapping[str, Any] | None = None
-            if path.exists():
-                with open(path, "rb") as handle:
-                    payload = pickle.load(handle)
-                existing_payload = payload
-                requested_items = None
-                if requested_items_by_chunk is not None:
-                    requested_items = requested_items_by_chunk.get(chunk_key)
-                if requested_items is None:
-                    if self.verbose >= 2:
-                        print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-                    chunk_output = payload.get("output")
-                    if chunk_output is None:
-                        items = payload.get("items")
-                        if items is not None:
-                            chunk_output = self._reconstruct_output_from_items(
-                                chunk_key, items
-                            )
-                    if chunk_output is None:
-                        raise ValueError("Cache payload missing required data")
-                    return chunk_output, True, False
-                cached_outputs = self._extract_cached_items(
-                    payload,
-                    chunk_key,
-                    requested_items,
-                )
-                if cached_outputs is not None:
-                    if self.verbose >= 2:
-                        print_detail(
-                            f"[ShardMemo] load chunk={chunk_key} items={len(requested_items)}"
-                        )
-                    return collate_fn([cached_outputs]), True, False
-
-            chunk_output, item_map = self._execute_and_save_chunk(
-                params,
-                chunk_key,
-                exec_fn,
-                path,
-                chunk_hash,
-                diagnostics,
-                existing_payload,
-            )
-
-            if requested_items_by_chunk is None:
-                if self.verbose >= 2:
-                    print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
-                return chunk_output, False, False
-            else:
-                requested_items = requested_items_by_chunk.get(chunk_key)
-                if requested_items is None:
-                    if self.verbose >= 2:
-                        print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
-                    return chunk_output, False, False
-                else:
-                    if self.verbose >= 2:
-                        print_detail(
-                            f"[ShardMemo] run chunk={chunk_key} items={len(requested_items)}"
-                        )
-                    extracted = self._extract_items_from_map(
-                        item_map,
-                        chunk_key,
-                        requested_items,
-                    )
-                    result = (
-                        collate_fn([extracted])
-                        if extracted is not None
-                        else chunk_output
-                    )
-                    return result, False, False
-
-        outputs: list[Any] = []
-        for processed, chunk_key in enumerate(chunk_keys, start=1):
-            update_processed(chunk_key_size(chunk_key))
-            output, cached, _ = process_chunk(chunk_key, processed)
-            if cached:
-                diagnostics.cached_chunks += 1
-            outputs.append(output)
-            report_progress(processed, processed == total_chunks)
-
-        diagnostics.merges += 1
-        if self.merge_fn is not None:
-            merged = self.merge_fn(outputs)
-        else:
-            merged = outputs
-        print_chunk_summary(diagnostics, self.verbose)
-        return merged, diagnostics
-
-    def _prepare_chunk_run(
-        self, chunk_keys: Sequence[ChunkKey]
-    ) -> tuple[Diagnostics, Callable[[int, bool], None], Callable[[int], None], int]:
-        diagnostics = Diagnostics(total_chunks=len(chunk_keys))
-        total_chunks = len(chunk_keys)
-        total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
-        report_progress, update_processed = prepare_progress(
-            total_chunks=total_chunks,
-            total_items=total_items,
-            verbose=self.verbose,
-            label="planning",
-        )
-        return diagnostics, report_progress, update_processed, total_chunks
-
-    def _run_chunks_streaming(
-        self,
-        params: dict[str, Any],
-        chunk_keys: Sequence[ChunkKey],
-        exec_fn: Callable[..., Any],
-        *,
-        requested_items_by_chunk: (
-            Mapping[ChunkKey, list[Tuple[Any, ...]]] | None
-        ) = None,
-    ) -> Diagnostics:
-        diagnostics, report_progress, update_processed, total_chunks = (
-            self._prepare_chunk_run(chunk_keys)
-        )
-
-        for processed, chunk_key in enumerate(chunk_keys, start=1):
-            update_processed(chunk_key_size(chunk_key))
-            chunk_hash = self._chunk_hash(params, chunk_key)
-            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
-            existing_payload: Mapping[str, Any] | None = None
-            if path.exists():
-                if requested_items_by_chunk is None:
-                    diagnostics.cached_chunks += 1
-                    if self.verbose >= 2:
-                        print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-                    report_progress(processed, processed == total_chunks)
-                    continue
-                with open(path, "rb") as handle:
-                    payload = pickle.load(handle)
-                existing_payload = payload
-                item_map = payload.get("items")
-                if item_map is None:
-                    item_map = self._build_item_map(chunk_key, payload.get("output"))
-                    if item_map is not None:
-                        payload["items"] = item_map
-                        _atomic_write_pickle(path, payload)
-                if item_map is not None:
-                    diagnostics.cached_chunks += 1
-                    if self.verbose >= 2:
-                        requested_items = requested_items_by_chunk.get(chunk_key)
-                        item_count = (
-                            "all" if requested_items is None else len(requested_items)
-                        )
-                        print_detail(
-                            f"[ShardMemo] load chunk={chunk_key} items={item_count}"
-                        )
-                    report_progress(processed, processed == total_chunks)
-                    continue
-
-            chunk_output, item_map = self._execute_and_save_chunk(
-                params, chunk_key, exec_fn, path, chunk_hash, diagnostics, None
-            )
-
-            if self.verbose >= 2:
-                if requested_items_by_chunk is None:
-                    print_detail(f"[ShardMemo] run chunk={chunk_key} items=all")
-                else:
-                    requested_items = requested_items_by_chunk.get(chunk_key)
-                    item_count = (
-                        "all" if requested_items is None else len(requested_items)
-                    )
-                    print_detail(
-                        f"[ShardMemo] run chunk={chunk_key} items={item_count}"
-                    )
-
-            report_progress(processed, processed == total_chunks)
-
-        print_chunk_summary(diagnostics, self.verbose)
-        return diagnostics
 
     def _resolve_cache_path(
         self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
@@ -655,6 +369,9 @@ class ShardMemo:
 
         if self._axis_values is None:
             return
+        if self._axis_values_serializable is None:
+            return
+        axis_values_serializable = self._axis_values_serializable
 
         normalized_params = self._normalized_hash_params(params)
         all_caches = self.discover_caches(self.cache_root)
@@ -667,7 +384,7 @@ class ShardMemo:
             meta_axis_values = metadata.get("axis_values", {})
 
             if self._is_superset_compatible(
-                metadata, normalized_params, self._axis_values_serializable
+                metadata, normalized_params, axis_values_serializable
             ):
                 if self.exclusive:
                     if meta_axis_values == self._axis_values_serializable:
@@ -725,18 +442,14 @@ class ShardMemo:
                                 f"Use the existing subset cache, or set exclusive=False."
                             )
 
-            if (
-                self.warn_on_overlap
-                and meta_axis_values
-                and self._axis_values_serializable
-            ):
+            if self.warn_on_overlap and meta_axis_values and axis_values_serializable:
                 overlap = self._detect_axis_overlap(
-                    meta_axis_values, self._axis_values_serializable
+                    meta_axis_values, axis_values_serializable
                 )
                 if overlap:
                     warnings.warn(
                         f"Cache overlap detected: {cache['memo_hash']} has axis_values={meta_axis_values}, "
-                        f"current has axis_values={self._axis_values_serializable}. Overlap: {overlap}. "
+                        f"current has axis_values={axis_values_serializable}. Overlap: {overlap}. "
                         f"Consider using exclusive=True to prevent accidental conflicts.",
                         stacklevel=2,
                     )
@@ -749,16 +462,8 @@ class ShardMemo:
             return None
         overlap: dict[str, list[Any]] = {}
         for axis in shared_axes:
-            values_a = (
-                set(axis_values_a[axis])
-                if isinstance(axis_values_a[axis], (list, tuple))
-                else {axis_values_a[axis]}
-            )
-            values_b = (
-                set(axis_values_b[axis])
-                if isinstance(axis_values_b[axis], (list, tuple))
-                else {axis_values_b[axis]}
-            )
+            values_a = self._axis_value_set(axis_values_a[axis])
+            values_b = self._axis_value_set(axis_values_b[axis])
             intersection = values_a & values_b
             if intersection:
                 overlap[axis] = sorted(intersection)
@@ -794,40 +499,6 @@ class ShardMemo:
         }
         _atomic_write_json(path, payload)
         return path
-
-    def _print_run_header(
-        self,
-        params: dict[str, Any],
-        axis_values: Mapping[str, Any],
-        chunk_keys: Sequence[ChunkKey],
-    ) -> None:
-        axis_order = self._resolve_axis_order(dict(axis_values))
-        chunk_index = self._load_chunk_index(params)
-        use_index = bool(chunk_index)
-        cached_count = 0
-        for chunk_key in chunk_keys:
-            chunk_hash = self._chunk_hash(params, chunk_key)
-            path = self._resolve_cache_path(params, chunk_key, chunk_hash)
-            if (use_index and chunk_hash in chunk_index) or (
-                not use_index and path.exists()
-            ):
-                cached_count += 1
-        execute_count = len(chunk_keys) - cached_count
-        lines = build_plan_lines(
-            params,
-            axis_values,
-            axis_order,
-            cached_count,
-            execute_count,
-        )
-        cache_lines = [
-            f"[ShardMemo] cache_root: {self.cache_root}",
-            f"[ShardMemo] memo_chunk_spec: {self.memo_chunk_spec}",
-            f"[ShardMemo] cache_version: {self.cache_version}",
-            f"[ShardMemo] axis_order: {self.axis_order}",
-        ]
-        for line in reversed(cache_lines):
-            lines.insert(-1, line)
 
     def _resolve_axis_order(self, axis_values: dict[str, Any]) -> Tuple[str, ...]:
         if self.axis_order is not None:
@@ -873,41 +544,9 @@ class ShardMemo:
         axis_value_getters: dict[str, Callable[[int], Any]] = {}
         for axis in axis_order:
             axis_values_obj = axis_values[axis]
-
-            if callable(axis_values_obj):
-                try:
-                    values_result = axis_values_obj()
-                    if isinstance(values_result, (list, tuple)):
-                        values = list(values_result)
-                        axis_value_getters[axis] = lambda idx, vals=values: vals[idx]
-                    else:
-                        values = [values_result]
-                        axis_value_getters[axis] = axis_values_obj
-                except TypeError:
-                    values = []
-                    index = 0
-                    while True:
-                        try:
-                            value = axis_values_obj(index)
-                            values.append(value)
-                            index += 1
-                        except (IndexError, KeyError):
-                            break
-                        except Exception:
-                            values.append(axis_values_obj(index))
-                            index += 1
-                            if index > 10000:
-                                break
-                    axis_value_getters[axis] = axis_values_obj
-                axis_index_map[axis] = {
-                    value: index for index, value in enumerate(values)
-                }
-            else:
-                values = list(axis_values_obj)
-                axis_value_getters[axis] = lambda idx, values=values: values[idx]
-                axis_index_map[axis] = {
-                    value: index for index, value in enumerate(values)
-                }
+            values, getter = self._materialize_axis_values(axis_values_obj)
+            axis_value_getters[axis] = getter
+            axis_index_map[axis] = {value: index for index, value in enumerate(values)}
 
         self._axis_values = axis_value_getters
         self._axis_index_map = axis_index_map
@@ -928,27 +567,13 @@ class ShardMemo:
 
     def _get_all_axis_values(self, axis: str) -> list[Any]:
         """Get all values for an axis, handling both callables and lists."""
-        if self._axis_values is None:
+        if self._axis_index_map is None:
             raise ValueError("axis_values must be set before getting axis values")
-        axis_values_obj = self._axis_values[axis]
-        if callable(axis_values_obj):
-            values = []
-            index = 0
-            while True:
-                try:
-                    value = axis_values_obj(index)
-                    values.append(value)
-                    index += 1
-                except (IndexError, KeyError):
-                    break
-                except Exception:
-                    values.append(axis_values_obj(index))
-                    index += 1
-                    if index > 10000:
-                        break
-            return values
-        else:
-            return list(axis_values_obj)
+        axis_map = self._axis_index_map[axis]
+        values: list[Any] = [None] * len(axis_map)
+        for value, index in axis_map.items():
+            values[index] = value
+        return values
 
     def _normalize_axes(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
         if self._axis_values is None or self._axis_index_map is None:
@@ -980,11 +605,7 @@ class ShardMemo:
         axis_values: dict[str, list[Any]] = {}
         for axis in self._axis_values:
             if axis not in axis_indices:
-                axis_values_obj = self._axis_values[axis]
-                if callable(axis_values_obj):
-                    axis_values[axis] = list(axis_values_obj())
-                else:
-                    axis_values[axis] = list(axis_values_obj)
+                axis_values[axis] = self._get_all_axis_values(axis)
                 continue
             values = axis_indices[axis]
             axis_values_obj = self._axis_values[axis]
@@ -1065,6 +686,17 @@ class ShardMemo:
             return "int"
         return "list"
 
+    def _indices_step(self, indices: list[int]) -> int | None:
+        if len(indices) < 2:
+            return 1
+        step = indices[1] - indices[0]
+        if step == 0:
+            return None
+        for prev, current in zip(indices, indices[1:]):
+            if current - prev != step:
+                return None
+        return step
+
     def _format_indices(self, indices: list[int], format_kind: str | None) -> Any:
         if format_kind == "int":
             return indices[:]
@@ -1079,12 +711,9 @@ class ShardMemo:
             return range(0, 0)
         if len(indices) == 1:
             return range(indices[0], indices[0] + 1)
-        step = indices[1] - indices[0]
-        if step == 0:
+        step = self._indices_step(indices)
+        if step is None:
             return None
-        for prev, current in zip(indices, indices[1:]):
-            if current - prev != step:
-                return None
         return range(indices[0], indices[-1] + step, step)
 
     def _indices_to_slice(self, indices: list[int]) -> slice | None:
@@ -1092,12 +721,9 @@ class ShardMemo:
             return slice(0, 0, None)
         if len(indices) == 1:
             return slice(indices[0], indices[0] + 1, None)
-        step = indices[1] - indices[0]
-        if step == 0:
+        step = self._indices_step(indices)
+        if step is None:
             return None
-        for prev, current in zip(indices, indices[1:]):
-            if current - prev != step:
-                return None
         return slice(indices[0], indices[-1] + step, step)
 
     def _build_chunk_keys_for_axes(
@@ -1177,10 +803,8 @@ class ShardMemo:
     def _build_item_map(
         self, chunk_key: ChunkKey, chunk_output: Any
     ) -> dict[str, Any] | None:
-        if not isinstance(chunk_output, (list, tuple)):
-            return None
-        axis_values = list(self._iter_chunk_axis_values(chunk_key))
-        if len(axis_values) != len(chunk_output):
+        axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
+        if axis_values is None:
             return None
         return {
             self._item_hash(chunk_key, values): output
@@ -1190,10 +814,8 @@ class ShardMemo:
     def _build_item_axis_vals_map(
         self, chunk_key: ChunkKey, chunk_output: Any
     ) -> dict[str, dict[str, Any]] | None:
-        if not isinstance(chunk_output, (list, tuple)):
-            return None
-        axis_values = list(self._iter_chunk_axis_values(chunk_key))
-        if len(axis_values) != len(chunk_output):
+        axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
+        if axis_values is None:
             return None
         axis_names = [axis for axis, _ in chunk_key]
         item_axis_vals: dict[str, dict[str, Any]] = {}
@@ -1201,6 +823,16 @@ class ShardMemo:
             item_key = self._item_hash(chunk_key, values)
             item_axis_vals[item_key] = dict(zip(axis_names, values))
         return item_axis_vals
+
+    def _item_axis_values_for_output(
+        self, chunk_key: ChunkKey, chunk_output: Any
+    ) -> list[Tuple[Any, ...]] | None:
+        if not isinstance(chunk_output, (list, tuple)):
+            return None
+        axis_values = list(self._iter_chunk_axis_values(chunk_key))
+        if len(axis_values) != len(chunk_output):
+            return None
+        return axis_values
 
     def _reconstruct_output_from_items(
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
@@ -1255,6 +887,87 @@ class ShardMemo:
         axis_values = [values for _, values in chunk_key]
         return list(itertools.product(*axis_values))
 
+    def _load_payload(self, path: Path) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        with open(path, "rb") as handle:
+            payload = pickle.load(handle)
+        return cast(dict[str, Any], payload)
+
+    def _load_cached_output(
+        self,
+        payload: Mapping[str, Any],
+        chunk_key: ChunkKey,
+        requested_items: list[Tuple[Any, ...]] | None,
+        collate_fn: Callable[[list[Any]], Any],
+    ) -> Any | None:
+        if requested_items is None:
+            chunk_output = payload.get("output")
+            if chunk_output is None:
+                items = payload.get("items")
+                if items is not None:
+                    chunk_output = self._reconstruct_output_from_items(chunk_key, items)
+            if chunk_output is None:
+                raise ValueError("Cache payload missing required data")
+            return chunk_output
+        cached_outputs = self._extract_cached_items(
+            payload,
+            chunk_key,
+            requested_items,
+        )
+        if cached_outputs is None:
+            return None
+        return collate_fn([cached_outputs])
+
+    def _ensure_item_map(
+        self, payload: dict[str, Any], chunk_key: ChunkKey, path: Path
+    ) -> Mapping[str, Any] | None:
+        item_map = payload.get("items")
+        if item_map is None:
+            item_map = self._build_item_map(chunk_key, payload.get("output"))
+            if item_map is not None:
+                payload["items"] = item_map
+                _atomic_write_pickle(path, payload)
+        return item_map
+
+    def _collect_indexed_callable_values(
+        self, axis_values_obj: Callable[[int], Any]
+    ) -> list[Any]:
+        values: list[Any] = []
+        index = 0
+        while True:
+            try:
+                value = axis_values_obj(index)
+                values.append(value)
+                index += 1
+            except (IndexError, KeyError):
+                break
+            except Exception:
+                values.append(axis_values_obj(index))
+                index += 1
+                if index > 10000:
+                    break
+        return values
+
+    def _materialize_axis_values(
+        self, axis_values_obj: Any
+    ) -> tuple[list[Any], Callable[[int], Any]]:
+        if callable(axis_values_obj):
+            try:
+                values_result = axis_values_obj()
+                if isinstance(values_result, (list, tuple)):
+                    values = list(values_result)
+                    getter = lambda idx, vals=values: vals[idx]
+                else:
+                    values = [values_result]
+                    getter = axis_values_obj
+            except TypeError:
+                values = self._collect_indexed_callable_values(axis_values_obj)
+                getter = axis_values_obj
+            return values, getter
+        values = list(axis_values_obj)
+        return values, lambda idx, values=values: values[idx]
+
     def _resolve_axis_chunk_size(self, axis: str) -> int:
         spec = self.memo_chunk_spec.get(axis)
         if spec is None:
@@ -1286,13 +999,7 @@ class ShardMemo:
             if not entry.is_dir():
                 continue
             metadata_path = entry / "metadata.json"
-            metadata = None
-            if metadata_path.exists():
-                try:
-                    with open(metadata_path, "r", encoding="utf-8") as handle:
-                        metadata = json.load(handle)
-                except (json.JSONDecodeError, IOError):
-                    pass
+            metadata = cls._read_metadata_file(metadata_path, required=False)
             caches.append(
                 {
                     "memo_hash": entry.name,
@@ -1334,16 +1041,8 @@ class ShardMemo:
                 ):
                     return False
             elif param in meta_axis_values:
-                meta_vals = (
-                    set(meta_axis_values[param])
-                    if isinstance(meta_axis_values[param], (list, tuple))
-                    else {meta_axis_values[param]}
-                )
-                req_vals = (
-                    set(req_value)
-                    if isinstance(req_value, (list, tuple))
-                    else {req_value}
-                )
+                meta_vals = cls._axis_value_set(meta_axis_values[param])
+                req_vals = cls._axis_value_set(req_value)
                 if not req_vals.issubset(meta_vals):
                     return False
             else:
@@ -1466,16 +1165,8 @@ class ShardMemo:
             overlap_dict = {}
             has_all_intersections = True
             for axis in set(meta_axis_values) & set(axis_values):
-                meta_vals = (
-                    set(meta_axis_values[axis])
-                    if isinstance(meta_axis_values[axis], (list, tuple))
-                    else {meta_axis_values[axis]}
-                )
-                vals = (
-                    set(axis_values[axis])
-                    if isinstance(axis_values[axis], (list, tuple))
-                    else {axis_values[axis]}
-                )
+                meta_vals = cls._axis_value_set(meta_axis_values[axis])
+                vals = cls._axis_value_set(axis_values[axis])
                 intersection = meta_vals & vals
                 if intersection:
                     overlap_dict[axis] = sorted(intersection)
@@ -1504,7 +1195,7 @@ class ShardMemo:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
         allow_superset: bool = False,
-    ) -> "ShardMemo":
+    ) -> "ShardMemoCache":
         """Smart load that finds an existing cache or creates a new one.
 
         Finds caches matching the given params. If axis_values is provided:
@@ -1674,7 +1365,7 @@ class ShardMemo:
         profile: bool = False,
         exclusive: bool = False,
         warn_on_overlap: bool = False,
-    ) -> "ShardMemo":
+    ) -> "ShardMemoCache":
         """Load a ShardMemo instance from an existing cache by memo_hash.
 
         Raises:
@@ -1699,10 +1390,9 @@ class ShardMemo:
         metadata_path = cache_path / "metadata.json"
         if not cache_path.exists():
             raise FileNotFoundError(f"Cache directory not found: {cache_path}")
-        if not metadata_path.exists():
-            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-        with open(metadata_path, "r", encoding="utf-8") as handle:
-            metadata = json.load(handle)
+        metadata = cls._read_metadata_file(metadata_path, required=True)
+        if metadata is None:
+            raise ValueError(f"Invalid metadata in {metadata_path}")
         axis_values = metadata.get("axis_values")
         if axis_values is None:
             raise ValueError("Metadata missing 'axis_values'")
@@ -1726,11 +1416,37 @@ class ShardMemo:
         )
         return instance
 
-    @classmethod
-    def create_singleton(
-        cls,
+    @staticmethod
+    def _axis_value_set(values: Any) -> set[Any]:
+        if isinstance(values, (list, tuple)):
+            return set(values)
+        return {values}
+
+    @staticmethod
+    def _read_metadata_file(
+        metadata_path: Path, *, required: bool
+    ) -> dict[str, Any] | None:
+        if not metadata_path.exists():
+            if required:
+                raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+            return None
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (json.JSONDecodeError, IOError) as exc:
+            if required:
+                raise ValueError(f"Invalid metadata in {metadata_path}") from exc
+            return None
+
+
+class ShardMemo:
+    """Facade that pairs a cache with runner helpers."""
+
+    def __init__(
+        self,
         cache_root: str | Path,
-        params: dict[str, Any],
+        memo_chunk_spec: dict[str, Any],
+        axis_values: dict[str, Any],
         merge_fn: MergeFn | None = None,
         memo_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
@@ -1741,30 +1457,8 @@ class ShardMemo:
         profile: bool = False,
         exclusive: bool = False,
         warn_on_overlap: bool = False,
-    ) -> "ShardMemo":
-        """Create a singleton cache with no axes (empty axis_values).
-
-        Useful for memoizing functions that depend only on params, not on axes.
-        The cache will contain a single chunk covering all data.
-
-        Args:
-            cache_root: Directory for chunk cache files.
-            params: Parameters dict (no axis values).
-            merge_fn: Optional merge function for the list of chunk outputs.
-            memo_chunk_enumerator: Optional chunk enumerator.
-            chunk_hash_fn: Optional override for chunk hashing.
-            cache_path_fn: Optional override for cache file paths.
-            cache_version: Cache namespace/version tag.
-            axis_order: Axis iteration order (not used for singleton, kept for API consistency).
-            verbose: Verbosity flag.
-            profile: Enable profiling output.
-            exclusive: If True, error when creating a cache with same
-                params as an existing singleton cache.
-            warn_on_overlap: If True, warn when caches overlap (not applicable for singleton).
-        """
-        memo_chunk_spec: dict[str, Any] = {}
-        axis_values: dict[str, Any] = {}
-        instance = cls(
+    ) -> None:
+        self.cache = ShardMemoCache(
             cache_root=cache_root,
             memo_chunk_spec=memo_chunk_spec,
             axis_values=axis_values,
@@ -1779,4 +1473,116 @@ class ShardMemo:
             exclusive=exclusive,
             warn_on_overlap=warn_on_overlap,
         )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.cache, name)
+
+    @classmethod
+    def from_cache(cls, cache: ShardMemoCache) -> "ShardMemo":
+        instance = cls.__new__(cls)
+        instance.cache = cache
         return instance
+
+    @classmethod
+    def auto_load(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any],
+        axis_values: dict[str, Any] | None = None,
+        memo_chunk_spec: dict[str, Any] | None = None,
+        merge_fn: MergeFn | None = None,
+        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
+        cache_path_fn: CachePathFn | None = None,
+        cache_version: str = "v1",
+        axis_order: Sequence[str] | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
+        allow_superset: bool = False,
+    ) -> "ShardMemo":
+        cache = ShardMemoCache.auto_load(
+            cache_root=cache_root,
+            params=params,
+            axis_values=axis_values,
+            memo_chunk_spec=memo_chunk_spec,
+            merge_fn=merge_fn,
+            memo_chunk_enumerator=memo_chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            cache_path_fn=cache_path_fn,
+            cache_version=cache_version,
+            axis_order=axis_order,
+            verbose=verbose,
+            profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
+            allow_superset=allow_superset,
+        )
+        return cls.from_cache(cache)
+
+    @classmethod
+    def load_from_cache(
+        cls,
+        cache_root: str | Path,
+        memo_hash: str,
+        merge_fn: MergeFn | None = None,
+        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
+        cache_path_fn: CachePathFn | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
+    ) -> "ShardMemo":
+        cache = ShardMemoCache.load_from_cache(
+            cache_root=cache_root,
+            memo_hash=memo_hash,
+            merge_fn=merge_fn,
+            memo_chunk_enumerator=memo_chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            cache_path_fn=cache_path_fn,
+            verbose=verbose,
+            profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
+        )
+        return cls.from_cache(cache)
+
+    @classmethod
+    def discover_caches(cls, cache_root: str | Path) -> list[dict[str, Any]]:
+        return ShardMemoCache.discover_caches(cache_root)
+
+    @classmethod
+    def find_compatible_caches(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any] | None = None,
+        axis_values: dict[str, Any] | None = None,
+        memo_chunk_spec: dict[str, Any] | None = None,
+        cache_version: str | None = None,
+        axis_order: Sequence[str] | None = None,
+        allow_superset: bool = False,
+    ) -> list[dict[str, Any]]:
+        return ShardMemoCache.find_compatible_caches(
+            cache_root=cache_root,
+            params=params,
+            axis_values=axis_values,
+            memo_chunk_spec=memo_chunk_spec,
+            cache_version=cache_version,
+            axis_order=axis_order,
+            allow_superset=allow_superset,
+        )
+
+    @classmethod
+    def find_overlapping_caches(
+        cls,
+        cache_root: str | Path,
+        params: dict[str, Any],
+        axis_values: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return ShardMemoCache.find_overlapping_caches(
+            cache_root=cache_root,
+            params=params,
+            axis_values=axis_values,
+        )

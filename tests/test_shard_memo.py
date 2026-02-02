@@ -1,10 +1,13 @@
 import itertools
 import tempfile
 import time
+from typing import cast
 
-import pytest
+import pytest  # type: ignore[import-not-found]
 
-from shard_memo import ShardMemo
+from shard_memo import ShardMemo as _ShardMemo
+from shard_memo.runners import run as memo_run
+from shard_memo.runners import run_streaming as memo_run_streaming
 
 from .utils import exec_fn_grid
 
@@ -70,11 +73,11 @@ def test_basic_cache_reuse():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        output, diag = memo.run(params, exec_fn_sleep)
+        output, diag = memo_run(memo, params, exec_fn_sleep)
         assert output
         assert diag.executed_chunks == 1
 
-        output2, diag2 = memo.run(params, exec_fn_sleep)
+        output2, diag2 = memo_run(memo, params, exec_fn_sleep)
         assert output2 == output
         assert diag2.cached_chunks == diag2.total_chunks
         assert diag2.executed_chunks == 0
@@ -85,12 +88,12 @@ def test_incremental_split_extension():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag = memo.run(params, exec_fn_grid)
+        _, diag = memo_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 1
 
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag2 = memo.run(params, exec_fn_grid)
+        _, diag2 = memo_run(memo, params, exec_fn_grid)
         assert diag2.total_chunks == 2
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 2
@@ -100,10 +103,10 @@ def test_param_change_invalidates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag = memo.run({"alpha": 0.4}, exec_fn_grid)
+        _, diag = memo_run(memo, {"alpha": 0.4}, exec_fn_grid)
         assert diag.executed_chunks == 1
 
-        _, diag2 = memo.run({"alpha": 0.5}, exec_fn_grid)
+        _, diag2 = memo_run(memo, {"alpha": 0.5}, exec_fn_grid)
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 1
 
@@ -113,7 +116,7 @@ def test_chunk_count_grid():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b", "c"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag = memo.run(params, exec_fn_grid)
+        _, diag = memo_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 6
         assert diag.executed_chunks == 6
 
@@ -123,7 +126,7 @@ def test_merge_fn_optional_returns_nested():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, merge=False, axis_values=axis_values)
-        output, diag = memo.run(params, exec_fn_grid)
+        output, diag = memo_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 2
         assert isinstance(output, list)
         assert isinstance(output[0], list)
@@ -174,7 +177,7 @@ def test_run_wrap_param_merge():
         assert indexed_output == output
         assert indexed_diag.executed_chunks == 0
 
-        status = exec_point.cache_status(
+        status = exec_point.cache_status(  # type: ignore[attr-defined]
             params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}, extra=3
         )
         assert status["total_chunks"] == 1
@@ -207,7 +210,8 @@ def test_run_axis_indices_range_slice():
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
 
-        output, diag = memo.run(
+        output, diag = memo_run(
+            memo,
             params,
             exec_fn_grid,
             axis_indices={"strat": range(0, 1), "s": slice(1, 3)},
@@ -216,7 +220,8 @@ def test_run_axis_indices_range_slice():
         observed = {(item["strat"], item["s"]) for item in output}
         assert observed == {("a", 2), ("a", 3)}
 
-        diag2 = memo.run_streaming(
+        diag2 = memo_run_streaming(
+            memo,
             params,
             exec_fn_grid,
             axis_indices={"strat": range(0, 1), "s": slice(1, 3)},
@@ -263,7 +268,7 @@ def test_memo_chunk_enumerator_order():
             memo_chunk_enumerator=memo_chunk_enumerator,
         )
         params = {"alpha": 0.4}
-        output, diag = memo.run(params, exec_fn_marker)
+        output, diag = memo_run(memo, params, exec_fn_marker)
         assert diag.executed_chunks == 4
         expected = []
         for chunk_key in memo_chunk_enumerator(axis_values):
@@ -280,23 +285,23 @@ def test_timing_cache_speedup():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, axis_values=axis_values)
         start = time.perf_counter()
-        memo.run(params, exec_fn_sleep)
+        memo_run(memo, params, exec_fn_sleep)
         cold_time = time.perf_counter() - start
         print(f"cold_cache_s: {cold_time:0.4f}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, axis_values=axis_values)
-        memo.run(params, exec_fn=exec_fn_sleep, strat=["a"], s=[1, 2, 3, 4])
+        memo_run(memo, params, exec_fn=exec_fn_sleep, strat=["a"], s=[1, 2, 3, 4])
         start = time.perf_counter()
-        memo.run(params, exec_fn_sleep)
+        memo_run(memo, params, exec_fn_sleep)
         half_time = time.perf_counter() - start
         print(f"half_cache_s: {half_time:0.4f}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, axis_values=axis_values)
-        memo.run(params, exec_fn_sleep)
+        memo_run(memo, params, exec_fn_sleep)
         start = time.perf_counter()
-        memo.run(params, exec_fn_sleep)
+        memo_run(memo, params, exec_fn_sleep)
         warm_time = time.perf_counter() - start
         print(f"warm_cache_s: {warm_time:0.4f}")
 
@@ -313,7 +318,7 @@ def test_streaming_diagnostics_bound_memory():
         )
 
         params = {"alpha": 0.4}
-        diag = memo.run_streaming(params, exec_fn_grid)
+        diag = memo_run_streaming(memo, params, exec_fn_grid)
 
         assert diag.executed_chunks == 3
         assert diag.max_stream_items == 2
@@ -404,7 +409,11 @@ def test_load_from_cache_not_found():
 def test_singleton_cache_basic():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ShardMemo.create_singleton(temp_dir, params)
+        memo = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
         output, diag = memo.run(params, exec_fn_singleton)
 
         assert output == [{"value": 0.8}]
@@ -415,7 +424,11 @@ def test_singleton_cache_basic():
 def test_singleton_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ShardMemo.create_singleton(temp_dir, params)
+        memo = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
         output1, diag1 = memo.run(params, exec_fn_singleton)
 
         output2, diag2 = memo.run(params, exec_fn_singleton)
@@ -427,7 +440,11 @@ def test_singleton_cache_reuse():
 
 def test_singleton_cache_param_change():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = ShardMemo.create_singleton(temp_dir, {"alpha": 0.4})
+        memo = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
         output1, diag1 = memo.run({"alpha": 0.4}, exec_fn_singleton)
         assert diag1.executed_chunks == 1
 
@@ -439,7 +456,11 @@ def test_singleton_cache_param_change():
 def test_singleton_cache_no_axes_allowed():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ShardMemo.create_singleton(temp_dir, params)
+        memo = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
 
         with pytest.raises(ValueError, match="Cannot pass axis arguments"):
             memo.run(params, exec_fn_singleton, strat=["a"])
@@ -451,7 +472,11 @@ def test_singleton_cache_no_axes_allowed():
 def test_singleton_cache_streaming():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ShardMemo.create_singleton(temp_dir, params)
+        memo = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
         diag1 = memo.run_streaming(params, exec_fn_singleton)
         assert diag1.executed_chunks == 1
 
@@ -587,7 +612,11 @@ def test_auto_load_no_existing_creates_new():
 def test_auto_load_finds_singleton():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo1 = ShardMemo.create_singleton(temp_dir, params)
+        memo1 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
         output1, diag1 = memo1.run(params, exec_fn_singleton)
 
         memo2 = ShardMemo.auto_load(temp_dir, params)
@@ -619,7 +648,11 @@ def test_auto_load_with_axis_values_exact():
 def test_auto_load_ambiguous_no_axis_values():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo1 = ShardMemo.create_singleton(temp_dir, params)
+        memo1 = ShardMemo(
+            cache_root=temp_dir,
+            memo_chunk_spec={},
+            axis_values={},
+        )
         memo1.run(params, exec_fn_singleton)
 
         memo2 = ShardMemo(
@@ -1045,3 +1078,26 @@ def test_allow_superset_multiple_axes_subset():
         assert output
         assert diag.cached_chunks > 0
         assert diag.executed_chunks == 0
+
+
+class ShardMemo(_ShardMemo):
+    def run(self, *args, **kwargs):
+        return memo_run(self, *args, **kwargs)
+
+    def run_streaming(self, *args, **kwargs):
+        return memo_run_streaming(self, *args, **kwargs)
+
+    @classmethod
+    def _wrap_instance(cls, instance: _ShardMemo) -> "ShardMemo":
+        instance.__class__ = cls
+        return cast(ShardMemo, instance)
+
+    @classmethod
+    def load_from_cache(cls, *args, **kwargs) -> "ShardMemo":
+        instance = _ShardMemo.load_from_cache(*args, **kwargs)
+        return cls._wrap_instance(instance)
+
+    @classmethod
+    def auto_load(cls, *args, **kwargs) -> "ShardMemo":
+        instance = _ShardMemo.auto_load(*args, **kwargs)
+        return cls._wrap_instance(instance)

@@ -2,6 +2,7 @@ import itertools
 import tempfile
 
 from shard_memo import ShardMemo, memo_parallel_run
+from shard_memo.runners import run as memo_run
 
 from .utils import exec_fn_grid, flatten_outputs
 
@@ -55,7 +56,7 @@ def test_memo_parallel_run_reuses_partial_chunks():
         )
 
         params = {"alpha": 0.4}
-        memo.run(params, exec_fn_grid)
+        memo_run(memo, params, exec_fn_grid)
 
         items = [
             {"strat": "a", "s": 1},

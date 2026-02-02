@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from shard_memo import ShardMemo, memo_parallel_run
+from shard_memo.runners import run
 
 
 def exec_fn(params, strat, s):
@@ -39,7 +40,7 @@ def main():
         verbose=1,
     )
 
-    output, diag = memo.run(params, exec_fn)
+    output, diag = run(memo, params, exec_fn)
     print("Output:", output)
     print("Diagnostics:", diag)
 
@@ -54,7 +55,7 @@ def main():
     print("Indexed output:", indexed_output)
     print("Indexed diagnostics:", indexed_diag)
 
-    status = memoized_exec.cache_status(
+    status = memoized_exec.cache_status(  # type: ignore[attr-defined]
         params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)}
     )
     print("Cache status:", status)

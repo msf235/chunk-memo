@@ -1,6 +1,7 @@
 import tempfile
 
 from shard_memo import ShardMemo, memo_parallel_run
+from shard_memo.runners import run as memo_run
 
 from .utils import exec_fn_grid, flatten_outputs, item_from_index
 
@@ -16,9 +17,11 @@ def test_memo_parallel_run_returns_requested_points():
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
-        memo.run(params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
+        memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
 
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         outputs, diag = memo_parallel_run(
             memo,
             [item_from_index(item, axis_values) for item in items],

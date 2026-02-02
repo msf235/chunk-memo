@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from shard_memo import ShardMemo
+from shard_memo.runners import run
 
 
 def exec_fn(params, strat, s):
@@ -31,7 +32,7 @@ def main():
     )
 
     params = {"alpha": 0.4}
-    output, diag = memo.run(params, exec_fn)
+    output, diag = run(memo, params, exec_fn)
 
     print("Output:", output)
     print("Diagnostics:", diag)

@@ -2,6 +2,7 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor
 
 from shard_memo import ShardMemo, memo_parallel_run, memo_parallel_run_streaming
+from shard_memo.runners import run as memo_run
 
 from .utils import exec_fn_grid, item_dicts, observed_items
 
@@ -17,7 +18,9 @@ def test_memo_parallel_run_missing_only():
         )
 
         items = item_dicts(axis_values)
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         outputs, diag = memo_parallel_run(
             memo,
             items,
@@ -50,10 +53,12 @@ def test_memo_parallel_run_with_memoized_cache_status():
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
-        memo.run(params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3, 4])
+        memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3, 4])
 
         items = item_dicts(axis_values)
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         outputs, diag = memo_parallel_run(
             memo,
             items,
@@ -90,7 +95,9 @@ def test_memo_parallel_run_cache_reuse():
         )
 
         items = item_dicts(axis_values)
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         memo_parallel_run(
             memo,
             items,
@@ -100,7 +107,9 @@ def test_memo_parallel_run_cache_reuse():
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         outputs, diag = memo_parallel_run(
             memo,
             items,
@@ -135,7 +144,9 @@ def test_parallel_run_populates_memo_cache():
         )
 
         items = item_dicts(axis_values)
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         memo_parallel_run(
             memo,
             items,
@@ -145,7 +156,7 @@ def test_parallel_run_populates_memo_cache():
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
-        output, diag = memo.run(params, exec_fn_grid)
+        output, diag = memo_run(memo, params, exec_fn_grid)
         assert diag.executed_chunks == 0
         assert diag.cached_chunks == diag.total_chunks
         assert observed_items(output) == {
@@ -171,7 +182,9 @@ def test_parallel_run_streaming_populates_cache():
         )
 
         items = item_dicts(axis_values)
-        status = memo.cache_status(params, strat=axis_values["strat"], s=axis_values["s"])
+        status = memo.cache_status(
+            params, strat=axis_values["strat"], s=axis_values["s"]
+        )
         with ProcessPoolExecutor(max_workers=2) as executor:
             diag = memo_parallel_run_streaming(
                 memo,
@@ -183,7 +196,7 @@ def test_parallel_run_streaming_populates_cache():
             )
 
         assert diag.executed_chunks == len(status["missing_chunks"])
-        output, diag2 = memo.run(params, exec_fn_grid)
+        output, diag2 = memo_run(memo, params, exec_fn_grid)
         assert diag2.executed_chunks == 0
         assert diag2.cached_chunks == diag2.total_chunks
         assert observed_items(output) == {

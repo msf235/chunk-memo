@@ -4,8 +4,9 @@ shard-memo provides sharded memoization for grid-style experiments. You define a
 parameter grid (split variables), the library partitions it into reusable memo
 chunks for disk efficiency, and cached chunk outputs are reused on subsequent
 runs, including partial reuse for smaller parameter selections. Memoization and
-parallel execution are independent: memoization is in `ShardMemo`, while a
-parallel wrapper consumes cache metadata and can execute the missing work.
+parallel execution are independent: memoization lives in `ShardMemoCache`, while
+runner helpers (serial and parallel) consume cache metadata and execute missing
+work.
 
 ## What problem does it solve?
 
@@ -45,6 +46,7 @@ pip install -e .
 
 ```python
 from shard_memo import ShardMemo
+from shard_memo.runners import run
 
 
 def exec_fn(params, strat, s):
@@ -72,20 +74,24 @@ memo = ShardMemo(
     axis_values=axis_values,
     merge_fn=merge_fn,
 )
-output, diag = memo.run(params, exec_fn)
+output, diag = run(memo, params, exec_fn)
 print(output)
 print(diag)
 ```
 
 ## Module layout
 
-- `shard_memo/memo.py`: memoization (ShardMemo) and cache introspection.
-- `shard_memo/bridge.py`: parallel wrapper utilities.
+- `shard_memo/memo.py`: cache logic (`ShardMemoCache`) and facade (`ShardMemo`).
+- `shard_memo/runners.py`: execution runners (serial and parallel).
+- `shard_memo/bridge.py`: removed (parallel runners live in `shard_memo.runners`).
 - `shard_memo/__init__.py`: re-exports public APIs, including `auto_load()`.
 
 ## API overview
 
 ### ShardMemo
+
+`ShardMemo` is a facade that owns a `ShardMemoCache` and exposes the cache
+interface, including `run_wrap` and `streaming_wrap`.
 
 ```python
 ShardMemo(
@@ -184,7 +190,7 @@ memo = ShardMemo(
     merge_fn=merge_fn,
 )
 
-output, diag = memo.run(params, exec_fn)
+output, diag = run(memo, params, exec_fn)
 ```
 
 #### Important notes
@@ -197,10 +203,10 @@ output, diag = memo.run(params, exec_fn)
 ### run
 
 ```python
-output, diagnostics = memo.run(params, exec_fn)
+output, diagnostics = run(memo, params, exec_fn)
 # Or run a subset
-# output, diagnostics = memo.run(params, exec_fn, strat=["a"], s=[1, 2, 3])
-# output, diagnostics = memo.run(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# output, diagnostics = run(memo, params, exec_fn, strat=["a"], s=[1, 2, 3])
+# output, diagnostics = run(memo, params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
@@ -208,10 +214,10 @@ Runs missing chunks, caches them, and returns merged output with diagnostics.
 ### run_streaming
 
 ```python
-diagnostics = memo.run_streaming(params, exec_fn)
+diagnostics = run_streaming(memo, params, exec_fn)
 # Or run a subset
-# diagnostics = memo.run_streaming(params, exec_fn, strat=["a"], s=[1, 2, 3])
-# diagnostics = memo.run_streaming(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# diagnostics = run_streaming(memo, params, exec_fn, strat=["a"], s=[1, 2, 3])
+# diagnostics = run_streaming(memo, params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Executes missing chunks and flushes them to disk without returning outputs.
@@ -332,19 +338,17 @@ memo = ShardMemo.load_from_cache(
 
 Load a `ShardMemo` instance from an existing cache by its hash. Raises `FileNotFoundError` if the cache doesn't exist, or `ValueError` if metadata is invalid.
 
-#### create_singleton
+#### singleton cache
 
 ```python
-memo = ShardMemo.create_singleton(
+memo = ShardMemo(
     cache_root,
-    params=params_dict,
-    merge_fn=merge_fn,
-    exclusive=False,
-    warn_on_overlap=False,
+    memo_chunk_spec={},
+    axis_values={},
 )
 ```
 
-Create a singleton cache with no axes (empty `axis_values`). Useful for memoizing functions that depend only on `params`, not on split variables. Creates a cache with `memo_chunk_spec={}` and `axis_values={}`.
+Create a singleton cache with no axes (empty `axis_values`). Useful for memoizing functions that depend only on `params`, not on split variables. Uses `memo_chunk_spec={}` and `axis_values={}`.
 
 #### auto_load (ShardMemo classmethod)
 
@@ -376,11 +380,12 @@ Streamlined memoization that finds or creates a cache. Behavior:
 - If `axis_values` is not provided: finds caches with matching `params`. Requires exactly 1 match, or raises `ValueError` (ambiguous).
 - When creating a new cache without `memo_chunk_spec`, defaults to chunk size 1 for all axes.
 
-## Parallel wrapper
+## Parallel runners
 
-The parallel wrapper is independent from memoization. It consumes cache metadata
-and delegates missing work to a user-supplied map function, while already-cached
-chunks are handled locally.
+Parallel runners are independent from memoization. They consume cache metadata
+and delegate missing work to a user-supplied map function, while already-cached
+chunks are handled locally. The public functions are re-exported from
+`shard_memo` for compatibility and implemented in `shard_memo.runners`.
 
 ## Streamlined memoization
 
@@ -440,7 +445,7 @@ stream_diag = memo_parallel_run_streaming(
 )
 ```
 
-Parallel wrapper notes:
+Parallel runner notes:
 - `memo_parallel_run` expects a `cache_status`-shaped dict.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
@@ -449,7 +454,7 @@ Parallel wrapper notes:
 
 ```python
 memo_parallel_run(
-    memo: ShardMemo,
+    memo: ShardMemo | ShardMemoCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -464,7 +469,7 @@ memo_parallel_run(
 
 ```python
 memo_parallel_run_streaming(
-    memo: ShardMemo,
+    memo: ShardMemo | ShardMemoCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -506,7 +511,7 @@ broad_cache = ShardMemo(
     merge_fn=merge_fn,
 )
 params = {"alpha": 0.4}
-output1, diag1 = broad_cache.run(params, exec_fn)
+output1, diag1 = run(broad_cache, params, exec_fn)
 # Executes all 6 points: (a,1), (a,2), (a,3), (b,1), (b,2), (b,3)
 
 # Later, request just strat="a" - will find and reuse the broad cache
@@ -519,7 +524,7 @@ memo_a = auto_load(
     allow_superset=True,  # Enable superset detection
     merge_fn=merge_fn,
 )
-output2, diag2 = memo_a.run(params, exec_fn)
+output2, diag2 = run(memo_a, params, exec_fn)
 # Only executes the 3 points for strat="a", reuses cached data
 assert diag2.cached_chunks == 1  # All data reused
 assert diag2.executed_chunks == 0
@@ -570,4 +575,21 @@ python examples/callable_axis_values.py
 
 - The exec function receives axis vectors for the current memo chunk.
 - Memoization and parallel execution are decoupled so you can introduce new
-  executors without changing `ShardMemo`.
+  executors without changing `ShardMemoCache`.
+
+### ShardMemoCache
+
+`ShardMemoCache` holds cache configuration, metadata, and chunk planning. It does
+not execute runs directly; use `run` / `run_streaming` from `shard_memo.runners`.
+
+```python
+from shard_memo import ShardMemoCache
+from shard_memo.runners import run
+
+cache = ShardMemoCache(
+    cache_root="./cache",
+    memo_chunk_spec={"strat": 1, "s": 2},
+    axis_values={"strat": ["a", "b"], "s": [1, 2, 3, 4]},
+)
+output, diag = run(cache, params, exec_fn)
+```

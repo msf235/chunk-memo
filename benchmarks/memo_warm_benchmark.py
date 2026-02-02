@@ -9,6 +9,7 @@ except ImportError:  # pragma: no cover - optional dependency
     Memory = None
 
 from shard_memo import ShardMemo
+from shard_memo.runners import run
 
 
 def exec_fn(params, s):
@@ -24,15 +25,16 @@ def run_warm_benchmark(*, n_points, chunk_size, repeats):
             cache_root=temp_dir,
             memo_chunk_spec={"s": chunk_size},
             axis_values=axis_values,
+            verbose=0,
         )
         start = time.perf_counter()
-        memo.run(params, exec_fn)
+        run(memo, params, exec_fn)
         cold_time = time.perf_counter() - start
 
         run_times = []
         for _ in range(repeats):
             start = time.perf_counter()
-            memo.run(params, exec_fn)
+            run(memo, params, exec_fn)
             run_times.append(time.perf_counter() - start)
 
     return {
@@ -80,7 +82,7 @@ def run_joblib_warm_benchmark(*, n_points, repeats, root):
 
 
 def main():
-    n_points = 20000
+    n_points = 2000
     repeats = 5
     chunk_sizes = [1, 5, 10, 25, 50, 100]
 

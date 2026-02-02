@@ -7,6 +7,7 @@ loading full lists into memory at initialization.
 """
 
 from shard_memo import ShardMemo
+from shard_memo.runners import run
 import tempfile
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def example_with_lists():
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
 
-        output, diag = memo.run(params, exec_fn)
+        output, diag = run(memo, params, exec_fn)
         print(f"Lists approach: {output}")
         print(f"  Executed: {diag.executed_chunks}, Cached: {diag.cached_chunks}")
 
@@ -74,7 +75,7 @@ def example_with_callables():
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
 
-        output, diag = memo.run(params, exec_fn)
+        output, diag = run(memo, params, exec_fn)
         print(f"Callables approach: {output}")
         print(f"  Executed: {diag.executed_chunks}, Cached: {diag.cached_chunks}")
 
@@ -101,7 +102,7 @@ def example_mixed():
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
 
-        output, diag = memo.run(params, exec_fn)
+        output, diag = run(memo, params, exec_fn)
         print(f"Mixed approach: {output}")
         print(f"  Executed: {diag.executed_chunks}, Cached: {diag.cached_chunks}")
 

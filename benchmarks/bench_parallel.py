@@ -1,9 +1,11 @@
+import shutil
 import time
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from shard_memo import ShardMemo, memo_parallel_run
+from shard_memo.runners import run
 
 
 def exec_fn(params, s):
@@ -18,21 +20,23 @@ def exec_fn(params, s):
 
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     axis_values = {"s": list(range(n_points))}
+    cache_root = root / f"exec_{exec_chunk_size}" / scenario
     memo = ShardMemo(
-        cache_root=str(root),
+        cache_root=str(cache_root),
         memo_chunk_spec={"s": 100},
         axis_values=axis_values,
     )
 
     params = {"sleep_s": sleep_s}
     if scenario == "half":
-        memo.run(
+        run(
+            memo,
             params,
             exec_fn=exec_fn,
             s=axis_values["s"][: n_points // 2],
         )
     elif scenario == "warm":
-        memo.run(params, exec_fn)
+        run(memo, params, exec_fn)
 
     status = memo.cache_status(params, s=axis_values["s"])
 
@@ -63,6 +67,8 @@ def main():
         for child in root.iterdir():
             if child.is_file():
                 child.unlink()
+            else:
+                shutil.rmtree(child)
     else:
         root.mkdir(parents=True, exist_ok=True)
 
