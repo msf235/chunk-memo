@@ -292,6 +292,93 @@ def _prepare_parallel_items(
     return item_list, axis_extractor, cached_chunk_items, missing_chunk_items
 
 
+def _scan_cached_chunk_items(
+    memo: MemoRunnerBackend,
+    params_dict: dict[str, Any],
+    cached_chunks: Sequence[ChunkKey],
+    cached_chunk_items: Sequence[Sequence[Any]],
+    *,
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+    report_progress: Callable[[int, bool], None],
+    update_processed: Callable[[int], None],
+    total_chunks: int,
+    tracker: _MissingTracker,
+    diagnostics: Diagnostics,
+    cached_payloads: dict[ChunkKey, Mapping[str, Any]],
+    chunk_exists: Callable[[str, Path], bool],
+    load_full_chunk_payload: bool,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    outputs: list[Any] | None = None,
+) -> None:
+    for processed, (chunk_key, chunk_items) in enumerate(
+        zip(cached_chunks, cached_chunk_items), start=1
+    ):
+        if not chunk_items:
+            report_progress(processed, processed == total_chunks)
+            continue
+        update_processed(len(chunk_items))
+        full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
+        chunk_hash = memo.chunk_hash(params_dict, chunk_key)
+        path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
+        if not chunk_exists(chunk_hash, path):
+            tracker.register(chunk_key, list(chunk_items))
+            continue
+        if full_chunk and not load_full_chunk_payload:
+            diagnostics.cached_chunks += 1
+            if memo.verbose >= 2:
+                print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+            report_progress(processed, processed == total_chunks)
+            continue
+        payload = memo.load_payload(path)
+        if payload is None:
+            tracker.register(chunk_key, list(chunk_items))
+            continue
+        if full_chunk:
+            diagnostics.cached_chunks += 1
+            if memo.verbose >= 2:
+                print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
+            if outputs is not None and collate_fn is not None:
+                chunk_output = payload.get("output")
+                if chunk_output is None:
+                    items_payload = payload.get("items")
+                    if items_payload is not None and isinstance(items_payload, Mapping):
+                        chunk_output = memo.reconstruct_output_from_items(
+                            chunk_key, items_payload
+                        )
+                if chunk_output is None:
+                    raise ValueError("Cache payload missing required data")
+                outputs.append(chunk_output)
+            report_progress(processed, processed == total_chunks)
+            continue
+        item_map = _payload_item_map(memo, chunk_key, payload)
+        if item_map is None:
+            cached_payloads[chunk_key] = payload
+            tracker.register(chunk_key, list(chunk_items))
+            continue
+        item_outputs: list[Any] = []
+        missing = False
+        for item in chunk_items:
+            axis_values = axis_extractor(item)
+            item_key = memo.item_hash(chunk_key, axis_values)
+            if item_key not in item_map:
+                cached_payloads[chunk_key] = payload
+                tracker.register(chunk_key, list(chunk_items))
+                missing = True
+                item_outputs = []
+                break
+            if outputs is not None and collate_fn is not None:
+                item_outputs.append(item_map[item_key])
+        if not missing:
+            diagnostics.cached_chunks += 1
+            if memo.verbose >= 2:
+                print_detail(
+                    f"[ShardMemo] load chunk={chunk_key} items={len(chunk_items)}"
+                )
+            if outputs is not None and collate_fn is not None and item_outputs:
+                outputs.append(collate_fn(item_outputs))
+        report_progress(processed, processed == total_chunks)
+
+
 def _exec_iter_with_progress(
     memo: MemoRunnerBackend,
     exec_iter: Iterable[Any],
@@ -816,62 +903,23 @@ def memo_parallel_run(
     tracker = _MissingTracker.create(track_item_keys=False)
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
 
-    for processed, (chunk_key, chunk_items) in enumerate(
-        zip(cached_chunks, cached_chunk_items), start=1
-    ):
-        if not chunk_items:
-            report_progress_main(processed, processed == total_chunks)
-            continue
-        update_processed(len(chunk_items))
-        full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
-        chunk_hash = memo.chunk_hash(params_dict, chunk_key)
-        path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
-        if not path.exists():
-            tracker.register(chunk_key, chunk_items)
-            continue
-        payload = memo.load_payload(path)
-        if payload is None:
-            tracker.register(chunk_key, chunk_items)
-            continue
-        if full_chunk:
-            diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-            chunk_output = payload.get("output")
-            if chunk_output is None:
-                items_payload = payload.get("items")
-                if items_payload is not None and isinstance(items_payload, Mapping):
-                    chunk_output = memo.reconstruct_output_from_items(
-                        chunk_key, items_payload
-                    )
-            if chunk_output is None:
-                raise ValueError("Cache payload missing required data")
-            outputs.append(chunk_output)
-            report_progress_main(processed, processed == total_chunks)
-            continue
-        item_map = _payload_item_map(memo, chunk_key, payload)
-        if item_map is None:
-            cached_payloads[chunk_key] = payload
-            tracker.register(chunk_key, chunk_items)
-            continue
-        item_outputs: list[Any] = []
-        for item in chunk_items:
-            axis_values = axis_extractor(item)
-            item_key = memo.item_hash(chunk_key, axis_values)
-            if item_key not in item_map:
-                cached_payloads[chunk_key] = payload
-                tracker.register(chunk_key, chunk_items)
-                item_outputs = []
-                break
-            item_outputs.append(item_map[item_key])
-        if item_outputs:
-            diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(
-                    f"[ShardMemo] load chunk={chunk_key} items={len(item_outputs)}"
-                )
-            outputs.append(collate_fn(item_outputs))
-        report_progress_main(processed, processed == total_chunks)
+    _scan_cached_chunk_items(
+        memo,
+        params_dict,
+        cached_chunks,
+        cached_chunk_items,
+        axis_extractor=axis_extractor,
+        report_progress=report_progress_main,
+        update_processed=update_processed,
+        total_chunks=total_chunks,
+        tracker=tracker,
+        diagnostics=diagnostics,
+        cached_payloads=cached_payloads,
+        chunk_exists=lambda _chunk_hash, path: path.exists(),
+        load_full_chunk_payload=True,
+        collate_fn=collate_fn,
+        outputs=outputs,
+    )
 
     base_index = len(cached_chunks)
     _register_missing_chunk_items(
@@ -1036,55 +1084,26 @@ def memo_parallel_run_streaming(
     tracker = _MissingTracker.create(track_item_keys=True)
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
 
-    for processed, (chunk_key, chunk_items) in enumerate(
-        zip(cached_chunks, cached_chunk_items), start=1
-    ):
-        if not chunk_items:
-            report_progress_streaming(processed, processed == total_chunks)
-            continue
-        update_processed(len(chunk_items))
-        full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
-        chunk_hash = memo.chunk_hash(params_dict, chunk_key)
+    def chunk_exists(chunk_hash: str, path: Path) -> bool:
         if use_index:
-            exists = chunk_hash in chunk_index
-        else:
-            path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
-            exists = path.exists()
-        if not exists:
-            tracker.register(chunk_key, chunk_items)
-            continue
-        if full_chunk:
-            diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(f"[ShardMemo] load chunk={chunk_key} items=all")
-            report_progress_streaming(processed, processed == total_chunks)
-            continue
-        path = memo.resolve_cache_path(params_dict, chunk_key, chunk_hash)
-        payload = memo.load_payload(path)
-        if payload is None:
-            tracker.register(chunk_key, chunk_items)
-            continue
-        item_map = _payload_item_map(memo, chunk_key, payload)
-        if item_map is None:
-            cached_payloads[chunk_key] = payload
-            tracker.register(chunk_key, chunk_items)
-            continue
-        missing = False
-        for item in chunk_items:
-            axis_values = axis_extractor(item)
-            item_key = memo.item_hash(chunk_key, axis_values)
-            if item_key not in item_map:
-                cached_payloads[chunk_key] = payload
-                tracker.register(chunk_key, chunk_items)
-                missing = True
-                break
-        if not missing:
-            diagnostics.cached_chunks += 1
-            if memo.verbose >= 2:
-                print_detail(
-                    f"[ShardMemo] load chunk={chunk_key} items={len(chunk_items)}"
-                )
-        report_progress_streaming(processed, processed == total_chunks)
+            return chunk_hash in chunk_index
+        return path.exists()
+
+    _scan_cached_chunk_items(
+        memo,
+        params_dict,
+        cached_chunks,
+        cached_chunk_items,
+        axis_extractor=axis_extractor,
+        report_progress=report_progress_streaming,
+        update_processed=update_processed,
+        total_chunks=total_chunks,
+        tracker=tracker,
+        diagnostics=diagnostics,
+        cached_payloads=cached_payloads,
+        chunk_exists=chunk_exists,
+        load_full_chunk_payload=False,
+    )
     if memo.profile and memo.verbose >= 1 and profile_start is not None:
         print(
             f"[ShardMemo] profile cached_scan_s={time.monotonic() - profile_start:0.3f}"
