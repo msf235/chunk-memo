@@ -1,11 +1,10 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .runners import memo_parallel_run, memo_parallel_run_streaming
-from .memo import ShardMemo, ShardMemoCache, Diagnostics
+from .memo import ShardMemo, ChunkCache, Diagnostics
 from .runners import run, run_streaming
-from .memo import ShardMemo as _ShardMemo
 
-auto_load = _ShardMemo.auto_load
+auto_load = ShardMemo.auto_load
 
 
 try:
@@ -16,7 +15,7 @@ except PackageNotFoundError:
 __all__ = [
     "ShardMemo",
     "Diagnostics",
-    "ShardMemoCache",
+    "ChunkCache",
     "__version__",
     "auto_load",
     "memo_parallel_run",

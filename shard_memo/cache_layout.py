@@ -4,10 +4,6 @@ from typing import Any, Callable, Tuple
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 
 
-def memo_root(cache_root: Path, memo_hash: str) -> Path:
-    return cache_root / memo_hash
-
-
 def resolve_cache_path(
     *,
     memo_root_path: Path,

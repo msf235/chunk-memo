@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
 from .cache_index import load_chunk_index, update_chunk_index
-from .cache_layout import memo_root as layout_memo_root, resolve_cache_path
+from .cache_layout import resolve_cache_path
 from .cache_utils import (
     _atomic_write_json,
     _atomic_write_pickle,
@@ -59,7 +59,7 @@ def _chunk_values(values: Sequence[Any], size: int) -> list[Tuple[Any, ...]]:
     return chunks
 
 
-class ShardMemoCache:
+class ChunkCache:
     def __init__(
         self,
         cache_root: str | Path,
@@ -472,7 +472,7 @@ class ShardMemoCache:
         return overlap
 
     def _memo_root(self, params: dict[str, Any]) -> Path:
-        return layout_memo_root(self.cache_root, self._memo_hash(params))
+        return self.cache_root / self._memo_hash(params)
 
     def write_metadata(self, params: dict[str, Any]) -> Path:
         memo_root = self._memo_root(params)
@@ -800,16 +800,38 @@ class ShardMemoCache:
             requested_items[chunk_key] = item_values
         return chunk_keys, requested_items
 
+    def _build_item_map_from_axis_values(
+        self,
+        chunk_key: ChunkKey,
+        axis_values: Sequence[Tuple[Any, ...]],
+        outputs: Sequence[Any],
+    ) -> dict[str, Any]:
+        return {
+            self._item_hash(chunk_key, values): output
+            for values, output in zip(axis_values, outputs)
+        }
+
+    def _build_item_axis_vals_map_from_axis_values(
+        self, chunk_key: ChunkKey, axis_values: Sequence[Tuple[Any, ...]]
+    ) -> dict[str, dict[str, Any]]:
+        axis_names = [axis for axis, _ in chunk_key]
+        item_axis_vals: dict[str, dict[str, Any]] = {}
+        for values in axis_values:
+            item_key = self._item_hash(chunk_key, values)
+            item_axis_vals[item_key] = dict(zip(axis_names, values))
+        return item_axis_vals
+
     def _build_item_map(
         self, chunk_key: ChunkKey, chunk_output: Any
     ) -> dict[str, Any] | None:
         axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
         if axis_values is None:
             return None
-        return {
-            self._item_hash(chunk_key, values): output
-            for values, output in zip(axis_values, chunk_output)
-        }
+        return self._build_item_map_from_axis_values(
+            chunk_key,
+            axis_values,
+            chunk_output,
+        )
 
     def _build_item_axis_vals_map(
         self, chunk_key: ChunkKey, chunk_output: Any
@@ -817,12 +839,7 @@ class ShardMemoCache:
         axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
         if axis_values is None:
             return None
-        axis_names = [axis for axis, _ in chunk_key]
-        item_axis_vals: dict[str, dict[str, Any]] = {}
-        for values in axis_values:
-            item_key = self._item_hash(chunk_key, values)
-            item_axis_vals[item_key] = dict(zip(axis_names, values))
-        return item_axis_vals
+        return self._build_item_axis_vals_map_from_axis_values(chunk_key, axis_values)
 
     def _item_axis_values_for_output(
         self, chunk_key: ChunkKey, chunk_output: Any
@@ -1195,7 +1212,7 @@ class ShardMemoCache:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
         allow_superset: bool = False,
-    ) -> "ShardMemoCache":
+    ) -> "ChunkCache":
         """Smart load that finds an existing cache or creates a new one.
 
         Finds caches matching the given params. If axis_values is provided:
@@ -1365,7 +1382,7 @@ class ShardMemoCache:
         profile: bool = False,
         exclusive: bool = False,
         warn_on_overlap: bool = False,
-    ) -> "ShardMemoCache":
+    ) -> "ChunkCache":
         """Load a ShardMemo instance from an existing cache by memo_hash.
 
         Raises:
@@ -1458,7 +1475,7 @@ class ShardMemo:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> None:
-        self.cache = ShardMemoCache(
+        self.cache = ChunkCache(
             cache_root=cache_root,
             memo_chunk_spec=memo_chunk_spec,
             axis_values=axis_values,
@@ -1478,7 +1495,7 @@ class ShardMemo:
         return getattr(self.cache, name)
 
     @classmethod
-    def from_cache(cls, cache: ShardMemoCache) -> "ShardMemo":
+    def from_cache(cls, cache: ChunkCache) -> "ShardMemo":
         instance = cls.__new__(cls)
         instance.cache = cache
         return instance
@@ -1502,7 +1519,7 @@ class ShardMemo:
         warn_on_overlap: bool = False,
         allow_superset: bool = False,
     ) -> "ShardMemo":
-        cache = ShardMemoCache.auto_load(
+        cache = ChunkCache.auto_load(
             cache_root=cache_root,
             params=params,
             axis_values=axis_values,
@@ -1535,7 +1552,7 @@ class ShardMemo:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> "ShardMemo":
-        cache = ShardMemoCache.load_from_cache(
+        cache = ChunkCache.load_from_cache(
             cache_root=cache_root,
             memo_hash=memo_hash,
             merge_fn=merge_fn,
@@ -1551,7 +1568,7 @@ class ShardMemo:
 
     @classmethod
     def discover_caches(cls, cache_root: str | Path) -> list[dict[str, Any]]:
-        return ShardMemoCache.discover_caches(cache_root)
+        return ChunkCache.discover_caches(cache_root)
 
     @classmethod
     def find_compatible_caches(
@@ -1564,7 +1581,7 @@ class ShardMemo:
         axis_order: Sequence[str] | None = None,
         allow_superset: bool = False,
     ) -> list[dict[str, Any]]:
-        return ShardMemoCache.find_compatible_caches(
+        return ChunkCache.find_compatible_caches(
             cache_root=cache_root,
             params=params,
             axis_values=axis_values,
@@ -1581,7 +1598,7 @@ class ShardMemo:
         params: dict[str, Any],
         axis_values: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        return ShardMemoCache.find_overlapping_caches(
+        return ChunkCache.find_overlapping_caches(
             cache_root=cache_root,
             params=params,
             axis_values=axis_values,

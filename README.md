@@ -4,7 +4,7 @@ shard-memo provides sharded memoization for grid-style experiments. You define a
 parameter grid (split variables), the library partitions it into reusable memo
 chunks for disk efficiency, and cached chunk outputs are reused on subsequent
 runs, including partial reuse for smaller parameter selections. Memoization and
-parallel execution are independent: memoization lives in `ShardMemoCache`, while
+parallel execution are independent: memoization lives in `ChunkCache`, while
 runner helpers (serial and parallel) consume cache metadata and execute missing
 work.
 
@@ -81,7 +81,7 @@ print(diag)
 
 ## Module layout
 
-- `shard_memo/memo.py`: cache logic (`ShardMemoCache`) and facade (`ShardMemo`).
+- `shard_memo/memo.py`: cache logic (`ChunkCache`) and facade (`ShardMemo`).
 - `shard_memo/runners.py`: execution runners (serial and parallel).
 - `shard_memo/bridge.py`: removed (parallel runners live in `shard_memo.runners`).
 - `shard_memo/__init__.py`: re-exports public APIs, including `auto_load()`.
@@ -90,7 +90,7 @@ print(diag)
 
 ### ShardMemo
 
-`ShardMemo` is a facade that owns a `ShardMemoCache` and exposes the cache
+`ShardMemo` is a facade that owns a `ChunkCache` and exposes the cache
 interface, including `run_wrap` and `streaming_wrap`.
 
 ```python
@@ -454,7 +454,7 @@ Parallel runner notes:
 
 ```python
 memo_parallel_run(
-    memo: ShardMemo | ShardMemoCache,
+    memo: ShardMemo | ChunkCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -469,7 +469,7 @@ memo_parallel_run(
 
 ```python
 memo_parallel_run_streaming(
-    memo: ShardMemo | ShardMemoCache,
+    memo: ShardMemo | ChunkCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -575,18 +575,18 @@ python examples/callable_axis_values.py
 
 - The exec function receives axis vectors for the current memo chunk.
 - Memoization and parallel execution are decoupled so you can introduce new
-  executors without changing `ShardMemoCache`.
+  executors without changing `ChunkCache`.
 
-### ShardMemoCache
+### ChunkCache
 
-`ShardMemoCache` holds cache configuration, metadata, and chunk planning. It does
+`ChunkCache` holds cache configuration, metadata, and chunk planning. It does
 not execute runs directly; use `run` / `run_streaming` from `shard_memo.runners`.
 
 ```python
-from shard_memo import ShardMemoCache
+from shard_memo import ChunkCache
 from shard_memo.runners import run
 
-cache = ShardMemoCache(
+cache = ChunkCache(
     cache_root="./cache",
     memo_chunk_spec={"strat": 1, "s": 2},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3, 4]},
