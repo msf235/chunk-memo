@@ -3,7 +3,6 @@ from importlib.metadata import PackageNotFoundError, version
 from .memo import ChunkCache
 from .runner_protocol import (
     CacheStatus,
-    ChunkIndexEntry,
     MemoRunnerBackend,
     MinimalCacheStatus,
 )
@@ -34,6 +33,5 @@ __all__ = [
     "run_streaming",
     "MemoRunnerBackend",
     "CacheStatus",
-    "ChunkIndexEntry",
     "MinimalCacheStatus",
 ]
