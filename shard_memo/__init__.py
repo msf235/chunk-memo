@@ -1,10 +1,16 @@
 from importlib.metadata import PackageNotFoundError, version
 
-from .memo import ChunkMemo, ChunkCache, Diagnostics
+from .memo import ChunkCache
 from .runner_protocol import CacheStatus, MemoRunnerBackend, MinimalCacheStatus
-from .runners import memo_parallel_run, memo_parallel_run_streaming, run, run_streaming
+from .runners import (
+    Diagnostics,
+    memo_parallel_run,
+    memo_parallel_run_streaming,
+    run,
+    run_streaming,
+)
 
-auto_load = ChunkMemo.auto_load
+auto_load = ChunkCache.auto_load
 
 
 try:
@@ -13,9 +19,8 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 __all__ = [
-    "ChunkMemo",
-    "Diagnostics",
     "ChunkCache",
+    "Diagnostics",
     "__version__",
     "auto_load",
     "memo_parallel_run",

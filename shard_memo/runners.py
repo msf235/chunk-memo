@@ -66,11 +66,6 @@ def _stream_item_count(output: Any) -> int:
     return 1
 
 
-def _iter_chunk_axis_values(chunk_key: ChunkKey) -> list[Tuple[Any, ...]]:
-    axis_values = [values for _, values in chunk_key]
-    return list(itertools.product(*axis_values))
-
-
 def _build_item_maps_from_chunk_output(
     memo: MemoRunnerBackend,
     chunk_key: ChunkKey,
@@ -78,7 +73,7 @@ def _build_item_maps_from_chunk_output(
 ) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
     if not isinstance(chunk_output, (list, tuple)):
         return None, None
-    axis_values = _iter_chunk_axis_values(chunk_key)
+    axis_values = memo.iter_chunk_axis_values(chunk_key)
     if len(axis_values) != len(chunk_output):
         return None, None
     item_map, item_axis_vals = memo.build_item_maps_from_axis_values(
@@ -364,28 +359,6 @@ def _build_item_axis_extractor(
     return extract
 
 
-def _chunk_key_matches_axes(axis_values: Tuple[Any, ...], chunk_key: ChunkKey) -> bool:
-    for (_, values), value in zip(chunk_key, axis_values):
-        if value not in values:
-            return False
-    return True
-
-
-def _expand_items_to_chunks_slow(
-    items: Sequence[Any],
-    chunk_keys: Sequence[ChunkKey],
-    axis_extractor: Callable[[Any], Tuple[Any, ...]],
-) -> list[list[Any]]:
-    chunked: list[list[Any]] = [[] for _ in chunk_keys]
-    for item in items:
-        axis_values = axis_extractor(item)
-        for index, chunk_key in enumerate(chunk_keys):
-            if _chunk_key_matches_axes(axis_values, chunk_key):
-                chunked[index].append(item)
-                break
-    return chunked
-
-
 def _expand_items_to_chunks_fast(
     memo: MemoRunnerBackend,
     cache_status: CacheStatus,
@@ -395,12 +368,7 @@ def _expand_items_to_chunks_fast(
 ) -> list[list[Any]]:
     if not chunk_keys:
         return [[] for _ in chunk_keys]
-    try:
-        axis_values, axis_order, axis_chunk_maps = memo.expand_cache_status(
-            cache_status
-        )
-    except ValueError:
-        return _expand_items_to_chunks_slow(items, chunk_keys, axis_extractor)
+    axis_values, axis_order, axis_chunk_maps = memo.expand_cache_status(cache_status)
     chunk_index_map: dict[Tuple[int, ...], int] = {}
     for index, chunk_key in enumerate(chunk_keys):
         chunk_ids: list[int] = []

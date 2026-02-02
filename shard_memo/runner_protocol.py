@@ -79,6 +79,10 @@ class MemoRunnerBackend(Protocol):
         outputs: Sequence[Any],
     ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]: ...
 
+    def iter_chunk_axis_values(
+        self, chunk_key: ChunkKey
+    ) -> Sequence[Tuple[Any, ...]]: ...
+
     def extract_items_from_map(
         self,
         item_map: Mapping[str, Any] | None,

@@ -1,7 +1,7 @@
 import sys
 import time
 
-from shard_memo import ChunkMemo as _ChunkMemo
+from shard_memo import ChunkCache as _ChunkCache
 
 
 class _TimestampedWriter:
@@ -32,7 +32,7 @@ class _StartTime:
         self.value = value
 
 
-_ORIGINAL_INIT = _ChunkMemo.__init__
+_ORIGINAL_INIT = _ChunkCache.__init__
 
 
 def _wrap_chunk_init(start_time):
@@ -52,11 +52,11 @@ def _wrap_chunk_init(start_time):
 def pytest_runtest_setup(item):
     item._swarm_test_start = time.perf_counter()
     print(f"\n=== {item.name} ===")
-    _ChunkMemo.__init__ = _wrap_chunk_init(item._swarm_test_start)
+    _ChunkCache.__init__ = _wrap_chunk_init(item._swarm_test_start)
 
 
 def pytest_runtest_teardown(item):
-    _ChunkMemo.__init__ = _ORIGINAL_INIT
+    _ChunkCache.__init__ = _ORIGINAL_INIT
     for attr in ("_swarm_stdout", "_swarm_stderr"):
         stream = getattr(item, attr, None)
         if stream is None:

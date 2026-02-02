@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from shard_memo import ChunkMemo, memo_parallel_run
+from shard_memo import ChunkCache, memo_parallel_run
 from shard_memo.runners import run
 
 
@@ -21,7 +21,7 @@ def exec_fn(params, s):
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     axis_values = {"s": list(range(n_points))}
     cache_root = root / f"exec_{exec_chunk_size}" / scenario
-    memo = ChunkMemo(
+    memo = ChunkCache(
         cache_root=str(cache_root),
         memo_chunk_spec={"s": 100},
         axis_values=axis_values,

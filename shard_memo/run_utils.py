@@ -28,7 +28,7 @@ def build_plan_lines(
     lines: list[str] = []
     lines.extend(format_params(params))
     lines.extend(format_spec(axis_values, axis_order))
-    lines.append(f"[ChunkMemo] plan: cached={cached_count} execute={execute_count}")
+    lines.append(f"[ChunkCache] plan: cached={cached_count} execute={execute_count}")
     return lines
 
 
@@ -66,7 +66,7 @@ def prepare_progress(
 def print_chunk_summary(diagnostics: DiagnosticsLike, verbose: int) -> None:
     if verbose >= 2:
         print_detail(
-            "[ChunkMemo] summary "
+            "[ChunkCache] summary "
             f"cached={diagnostics.cached_chunks} "
             f"executed={diagnostics.executed_chunks} "
             f"total={diagnostics.total_chunks}"

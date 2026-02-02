@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from shard_memo import ChunkMemo
+from shard_memo import ChunkCache
 from shard_memo.runners import run
 
 
@@ -24,7 +24,7 @@ def merge_fn(chunks):
 def main():
     output_root = Path("output")
     output_root.mkdir(exist_ok=True)
-    memo = ChunkMemo(
+    memo = ChunkCache(
         cache_root=output_root / "memo_cache",
         memo_chunk_spec={"strat": 1, "s": 2},
         axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},

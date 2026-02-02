@@ -46,7 +46,7 @@ def format_axis_values(values: Any) -> str:
 
 
 def format_params(params: Mapping[str, Any]) -> list[str]:
-    lines = ["[ChunkMemo] params:"]
+    lines = ["[ChunkCache] params:"]
     if not params:
         lines.append("  (none)")
         return lines
@@ -57,7 +57,7 @@ def format_params(params: Mapping[str, Any]) -> list[str]:
 
 
 def format_spec(axis_values: Mapping[str, Any], axis_order: Sequence[str]) -> list[str]:
-    lines = ["[ChunkMemo] spec:"]
+    lines = ["[ChunkCache] spec:"]
     for axis in axis_order:
         values = axis_values.get(axis)
         lines.append(f"  {axis}={format_axis_values(values)}")
@@ -93,7 +93,7 @@ def format_rate_eta(
     remaining = 0 if rate_total <= 0 else max(rate_total - rate_processed, 0)
     eta = remaining / rate if rate > 0 else float("inf")
     return (
-        f"[ChunkMemo] {label} {processed}/{total} "
+        f"[ChunkCache] {label} {processed}/{total} "
         f"({percent:0.1f}%) rate={rate:0.1f}/s ETA={format_eta(eta)}"
     )
 

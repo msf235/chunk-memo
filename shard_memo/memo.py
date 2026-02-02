@@ -77,7 +77,7 @@ class ChunkCache:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> None:
-        """Initialize a ChunkMemo cache.
+        """Initialize a ChunkCache.
 
         Args:
             cache_root: Directory for chunk cache files.
@@ -145,6 +145,38 @@ class ChunkCache:
         Uses runners.run_streaming under the hood.
         """
         return self._build_wrapper(params_arg=params_arg, streaming=True)
+
+    def run(
+        self,
+        params: dict[str, Any],
+        exec_fn: Callable[..., Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> Tuple[Any, Diagnostics]:
+        return run(
+            self,
+            params,
+            exec_fn,
+            axis_indices=axis_indices,
+            **axes,
+        )
+
+    def run_streaming(
+        self,
+        params: dict[str, Any],
+        exec_fn: Callable[..., Any],
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> Diagnostics:
+        return run_streaming(
+            self,
+            params,
+            exec_fn,
+            axis_indices=axis_indices,
+            **axes,
+        )
 
     def _prepare_params_and_extras(
         self,
@@ -249,7 +281,7 @@ class ChunkCache:
         use_index = bool(chunk_index)
         if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
-                f"[ChunkMemo] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
+                f"[ChunkCache] profile cache_status_build_s={time.monotonic() - profile_start:0.3f}"
             )
         cached_chunks: list[ChunkKey] = []
         cached_chunk_indices: list[dict[str, Any]] = []
@@ -271,7 +303,7 @@ class ChunkCache:
                 missing_chunk_indices.append(indices)
         if self.profile and self.verbose >= 1 and profile_start is not None:
             print(
-                f"[ChunkMemo] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
+                f"[ChunkCache] profile cache_status_scan_s={time.monotonic() - profile_start:0.3f}"
             )
         payload = {
             "params": params,
@@ -507,25 +539,13 @@ class ChunkCache:
             return self.axis_order
         return tuple(sorted(axis_values))
 
-    def _axis_values_from_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        axis_values = cache_status.get("axis_values")
-        if not isinstance(axis_values, Mapping):
-            raise ValueError("cache_status must include axis_values for memo axes")
-        return axis_values
-
-    def _axis_order_for_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> Tuple[str, ...]:
-        axis_values = self._axis_values_from_cache_status(cache_status)
-        return self._resolve_axis_order(dict(axis_values))
-
     def expand_cache_status(
         self, cache_status: Mapping[str, Any]
     ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]:
-        axis_values = self._axis_values_from_cache_status(cache_status)
-        axis_order = self._axis_order_for_cache_status(cache_status)
+        axis_values = cache_status.get("axis_values")
+        if not isinstance(axis_values, Mapping):
+            raise ValueError("cache_status must include axis_values for memo axes")
+        axis_order = self._resolve_axis_order(dict(axis_values))
         axis_chunk_maps = self._axis_chunk_maps(axis_values, axis_order)
         return axis_values, axis_order, axis_chunk_maps
 
@@ -821,46 +841,10 @@ class ChunkCache:
             item_axis_vals[item_key] = dict(zip(axis_names, values))
         return item_map, item_axis_vals
 
-    def _build_item_map(
-        self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> dict[str, Any] | None:
-        axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
-        if axis_values is None:
-            return None
-        item_map, _ = self.build_item_maps_from_axis_values(
-            chunk_key,
-            axis_values,
-            chunk_output,
-        )
-        return item_map
-
-    def _build_item_axis_vals_map(
-        self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> dict[str, dict[str, Any]] | None:
-        axis_values = self._item_axis_values_for_output(chunk_key, chunk_output)
-        if axis_values is None:
-            return None
-        _, item_axis_vals = self.build_item_maps_from_axis_values(
-            chunk_key,
-            axis_values,
-            chunk_output,
-        )
-        return item_axis_vals
-
-    def _item_axis_values_for_output(
-        self, chunk_key: ChunkKey, chunk_output: Any
-    ) -> list[Tuple[Any, ...]] | None:
-        if not isinstance(chunk_output, (list, tuple)):
-            return None
-        axis_values = list(self._iter_chunk_axis_values(chunk_key))
-        if len(axis_values) != len(chunk_output):
-            return None
-        return axis_values
-
     def reconstruct_output_from_items(
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
     ) -> list[Any] | None:
-        axis_values = list(self._iter_chunk_axis_values(chunk_key))
+        axis_values = list(self.iter_chunk_axis_values(chunk_key))
         if not axis_values:
             return None
         outputs: list[Any] = []
@@ -870,15 +854,6 @@ class ChunkCache:
                 return None
             outputs.append(items[item_key])
         return outputs
-
-    def _extract_cached_items(
-        self,
-        payload: Mapping[str, Any],
-        chunk_key: ChunkKey,
-        requested_items: list[Tuple[Any, ...]],
-    ) -> list[Any] | None:
-        item_map = payload.get("items")
-        return self.extract_items_from_map(item_map, chunk_key, requested_items)
 
     def extract_items_from_map(
         self,
@@ -906,7 +881,7 @@ class ChunkCache:
         data = _stable_serialize(payload)
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def _iter_chunk_axis_values(self, chunk_key: ChunkKey) -> Sequence[Tuple[Any, ...]]:
+    def iter_chunk_axis_values(self, chunk_key: ChunkKey) -> Sequence[Tuple[Any, ...]]:
         axis_values = [values for _, values in chunk_key]
         return list(itertools.product(*axis_values))
 
@@ -933,8 +908,9 @@ class ChunkCache:
             if chunk_output is None:
                 raise ValueError("Cache payload missing required data")
             return chunk_output
-        cached_outputs = self._extract_cached_items(
-            payload,
+        item_map = payload.get("items")
+        cached_outputs = self.extract_items_from_map(
+            item_map,
             chunk_key,
             requested_items,
         )
@@ -1245,7 +1221,7 @@ class ChunkCache:
                 that contain all requested data.
 
         Returns:
-            A ChunkMemo instance ready for execution.
+            A ChunkCache instance ready for execution.
 
         Raises:
             ValueError: If multiple caches match (ambiguous), if axis_values
@@ -1292,7 +1268,7 @@ class ChunkCache:
                 raise ValueError(
                     f"Ambiguous: {len(compatible_caches)} caches match the given criteria. "
                     f"Matching hashes: {matches}. "
-                    f"Use one of ChunkMemo.load_from_cache() to pick a specific cache."
+                    f"Use ChunkCache.load_from_cache() to pick a specific cache."
                 )
             if memo_chunk_spec is None:
                 memo_chunk_spec = {
@@ -1345,7 +1321,7 @@ class ChunkCache:
             raise ValueError(
                 f"Ambiguous: {len(matching_caches)} caches match the given params. "
                 f"Use axis_values parameter to disambiguate, or use one of "
-                f"ChunkMemo.load_from_cache() to pick a specific cache.\n"
+                f"ChunkCache.load_from_cache() to pick a specific cache.\n"
                 f"Matches:\n  " + "\n  ".join(matches)
             )
         return cls(
@@ -1378,7 +1354,7 @@ class ChunkCache:
         exclusive: bool = False,
         warn_on_overlap: bool = False,
     ) -> "ChunkCache":
-        """Load a ChunkMemo instance from an existing cache by memo_hash.
+        """Load a ChunkCache instance from an existing cache by memo_hash.
 
         Raises:
             FileNotFoundError: If the cache directory or metadata.json does not exist.
@@ -1449,256 +1425,3 @@ class ChunkCache:
             if required:
                 raise ValueError(f"Invalid metadata in {metadata_path}") from exc
             return None
-
-
-class ChunkMemo:
-    """Facade that pairs a cache with runner helpers."""
-
-    def __init__(
-        self,
-        cache_root: str | Path,
-        memo_chunk_spec: dict[str, Any],
-        axis_values: dict[str, Any],
-        merge_fn: MergeFn | None = None,
-        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
-        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
-        cache_path_fn: CachePathFn | None = None,
-        cache_version: str = "v1",
-        axis_order: Sequence[str] | None = None,
-        verbose: int = 1,
-        profile: bool = False,
-        exclusive: bool = False,
-        warn_on_overlap: bool = False,
-    ) -> None:
-        self.cache = ChunkCache(
-            cache_root=cache_root,
-            memo_chunk_spec=memo_chunk_spec,
-            axis_values=axis_values,
-            merge_fn=merge_fn,
-            memo_chunk_enumerator=memo_chunk_enumerator,
-            chunk_hash_fn=chunk_hash_fn,
-            cache_path_fn=cache_path_fn,
-            cache_version=cache_version,
-            axis_order=axis_order,
-            verbose=verbose,
-            profile=profile,
-            exclusive=exclusive,
-            warn_on_overlap=warn_on_overlap,
-        )
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return getattr(self.cache, name)
-
-    @property
-    def verbose(self) -> int:
-        return self.cache.verbose
-
-    @property
-    def profile(self) -> bool:
-        return self.cache.profile
-
-    @property
-    def merge_fn(self) -> MergeFn | None:
-        return self.cache.merge_fn
-
-    def prepare_run(
-        self,
-        params: dict[str, Any],
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> tuple[
-        dict[str, Any],
-        list[ChunkKey],
-        Mapping[ChunkKey, list[Tuple[Any, ...]]] | None,
-    ]:
-        return self.cache.prepare_run(params, axis_indices, **axes)
-
-    def cache_status(
-        self,
-        params: dict[str, Any],
-        *,
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> CacheStatus:
-        return self.cache.cache_status(params, axis_indices=axis_indices, **axes)
-
-    def chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str:
-        return self.cache.chunk_hash(params, chunk_key)
-
-    def resolve_cache_path(
-        self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
-    ) -> Path:
-        return self.cache.resolve_cache_path(params, chunk_key, chunk_hash)
-
-    def load_payload(self, path: Path) -> dict[str, Any] | None:
-        return self.cache.load_payload(path)
-
-    def load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any] | None:
-        return self.cache.load_chunk_index(params)
-
-    def update_chunk_index(
-        self, params: dict[str, Any], chunk_hash: str, chunk_key: ChunkKey
-    ) -> None:
-        self.cache.update_chunk_index(params, chunk_hash, chunk_key)
-
-    def build_item_maps_from_axis_values(
-        self,
-        chunk_key: ChunkKey,
-        axis_values: Sequence[Tuple[Any, ...]],
-        outputs: Sequence[Any],
-    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-        return self.cache.build_item_maps_from_axis_values(
-            chunk_key,
-            axis_values,
-            outputs,
-        )
-
-    def extract_items_from_map(
-        self,
-        item_map: Mapping[str, Any] | None,
-        chunk_key: ChunkKey,
-        requested_items: list[Tuple[Any, ...]],
-    ) -> list[Any] | None:
-        return self.cache.extract_items_from_map(item_map, chunk_key, requested_items)
-
-    def reconstruct_output_from_items(
-        self, chunk_key: ChunkKey, items: Mapping[str, Any]
-    ) -> list[Any] | None:
-        return self.cache.reconstruct_output_from_items(chunk_key, items)
-
-    def load_cached_output(
-        self,
-        payload: Mapping[str, Any],
-        chunk_key: ChunkKey,
-        requested_items: list[Tuple[Any, ...]] | None,
-        collate_fn: Callable[[list[Any]], Any],
-    ) -> Any | None:
-        return self.cache.load_cached_output(
-            payload,
-            chunk_key,
-            requested_items,
-            collate_fn,
-        )
-
-    def item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str:
-        return self.cache.item_hash(chunk_key, axis_values)
-
-    def expand_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]:
-        return self.cache.expand_cache_status(cache_status)
-
-    def write_metadata(self, params: dict[str, Any]) -> Path:
-        return self.cache.write_metadata(params)
-
-    @classmethod
-    def from_cache(cls, cache: ChunkCache) -> "ChunkMemo":
-        instance = cls.__new__(cls)
-        instance.cache = cache
-        return instance
-
-    @classmethod
-    def auto_load(
-        cls,
-        cache_root: str | Path,
-        params: dict[str, Any],
-        axis_values: dict[str, Any] | None = None,
-        memo_chunk_spec: dict[str, Any] | None = None,
-        merge_fn: MergeFn | None = None,
-        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
-        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
-        cache_path_fn: CachePathFn | None = None,
-        cache_version: str = "v1",
-        axis_order: Sequence[str] | None = None,
-        verbose: int = 1,
-        profile: bool = False,
-        exclusive: bool = False,
-        warn_on_overlap: bool = False,
-        allow_superset: bool = False,
-    ) -> "ChunkMemo":
-        cache = ChunkCache.auto_load(
-            cache_root=cache_root,
-            params=params,
-            axis_values=axis_values,
-            memo_chunk_spec=memo_chunk_spec,
-            merge_fn=merge_fn,
-            memo_chunk_enumerator=memo_chunk_enumerator,
-            chunk_hash_fn=chunk_hash_fn,
-            cache_path_fn=cache_path_fn,
-            cache_version=cache_version,
-            axis_order=axis_order,
-            verbose=verbose,
-            profile=profile,
-            exclusive=exclusive,
-            warn_on_overlap=warn_on_overlap,
-            allow_superset=allow_superset,
-        )
-        return cls.from_cache(cache)
-
-    @classmethod
-    def load_from_cache(
-        cls,
-        cache_root: str | Path,
-        memo_hash: str,
-        merge_fn: MergeFn | None = None,
-        memo_chunk_enumerator: MemoChunkEnumerator | None = None,
-        chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
-        cache_path_fn: CachePathFn | None = None,
-        verbose: int = 1,
-        profile: bool = False,
-        exclusive: bool = False,
-        warn_on_overlap: bool = False,
-    ) -> "ChunkMemo":
-        cache = ChunkCache.load_from_cache(
-            cache_root=cache_root,
-            memo_hash=memo_hash,
-            merge_fn=merge_fn,
-            memo_chunk_enumerator=memo_chunk_enumerator,
-            chunk_hash_fn=chunk_hash_fn,
-            cache_path_fn=cache_path_fn,
-            verbose=verbose,
-            profile=profile,
-            exclusive=exclusive,
-            warn_on_overlap=warn_on_overlap,
-        )
-        return cls.from_cache(cache)
-
-    @classmethod
-    def discover_caches(cls, cache_root: str | Path) -> list[dict[str, Any]]:
-        return ChunkCache.discover_caches(cache_root)
-
-    @classmethod
-    def find_compatible_caches(
-        cls,
-        cache_root: str | Path,
-        params: dict[str, Any] | None = None,
-        axis_values: dict[str, Any] | None = None,
-        memo_chunk_spec: dict[str, Any] | None = None,
-        cache_version: str | None = None,
-        axis_order: Sequence[str] | None = None,
-        allow_superset: bool = False,
-    ) -> list[dict[str, Any]]:
-        return ChunkCache.find_compatible_caches(
-            cache_root=cache_root,
-            params=params,
-            axis_values=axis_values,
-            memo_chunk_spec=memo_chunk_spec,
-            cache_version=cache_version,
-            axis_order=axis_order,
-            allow_superset=allow_superset,
-        )
-
-    @classmethod
-    def find_overlapping_caches(
-        cls,
-        cache_root: str | Path,
-        params: dict[str, Any],
-        axis_values: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        return ChunkCache.find_overlapping_caches(
-            cache_root=cache_root,
-            params=params,
-            axis_values=axis_values,
-        )

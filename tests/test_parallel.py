@@ -1,7 +1,7 @@
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 
-from shard_memo import ChunkMemo, memo_parallel_run, memo_parallel_run_streaming
+from shard_memo import ChunkCache, memo_parallel_run, memo_parallel_run_streaming
 from shard_memo.runners import run as memo_run
 
 from .utils import exec_fn_grid, item_dicts, observed_items
@@ -11,7 +11,7 @@ def test_memo_parallel_run_missing_only():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
@@ -48,7 +48,7 @@ def test_memo_parallel_run_with_memoized_cache_status():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
@@ -88,7 +88,7 @@ def test_memo_parallel_run_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
@@ -137,7 +137,7 @@ def test_parallel_run_populates_memo_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
@@ -175,7 +175,7 @@ def test_parallel_run_streaming_populates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,

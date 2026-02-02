@@ -6,7 +6,7 @@ This shows how to use index-based functions for axis_values instead of
 loading full lists into memory at initialization.
 """
 
-from shard_memo import ChunkMemo
+from shard_memo import ChunkCache
 from shard_memo.runners import run
 import tempfile
 from pathlib import Path
@@ -46,7 +46,7 @@ def example_with_lists():
         def exec_fn(params, strat, s):
             return [{"result": f"{strat[0]}-{s[0]}"}]
 
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec=memo_chunk_spec,
             axis_values=axis_values,
@@ -68,7 +68,7 @@ def example_with_callables():
         def exec_fn(params, strat, s):
             return [{"result": f"{strat[0]}-{s[0]}"}]
 
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec=memo_chunk_spec,
             axis_values=axis_values,
@@ -95,7 +95,7 @@ def example_mixed():
         def exec_fn(params, strat, s):
             return [{"result": f"{strat[0]}-{s[0]}"}]
 
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec=memo_chunk_spec,
             axis_values=axis_values,
@@ -108,7 +108,7 @@ def example_mixed():
 
 
 if __name__ == "__main__":
-    print("=== ChunkMemo Callable Axis Values Example ===\n")
+    print("=== ChunkCache Callable Axis Values Example ===\n")
 
     print("1. Traditional approach with lists:")
     example_with_lists()

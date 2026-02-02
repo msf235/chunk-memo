@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from shard_memo import ChunkMemo, memo_parallel_run
+from shard_memo import ChunkCache, memo_parallel_run
 from shard_memo.runners import run
 
 
@@ -32,7 +32,7 @@ def main():
     params = {"alpha": 0.4}
     axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
-    memo = ChunkMemo(
+    memo = ChunkCache(
         cache_root=output_root / "memo_run_cache",
         memo_chunk_spec={"strat": 1, "s": 3},
         axis_values=axis_values,

@@ -83,7 +83,7 @@ changes. - Keep docstrings concise and focused on usage.
 ## File-Specific Guidance
 
 ### `shard_memo/core.py` - Core logic and API entry points. - Preserve method
-signatures on `ChunkMemo` unless necessary. - Maintain deterministic ordering
+signatures on `ChunkCache` unless necessary. - Maintain deterministic ordering
 and chunk behavior.
 
 ### `tests/test_chunk_memo.py` - Tests are written in a straightforward,

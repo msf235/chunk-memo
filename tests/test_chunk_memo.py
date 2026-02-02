@@ -1,11 +1,10 @@
 import itertools
 import tempfile
 import time
-from typing import cast
 
 import pytest  # type: ignore[import-not-found]
 
-from shard_memo import ChunkMemo as _ChunkMemo
+from shard_memo import ChunkCache
 from shard_memo.runners import run as memo_run
 from shard_memo.runners import run_streaming as memo_run_streaming
 
@@ -60,7 +59,7 @@ def exec_point_extra_param(params, strat, s, extra=2):
 
 
 def run_memo(cache_root, *, merge=True, chunk_spec=None, axis_values):
-    return ChunkMemo(
+    return ChunkCache(
         cache_root=cache_root,
         memo_chunk_spec=chunk_spec or {"strat": 1, "s": 3},
         axis_values=axis_values,
@@ -260,7 +259,7 @@ def test_memo_chunk_enumerator_order():
 
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec=memo_chunk_spec,
             axis_values=axis_values,
@@ -326,7 +325,7 @@ def test_streaming_diagnostics_bound_memory():
 
 def test_discover_caches_empty():
     with tempfile.TemporaryDirectory() as temp_dir:
-        caches = ChunkMemo.discover_caches(temp_dir)
+        caches = ChunkCache.discover_caches(temp_dir)
         assert caches == []
 
 
@@ -337,7 +336,7 @@ def test_discover_caches_finds_caches():
         params = {"alpha": 0.4}
         _, diag = memo.run(params, exec_fn_grid)
 
-        caches = ChunkMemo.discover_caches(temp_dir)
+        caches = ChunkCache.discover_caches(temp_dir)
         assert len(caches) == 1
         assert caches[0]["metadata"] is not None
         assert caches[0]["metadata"]["axis_values"] == axis_values
@@ -350,10 +349,12 @@ def test_find_compatible_caches_by_params():
         params = {"alpha": 0.4}
         _, diag = memo.run(params, exec_fn_grid)
 
-        compatible = ChunkMemo.find_compatible_caches(temp_dir, params=params)
+        compatible = ChunkCache.find_compatible_caches(temp_dir, params=params)
         assert len(compatible) == 1
 
-        incompatible = ChunkMemo.find_compatible_caches(temp_dir, params={"alpha": 0.5})
+        incompatible = ChunkCache.find_compatible_caches(
+            temp_dir, params={"alpha": 0.5}
+        )
         assert len(incompatible) == 0
 
 
@@ -364,10 +365,12 @@ def test_find_compatible_caches_by_axis_values():
         params = {"alpha": 0.4}
         _, diag = memo.run(params, exec_fn_grid)
 
-        compatible = ChunkMemo.find_compatible_caches(temp_dir, axis_values=axis_values)
+        compatible = ChunkCache.find_compatible_caches(
+            temp_dir, axis_values=axis_values
+        )
         assert len(compatible) == 1
 
-        incompatible = ChunkMemo.find_compatible_caches(
+        incompatible = ChunkCache.find_compatible_caches(
             temp_dir, axis_values={"strat": ["b"]}
         )
         assert len(incompatible) == 0
@@ -380,7 +383,7 @@ def test_find_compatible_caches_wildcard():
         params = {"alpha": 0.4}
         _, diag = memo.run(params, exec_fn_grid)
 
-        compatible = ChunkMemo.find_compatible_caches(temp_dir)
+        compatible = ChunkCache.find_compatible_caches(temp_dir)
         assert len(compatible) == 1
 
 
@@ -392,7 +395,7 @@ def test_load_from_cache():
         output1, diag1 = memo.run(params, exec_fn_grid)
 
         memo_hash = memo.memo_hash(params)
-        memo2 = ChunkMemo.load_from_cache(temp_dir, memo_hash, merge_fn=merge_fn)
+        memo2 = ChunkCache.load_from_cache(temp_dir, memo_hash, merge_fn=merge_fn)
         output2, diag2 = memo2.run(params, exec_fn_grid)
 
         assert output1 == output2
@@ -403,13 +406,13 @@ def test_load_from_cache():
 def test_load_from_cache_not_found():
     with tempfile.TemporaryDirectory() as temp_dir:
         with pytest.raises(FileNotFoundError):
-            ChunkMemo.load_from_cache(temp_dir, "nonexistent_hash")
+            ChunkCache.load_from_cache(temp_dir, "nonexistent_hash")
 
 
 def test_singleton_cache_basic():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
@@ -424,7 +427,7 @@ def test_singleton_cache_basic():
 def test_singleton_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
@@ -440,7 +443,7 @@ def test_singleton_cache_reuse():
 
 def test_singleton_cache_param_change():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
@@ -456,7 +459,7 @@ def test_singleton_cache_param_change():
 def test_singleton_cache_no_axes_allowed():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
@@ -472,7 +475,7 @@ def test_singleton_cache_no_axes_allowed():
 def test_singleton_cache_streaming():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
@@ -488,7 +491,7 @@ def test_singleton_cache_streaming():
 def test_singleton_via_regular_constructor():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ChunkMemo(
+        memo = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
@@ -508,7 +511,7 @@ def test_exclusive_mode_exact_match():
         params = {"alpha": 0.4}
         memo.run(params, exec_fn_grid)
 
-        memo2 = ChunkMemo(
+        memo2 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values,
@@ -528,7 +531,7 @@ def test_exclusive_mode_rejects_different_chunking():
         params = {"alpha": 0.4}
         memo.run(params, exec_fn_grid)
 
-        memo2 = ChunkMemo(
+        memo2 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
@@ -544,7 +547,7 @@ def test_exclusive_mode_rejects_different_chunking():
 @pytest.mark.skip("pre-existing test issue, requires refactoring")
 def test_warn_on_overlap():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo1 = ChunkMemo(
+        memo1 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
@@ -553,7 +556,7 @@ def test_warn_on_overlap():
         params = {"alpha": 0.4}
         memo1.run(params, exec_fn_grid)
 
-        memo2 = ChunkMemo(
+        memo2 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 2},
             axis_values={"strat": ["a"], "s": [1, 2, 3, 4]},
@@ -567,7 +570,7 @@ def test_warn_on_overlap():
 
 def test_find_overlapping_caches():
     with tempfile.TemporaryDirectory() as temp_dir:
-        memo1 = ChunkMemo(
+        memo1 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
@@ -576,7 +579,7 @@ def test_find_overlapping_caches():
         params = {"alpha": 0.4}
         memo1.run(params, exec_fn_grid)
 
-        overlapping = ChunkMemo.find_overlapping_caches(
+        overlapping = ChunkCache.find_overlapping_caches(
             temp_dir,
             params,
             {"strat": ["a"], "s": [1, 2, 3, 4]},
@@ -584,14 +587,14 @@ def test_find_overlapping_caches():
         assert len(overlapping) == 1
         assert overlapping[0]["overlap"] == {"s": [1, 2, 3], "strat": ["a"]}
 
-        no_overlap = ChunkMemo.find_overlapping_caches(
+        no_overlap = ChunkCache.find_overlapping_caches(
             temp_dir,
             params,
             {"strat": ["c"], "s": [1, 2, 3]},
         )
         assert len(no_overlap) == 0
 
-        different_params = ChunkMemo.find_overlapping_caches(
+        different_params = ChunkCache.find_overlapping_caches(
             temp_dir,
             {"alpha": 0.5},
             {"strat": ["a"], "s": [1, 2, 3]},
@@ -602,7 +605,7 @@ def test_find_overlapping_caches():
 def test_auto_load_no_existing_creates_new():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo = ChunkMemo.auto_load(temp_dir, params)
+        memo = ChunkCache.auto_load(temp_dir, params)
         output, diag = memo.run(params, exec_fn_singleton)
 
         assert output == [{"value": 0.8}]
@@ -612,14 +615,14 @@ def test_auto_load_no_existing_creates_new():
 def test_auto_load_finds_singleton():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo1 = ChunkMemo(
+        memo1 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
         )
         output1, diag1 = memo1.run(params, exec_fn_singleton)
 
-        memo2 = ChunkMemo.auto_load(temp_dir, params)
+        memo2 = ChunkCache.auto_load(temp_dir, params)
         output2, diag2 = memo2.run(params, exec_fn_singleton)
 
         assert output1 == output2
@@ -635,7 +638,7 @@ def test_auto_load_with_axis_values_exact():
         params = {"alpha": 0.4}
         output1, diag1 = memo1.run(params, exec_fn_grid)
 
-        memo2 = ChunkMemo.auto_load(
+        memo2 = ChunkCache.auto_load(
             temp_dir, params, axis_values=axis_values, merge_fn=merge_fn
         )
         output2, diag2 = memo2.run(params, exec_fn_grid)
@@ -648,14 +651,14 @@ def test_auto_load_with_axis_values_exact():
 def test_auto_load_ambiguous_no_axis_values():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        memo1 = ChunkMemo(
+        memo1 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={},
             axis_values={},
         )
         memo1.run(params, exec_fn_singleton)
 
-        memo2 = ChunkMemo(
+        memo2 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 1},
             axis_values={"strat": ["a", "b"], "s": [1, 2]},
@@ -664,7 +667,7 @@ def test_auto_load_ambiguous_no_axis_values():
         memo2.run(params, exec_fn_grid)
 
         with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
-            ChunkMemo.auto_load(temp_dir, params)
+            ChunkCache.auto_load(temp_dir, params)
 
 
 def test_auto_load_ambiguous_with_axis_values():
@@ -676,7 +679,7 @@ def test_auto_load_ambiguous_with_axis_values():
         )
         memo1.run(params, exec_fn_grid)
 
-        memo2 = ChunkMemo(
+        memo2 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 2, "s": 3},
             axis_values=axis_values,
@@ -685,14 +688,14 @@ def test_auto_load_ambiguous_with_axis_values():
         memo2.run(params, exec_fn_grid)
 
         with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
-            ChunkMemo.auto_load(temp_dir, params, axis_values=axis_values)
+            ChunkCache.auto_load(temp_dir, params, axis_values=axis_values)
 
 
 def test_auto_load_with_memo_chunk_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
-        memo = ChunkMemo.auto_load(
+        memo = ChunkCache.auto_load(
             temp_dir,
             params,
             axis_values=axis_values,
@@ -710,7 +713,7 @@ def test_auto_load_default_chunk_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
-        memo = ChunkMemo.auto_load(temp_dir, params, axis_values=axis_values)
+        memo = ChunkCache.auto_load(temp_dir, params, axis_values=axis_values)
         output, diag = memo.run(params, exec_fn_grid)
 
         assert output
@@ -721,7 +724,7 @@ def test_allow_superset_finds_superset_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -733,7 +736,7 @@ def test_allow_superset_finds_superset_cache():
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
 
-        memo_subset = ChunkMemo.auto_load(
+        memo_subset = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -751,7 +754,7 @@ def test_allow_superset_false_requires_exact_match():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -762,7 +765,7 @@ def test_allow_superset_false_requires_exact_match():
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
 
-        memo_subset = ChunkMemo.auto_load(
+        memo_subset = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -781,7 +784,7 @@ def test_allow_superset_multiple_supersets_raises_error():
         axis_values2 = {"strat": ["a", "c"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
 
-        memo1 = ChunkMemo(
+        memo1 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values1,
@@ -789,7 +792,7 @@ def test_allow_superset_multiple_supersets_raises_error():
         )
         memo1.run(params_superset, exec_fn_grid)
 
-        memo2 = ChunkMemo(
+        memo2 = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values2,
@@ -801,7 +804,7 @@ def test_allow_superset_multiple_supersets_raises_error():
         params_subset = {"alpha": 0.4, "strat": "a"}
 
         with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
-            ChunkMemo.auto_load(
+            ChunkCache.auto_load(
                 temp_dir,
                 params_subset,
                 axis_values=axis_values_subset,
@@ -813,7 +816,7 @@ def test_exclusive_prevents_subset_cache_creation():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -829,7 +832,7 @@ def test_exclusive_prevents_subset_cache_creation():
             ValueError,
             match="Cannot create subset cache: a superset cache already exists",
         ):
-            memo_subset = ChunkMemo.auto_load(
+            memo_subset = ChunkCache.auto_load(
                 temp_dir,
                 params_subset,
                 axis_values=axis_values_subset,
@@ -844,7 +847,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -860,7 +863,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
             ValueError,
             match="Cannot create subset cache: a superset cache already exists",
         ):
-            memo = ChunkMemo.auto_load(
+            memo = ChunkCache.auto_load(
                 temp_dir,
                 params_subset,
                 axis_values=axis_values_subset,
@@ -874,7 +877,7 @@ def test_find_compatible_caches_with_allow_superset():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -885,7 +888,7 @@ def test_find_compatible_caches_with_allow_superset():
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
 
-        caches_superset = ChunkMemo.find_compatible_caches(
+        caches_superset = ChunkCache.find_compatible_caches(
             temp_dir,
             params=params_subset,
             axis_values=axis_values_subset,
@@ -893,7 +896,7 @@ def test_find_compatible_caches_with_allow_superset():
         )
         assert len(caches_superset) == 1
 
-        caches_exact = ChunkMemo.find_compatible_caches(
+        caches_exact = ChunkCache.find_compatible_caches(
             temp_dir,
             params=params_subset,
             axis_values=axis_values_subset,
@@ -907,7 +910,7 @@ def test_allow_superset_no_superset_creates_new():
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
 
-        memo_subset = ChunkMemo(
+        memo_subset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_subset,
@@ -919,7 +922,7 @@ def test_allow_superset_no_superset_creates_new():
         axis_values_different = {"strat": ["b"], "s": [1, 2, 3]}
         params_different = {"alpha": 0.4, "strat": "b"}
 
-        memo_different = ChunkMemo.auto_load(
+        memo_different = ChunkCache.auto_load(
             temp_dir,
             params_different,
             axis_values=axis_values_different,
@@ -937,7 +940,7 @@ def test_allow_superset_mixed_params_and_axes():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -948,7 +951,7 @@ def test_allow_superset_mixed_params_and_axes():
         axis_values_subset = {"s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
 
-        memo_subset = ChunkMemo.auto_load(
+        memo_subset = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -966,7 +969,7 @@ def test_allow_superset_partial_subset_match():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b", "c"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -977,7 +980,7 @@ def test_allow_superset_partial_subset_match():
         axis_values_subset = {"strat": ["a"], "s": [1]}
         params_subset = {"alpha": 0.4}
 
-        memo_subset = ChunkMemo.auto_load(
+        memo_subset = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -995,7 +998,7 @@ def test_exclusive_prevents_redundant_subset():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -1007,7 +1010,7 @@ def test_exclusive_prevents_redundant_subset():
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4}
 
-        memo_test = ChunkMemo.auto_load(
+        memo_test = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -1026,7 +1029,7 @@ def test_allow_superset_with_different_params():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -1037,7 +1040,7 @@ def test_allow_superset_with_different_params():
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.5, "strat": "a"}
 
-        memo_subset = ChunkMemo.auto_load(
+        memo_subset = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -1055,7 +1058,7 @@ def test_allow_superset_multiple_axes_subset():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
-        memo_superset = ChunkMemo(
+        memo_superset = ChunkCache(
             cache_root=temp_dir,
             memo_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
@@ -1066,7 +1069,7 @@ def test_allow_superset_multiple_axes_subset():
         axis_values_subset = {"strat": ["a"], "s": [1]}
         params_subset = {"alpha": 0.4}
 
-        memo_subset = ChunkMemo.auto_load(
+        memo_subset = ChunkCache.auto_load(
             temp_dir,
             params_subset,
             axis_values=axis_values_subset,
@@ -1078,26 +1081,3 @@ def test_allow_superset_multiple_axes_subset():
         assert output
         assert diag.cached_chunks > 0
         assert diag.executed_chunks == 0
-
-
-class ChunkMemo(_ChunkMemo):
-    def run(self, *args, **kwargs):
-        return memo_run(self, *args, **kwargs)
-
-    def run_streaming(self, *args, **kwargs):
-        return memo_run_streaming(self, *args, **kwargs)
-
-    @classmethod
-    def _wrap_instance(cls, instance: _ChunkMemo) -> "ChunkMemo":
-        instance.__class__ = cls
-        return cast(ChunkMemo, instance)
-
-    @classmethod
-    def load_from_cache(cls, *args, **kwargs) -> "ChunkMemo":
-        instance = _ChunkMemo.load_from_cache(*args, **kwargs)
-        return cls._wrap_instance(instance)
-
-    @classmethod
-    def auto_load(cls, *args, **kwargs) -> "ChunkMemo":
-        instance = _ChunkMemo.auto_load(*args, **kwargs)
-        return cls._wrap_instance(instance)
