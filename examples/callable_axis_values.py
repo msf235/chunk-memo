@@ -53,7 +53,19 @@ def example_with_lists():
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
 
-        output, diag = run(memo, params, exec_fn)
+        run_kwargs = {
+            "prepare_run": memo.prepare_run,
+            "chunk_hash": memo.chunk_hash,
+            "resolve_cache_path": memo.resolve_cache_path,
+            "load_payload": memo.load_payload,
+            "write_chunk_payload": memo.write_chunk_payload,
+            "update_chunk_index": memo.update_chunk_index,
+            "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+            "extract_items_from_map": memo.extract_items_from_map,
+            "collect_chunk_data": memo.collect_chunk_data,
+            "context": memo,
+        }
+        output, diag = run(params, exec_fn, **run_kwargs)
         print(f"Lists approach: {output}")
         print(f"  Executed: {diag.executed_chunks}, Cached: {diag.cached_chunks}")
 
@@ -75,7 +87,19 @@ def example_with_callables():
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
 
-        output, diag = run(memo, params, exec_fn)
+        run_kwargs = {
+            "prepare_run": memo.prepare_run,
+            "chunk_hash": memo.chunk_hash,
+            "resolve_cache_path": memo.resolve_cache_path,
+            "load_payload": memo.load_payload,
+            "write_chunk_payload": memo.write_chunk_payload,
+            "update_chunk_index": memo.update_chunk_index,
+            "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+            "extract_items_from_map": memo.extract_items_from_map,
+            "collect_chunk_data": memo.collect_chunk_data,
+            "context": memo,
+        }
+        output, diag = run(params, exec_fn, **run_kwargs)
         print(f"Callables approach: {output}")
         print(f"  Executed: {diag.executed_chunks}, Cached: {diag.cached_chunks}")
 
@@ -102,7 +126,19 @@ def example_mixed():
             merge_fn=lambda chunks: [c[0]["result"] for c in chunks],
         )
 
-        output, diag = run(memo, params, exec_fn)
+        run_kwargs = {
+            "prepare_run": memo.prepare_run,
+            "chunk_hash": memo.chunk_hash,
+            "resolve_cache_path": memo.resolve_cache_path,
+            "load_payload": memo.load_payload,
+            "write_chunk_payload": memo.write_chunk_payload,
+            "update_chunk_index": memo.update_chunk_index,
+            "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+            "extract_items_from_map": memo.extract_items_from_map,
+            "collect_chunk_data": memo.collect_chunk_data,
+            "context": memo,
+        }
+        output, diag = run(params, exec_fn, **run_kwargs)
         print(f"Mixed approach: {output}")
         print(f"  Executed: {diag.executed_chunks}, Cached: {diag.cached_chunks}")
 

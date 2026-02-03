@@ -2,9 +2,64 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor
 
 from shard_memo import ChunkCache, memo_parallel_run, memo_parallel_run_streaming
-from shard_memo.runners import run as memo_run
+from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, item_dicts, observed_items
+
+
+def _run_kwargs(memo):
+    return {
+        "prepare_run": memo.prepare_run,
+        "chunk_hash": memo.chunk_hash,
+        "resolve_cache_path": memo.resolve_cache_path,
+        "load_payload": memo.load_payload,
+        "write_chunk_payload": memo.write_chunk_payload,
+        "update_chunk_index": memo.update_chunk_index,
+        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+        "extract_items_from_map": memo.extract_items_from_map,
+        "collect_chunk_data": memo.collect_chunk_data,
+        "context": memo,
+    }
+
+
+def _parallel_kwargs(memo):
+    return {
+        "cache_status_fn": memo.cache_status,
+        "write_metadata": memo.write_metadata,
+        "chunk_hash": memo.chunk_hash,
+        "resolve_cache_path": memo.resolve_cache_path,
+        "load_payload": memo.load_payload,
+        "write_chunk_payload": memo.write_chunk_payload,
+        "update_chunk_index": memo.update_chunk_index,
+        "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
+        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+        "reconstruct_output_from_items": memo.reconstruct_output_from_items,
+        "collect_chunk_data": memo.collect_chunk_data,
+        "item_hash": memo.item_hash,
+        "context": memo,
+    }
+
+
+def _parallel_streaming_kwargs(memo):
+    return {
+        "cache_status_fn": memo.cache_status,
+        "write_metadata": memo.write_metadata,
+        "chunk_hash": memo.chunk_hash,
+        "resolve_cache_path": memo.resolve_cache_path,
+        "load_payload": memo.load_payload,
+        "write_chunk_payload": memo.write_chunk_payload,
+        "update_chunk_index": memo.update_chunk_index,
+        "load_chunk_index": memo.load_chunk_index,
+        "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
+        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+        "reconstruct_output_from_items": memo.reconstruct_output_from_items,
+        "item_hash": memo.item_hash,
+        "context": memo,
+    }
+
+
+def memo_run(memo, params, exec_fn, **kwargs):
+    return _memo_run(params, exec_fn, **_run_kwargs(memo), **kwargs)
 
 
 def test_memo_parallel_run_missing_only():
@@ -22,9 +77,9 @@ def test_memo_parallel_run_missing_only():
             params, strat=axis_values["strat"], s=axis_values["s"]
         )
         outputs, diag = memo_parallel_run(
-            memo,
             items,
             exec_fn=exec_fn_grid,
+            **_parallel_kwargs(memo),
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -60,9 +115,9 @@ def test_memo_parallel_run_with_memoized_cache_status():
             params, strat=axis_values["strat"], s=axis_values["s"]
         )
         outputs, diag = memo_parallel_run(
-            memo,
             items,
             exec_fn=exec_fn_grid,
+            **_parallel_kwargs(memo),
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -99,9 +154,9 @@ def test_memo_parallel_run_cache_reuse():
             params, strat=axis_values["strat"], s=axis_values["s"]
         )
         memo_parallel_run(
-            memo,
             items,
             exec_fn=exec_fn_grid,
+            **_parallel_kwargs(memo),
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -111,9 +166,9 @@ def test_memo_parallel_run_cache_reuse():
             params, strat=axis_values["strat"], s=axis_values["s"]
         )
         outputs, diag = memo_parallel_run(
-            memo,
             items,
             exec_fn=exec_fn_grid,
+            **_parallel_kwargs(memo),
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -148,9 +203,9 @@ def test_parallel_run_populates_memo_cache():
             params, strat=axis_values["strat"], s=axis_values["s"]
         )
         memo_parallel_run(
-            memo,
             items,
             exec_fn=exec_fn_grid,
+            **_parallel_kwargs(memo),
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -187,9 +242,9 @@ def test_parallel_run_streaming_populates_cache():
         )
         with ProcessPoolExecutor(max_workers=2) as executor:
             diag = memo_parallel_run_streaming(
-                memo,
                 items,
                 exec_fn=exec_fn_grid,
+                **_parallel_streaming_kwargs(memo),
                 cache_status=status,
                 map_fn=executor.map,
                 map_fn_kwargs={"chunksize": 1},

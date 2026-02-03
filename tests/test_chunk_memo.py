@@ -5,8 +5,8 @@ import time
 import pytest  # type: ignore[import-not-found]
 
 from shard_memo import ChunkCache, ChunkMemo
-from shard_memo.runners import run as memo_run
-from shard_memo.runners import run_streaming as memo_run_streaming
+from shard_memo.runners import run as _memo_run
+from shard_memo.runners import run_streaming as _memo_run_streaming
 
 from .utils import exec_fn_grid
 
@@ -28,6 +28,42 @@ def merge_fn(chunks):
     for chunk in chunks:
         merged.extend(chunk)
     return merged
+
+
+def _run_kwargs(memo):
+    return {
+        "prepare_run": memo.prepare_run,
+        "chunk_hash": memo.chunk_hash,
+        "resolve_cache_path": memo.resolve_cache_path,
+        "load_payload": memo.load_payload,
+        "write_chunk_payload": memo.write_chunk_payload,
+        "update_chunk_index": memo.update_chunk_index,
+        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+        "extract_items_from_map": memo.extract_items_from_map,
+        "collect_chunk_data": memo.collect_chunk_data,
+        "context": memo,
+    }
+
+
+def _stream_kwargs(memo):
+    return {
+        "prepare_run": memo.prepare_run,
+        "chunk_hash": memo.chunk_hash,
+        "resolve_cache_path": memo.resolve_cache_path,
+        "load_payload": memo.load_payload,
+        "write_chunk_payload": memo.write_chunk_payload,
+        "update_chunk_index": memo.update_chunk_index,
+        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+        "context": memo,
+    }
+
+
+def memo_run(memo, params, exec_fn, **kwargs):
+    return _memo_run(params, exec_fn, **_run_kwargs(memo), **kwargs)
+
+
+def memo_run_streaming(memo, params, exec_fn, **kwargs):
+    return _memo_run_streaming(params, exec_fn, **_stream_kwargs(memo), **kwargs)
 
 
 def exec_point_extra_default(params, strat, s, extra=1):

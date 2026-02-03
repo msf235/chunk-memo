@@ -28,13 +28,39 @@ def run_warm_benchmark(*, n_points, chunk_size, repeats):
             verbose=0,
         )
         start = time.perf_counter()
-        run(memo, params, exec_fn)
+        run(
+            params,
+            exec_fn,
+            prepare_run=memo.prepare_run,
+            chunk_hash=memo.chunk_hash,
+            resolve_cache_path=memo.resolve_cache_path,
+            load_payload=memo.load_payload,
+            write_chunk_payload=memo.write_chunk_payload,
+            update_chunk_index=memo.update_chunk_index,
+            build_item_maps_from_chunk_output=memo.build_item_maps_from_chunk_output,
+            extract_items_from_map=memo.extract_items_from_map,
+            collect_chunk_data=memo.collect_chunk_data,
+            context=memo,
+        )
         cold_time = time.perf_counter() - start
 
         run_times = []
         for _ in range(repeats):
             start = time.perf_counter()
-            run(memo, params, exec_fn)
+            run(
+                params,
+                exec_fn,
+                prepare_run=memo.prepare_run,
+                chunk_hash=memo.chunk_hash,
+                resolve_cache_path=memo.resolve_cache_path,
+                load_payload=memo.load_payload,
+                write_chunk_payload=memo.write_chunk_payload,
+                update_chunk_index=memo.update_chunk_index,
+                build_item_maps_from_chunk_output=memo.build_item_maps_from_chunk_output,
+                extract_items_from_map=memo.extract_items_from_map,
+                collect_chunk_data=memo.collect_chunk_data,
+                context=memo,
+            )
             run_times.append(time.perf_counter() - start)
 
     return {

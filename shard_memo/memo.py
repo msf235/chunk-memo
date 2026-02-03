@@ -7,7 +7,7 @@ import inspect
 from typing import Any, Callable, Mapping, Tuple, cast
 
 from .cache import ChunkCache
-from .runner_protocol import MemoRunnerBackend
+from .runner_protocol import RunnerContext
 from .runners import Diagnostics, run, run_streaming
 
 
@@ -79,16 +79,32 @@ class ChunkMemo:
                 exec_fn = functools.partial(func, **exec_extras)
                 if streaming:
                     return run_streaming(
-                        cast(MemoRunnerBackend, self.cache),
                         merged_params,
-                        exec_fn=exec_fn,
+                        exec_fn,
+                        prepare_run=self.cache.prepare_run,
+                        chunk_hash=self.cache.chunk_hash,
+                        resolve_cache_path=self.cache.resolve_cache_path,
+                        load_payload=self.cache.load_payload,
+                        write_chunk_payload=self.cache.write_chunk_payload,
+                        update_chunk_index=self.cache.update_chunk_index,
+                        build_item_maps_from_chunk_output=self.cache.build_item_maps_from_chunk_output,
+                        context=cast(RunnerContext, self.cache),
                         axis_indices=axis_indices,
                         **axis_inputs,
                     )
                 return run(
-                    cast(MemoRunnerBackend, self.cache),
                     merged_params,
-                    exec_fn=exec_fn,
+                    exec_fn,
+                    prepare_run=self.cache.prepare_run,
+                    chunk_hash=self.cache.chunk_hash,
+                    resolve_cache_path=self.cache.resolve_cache_path,
+                    load_payload=self.cache.load_payload,
+                    write_chunk_payload=self.cache.write_chunk_payload,
+                    update_chunk_index=self.cache.update_chunk_index,
+                    build_item_maps_from_chunk_output=self.cache.build_item_maps_from_chunk_output,
+                    extract_items_from_map=self.cache.extract_items_from_map,
+                    collect_chunk_data=self.cache.collect_chunk_data,
+                    context=cast(RunnerContext, self.cache),
                     axis_indices=axis_indices,
                     **axis_inputs,
                 )

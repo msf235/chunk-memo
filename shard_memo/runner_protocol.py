@@ -1,4 +1,4 @@
-"""Public runner-facing protocol and cache status shape."""
+"""Runner protocols and cache status shape."""
 
 from __future__ import annotations
 
@@ -6,115 +6,57 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence, Tuple, TypedDict
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
+AxisChunkMaps = dict[str, dict[Any, int]]
 
 
-class MinimalCacheStatus(TypedDict):
-    """Required cache status keys for runners."""
+class CacheStatus(TypedDict):
+    """Cache status payload consumed by runners."""
 
     params: dict[str, Any]
     axis_values: Mapping[str, Any]
+    axis_order: Tuple[str, ...]
+    axis_chunk_maps: AxisChunkMaps
     cached_chunks: list[ChunkKey]
     missing_chunks: list[ChunkKey]
-
-
-class CacheStatus(MinimalCacheStatus, total=False):
-    """Cache status payload consumed by runners."""
 
     total_chunks: int
     cached_chunk_indices: list[dict[str, Any]]
     missing_chunk_indices: list[dict[str, Any]]
 
 
-class MemoRunnerBackend(Protocol):
-    """Minimum interface for runner-compatible cache backends."""
+class RunnerContext(Protocol):
+    """Runtime settings consumed by runner helpers."""
 
     verbose: int
     profile: bool
     merge_fn: Callable[[list[Any]], Any] | None
 
-    def prepare_run(
-        self,
-        params: dict[str, Any],
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> tuple[
+
+PrepareRunFn = Callable[
+    ...,
+    tuple[
         dict[str, Any],
         list[ChunkKey],
         Mapping[ChunkKey, list[Tuple[Any, ...]]] | None,
-    ]: ...
-
-    def cache_status(
-        self,
-        params: dict[str, Any],
-        *,
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> CacheStatus: ...
-
-    def chunk_hash(self, params: dict[str, Any], chunk_key: ChunkKey) -> str: ...
-
-    def cache_hash(self, params: dict[str, Any]) -> str: ...
-
-    def resolve_cache_path(
-        self, params: dict[str, Any], chunk_key: ChunkKey, chunk_hash: str
-    ) -> Path: ...
-
-    def load_payload(self, path: Path) -> dict[str, Any] | None: ...
-
-    def write_chunk_payload(
-        self,
-        path: Path,
-        payload: dict[str, Any],
-        *,
-        existing: Mapping[str, Any] | None = None,
-    ) -> Path: ...
-
-    def load_chunk_index(self, params: dict[str, Any]) -> dict[str, Any] | None: ...
-
-    def update_chunk_index(
-        self, params: dict[str, Any], chunk_hash: str, chunk_key: ChunkKey
-    ) -> None: ...
-
-    def build_item_maps_from_axis_values(
-        self,
-        chunk_key: ChunkKey,
-        axis_values: Sequence[Tuple[Any, ...]],
-        outputs: Sequence[Any],
-    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]: ...
-
-    def build_item_maps_from_chunk_output(
-        self,
-        chunk_key: ChunkKey,
-        chunk_output: Any,
-    ) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]: ...
-
-    def iter_chunk_axis_values(
-        self, chunk_key: ChunkKey
-    ) -> Sequence[Tuple[Any, ...]]: ...
-
-    def extract_items_from_map(
-        self,
-        item_map: Mapping[str, Any] | None,
-        chunk_key: ChunkKey,
-        requested_items: list[Tuple[Any, ...]],
-    ) -> list[Any] | None: ...
-
-    def reconstruct_output_from_items(
-        self, chunk_key: ChunkKey, items: Mapping[str, Any]
-    ) -> list[Any] | None: ...
-
-    def collect_chunk_data(
-        self,
-        payload: Mapping[str, Any],
-        chunk_key: ChunkKey,
-        requested_items: list[Tuple[Any, ...]] | None,
-        collate_fn: Callable[[list[Any]], Any],
-    ) -> Any | None: ...
-
-    def item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str: ...
-
-    def expand_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]: ...
-
-    def write_metadata(self, params: dict[str, Any]) -> Path: ...
+    ],
+]
+CacheStatusFn = Callable[..., CacheStatus]
+WriteMetadataFn = Callable[[dict[str, Any]], Path]
+ChunkHashFn = Callable[[dict[str, Any], ChunkKey], str]
+ResolveCachePathFn = Callable[[dict[str, Any], ChunkKey, str], Path]
+LoadPayloadFn = Callable[[Path], dict[str, Any] | None]
+WriteChunkPayloadFn = Callable[..., Path]
+UpdateChunkIndexFn = Callable[[dict[str, Any], str, ChunkKey], None]
+LoadChunkIndexFn = Callable[[dict[str, Any]], dict[str, Any] | None]
+BuildItemMapsFromAxisValuesFn = Callable[
+    ...,
+    tuple[dict[str, Any], dict[str, dict[str, Any]]],
+]
+BuildItemMapsFromChunkOutputFn = Callable[
+    ...,
+    tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None],
+]
+ExtractItemsFromMapFn = Callable[..., list[Any] | None]
+ReconstructOutputFromItemsFn = Callable[[ChunkKey, Mapping[str, Any]], list[Any] | None]
+CollectChunkDataFn = Callable[..., Any | None]
+ItemHashFn = Callable[[ChunkKey, Tuple[Any, ...]], str]

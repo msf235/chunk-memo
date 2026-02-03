@@ -74,7 +74,7 @@ memo = ChunkCache(
     axis_values=axis_values,
     merge_fn=merge_fn,
 )
-output, diag = run(memo, params, exec_fn)
+output, diag = memo.run(params, exec_fn)
 print(output)
 print(diag)
 ```
@@ -190,7 +190,7 @@ memo = ChunkCache(
     merge_fn=merge_fn,
 )
 
-output, diag = run(memo, params, exec_fn)
+output, diag = memo.run(params, exec_fn)
 ```
 
 #### Important notes
@@ -203,10 +203,10 @@ output, diag = run(memo, params, exec_fn)
 ### run
 
 ```python
-output, diagnostics = run(memo, params, exec_fn)
+output, diagnostics = memo.run(params, exec_fn)
 # Or run a subset
-# output, diagnostics = run(memo, params, exec_fn, strat=["a"], s=[1, 2, 3])
-# output, diagnostics = run(memo, params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# output, diagnostics = memo.run(params, exec_fn, strat=["a"], s=[1, 2, 3])
+# output, diagnostics = memo.run(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
@@ -214,10 +214,10 @@ Runs missing chunks, caches them, and returns merged output with diagnostics.
 ### run_streaming
 
 ```python
-diagnostics = run_streaming(memo, params, exec_fn)
+diagnostics = memo.run_streaming(params, exec_fn)
 # Or run a subset
-# diagnostics = run_streaming(memo, params, exec_fn, strat=["a"], s=[1, 2, 3])
-# diagnostics = run_streaming(memo, params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# diagnostics = memo.run_streaming(params, exec_fn, strat=["a"], s=[1, 2, 3])
+# diagnostics = memo.run_streaming(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Executes missing chunks and flushes them to disk without returning outputs.
@@ -418,17 +418,45 @@ status = exec_point.cache_status(
     extra=2,
 )
 
+parallel_kwargs = {
+    "cache_status_fn": memo.cache_status,
+    "write_metadata": memo.write_metadata,
+    "chunk_hash": memo.chunk_hash,
+    "resolve_cache_path": memo.resolve_cache_path,
+    "load_payload": memo.load_payload,
+    "write_chunk_payload": memo.write_chunk_payload,
+    "update_chunk_index": memo.update_chunk_index,
+    "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
+    "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+    "reconstruct_output_from_items": memo.reconstruct_output_from_items,
+    "collect_chunk_data": memo.collect_chunk_data,
+    "item_hash": memo.item_hash,
+    "context": memo,
+}
+
 parallel_output, parallel_diag = memo_parallel_run(
-    memo,
     items,
     exec_fn=exec_fn,
+    **parallel_kwargs,
     cache_status=status,
 )
 
 stream_diag = memo_parallel_run_streaming(
-    memo,
     items,
     exec_fn=exec_fn,
+    cache_status_fn=memo.cache_status,
+    write_metadata=memo.write_metadata,
+    chunk_hash=memo.chunk_hash,
+    resolve_cache_path=memo.resolve_cache_path,
+    load_payload=memo.load_payload,
+    write_chunk_payload=memo.write_chunk_payload,
+    update_chunk_index=memo.update_chunk_index,
+    load_chunk_index=memo.load_chunk_index,
+    build_item_maps_from_axis_values=memo.build_item_maps_from_axis_values,
+    build_item_maps_from_chunk_output=memo.build_item_maps_from_chunk_output,
+    reconstruct_output_from_items=memo.reconstruct_output_from_items,
+    item_hash=memo.item_hash,
+    context=memo,
     cache_status=status,
 )
 ```
@@ -442,10 +470,22 @@ Parallel runner notes:
 
 ```python
 memo_parallel_run(
-    memo: ChunkCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
+    cache_status_fn: Callable[..., Mapping[str, Any]],
+    write_metadata: Callable[[dict[str, Any]], Path],
+    chunk_hash: Callable[[dict[str, Any], ChunkKey], str],
+    resolve_cache_path: Callable[[dict[str, Any], ChunkKey, str], Path],
+    load_payload: Callable[[Path], dict[str, Any] | None],
+    write_chunk_payload: Callable[..., Path],
+    update_chunk_index: Callable[[dict[str, Any], str, ChunkKey], None],
+    build_item_maps_from_axis_values: Callable[..., Any],
+    build_item_maps_from_chunk_output: Callable[..., Any],
+    reconstruct_output_from_items: Callable[..., Any],
+    collect_chunk_data: Callable[..., Any],
+    item_hash: Callable[[ChunkKey, Tuple[Any, ...]], str],
+    context: RunnerContext,
     cache_status: Mapping[str, Any],
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
@@ -457,10 +497,22 @@ memo_parallel_run(
 
 ```python
 memo_parallel_run_streaming(
-    memo: ChunkCache,
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
+    cache_status_fn: Callable[..., Mapping[str, Any]],
+    write_metadata: Callable[[dict[str, Any]], Path],
+    chunk_hash: Callable[[dict[str, Any], ChunkKey], str],
+    resolve_cache_path: Callable[[dict[str, Any], ChunkKey, str], Path],
+    load_payload: Callable[[Path], dict[str, Any] | None],
+    write_chunk_payload: Callable[..., Path],
+    update_chunk_index: Callable[[dict[str, Any], str, ChunkKey], None],
+    load_chunk_index: Callable[[dict[str, Any]], dict[str, Any] | None],
+    build_item_maps_from_axis_values: Callable[..., Any],
+    build_item_maps_from_chunk_output: Callable[..., Any],
+    reconstruct_output_from_items: Callable[..., Any],
+    item_hash: Callable[[ChunkKey, Tuple[Any, ...]], str],
+    context: RunnerContext,
     cache_status: Mapping[str, Any],
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
@@ -499,7 +551,7 @@ broad_cache = ChunkCache(
     merge_fn=merge_fn,
 )
 params = {"alpha": 0.4}
-output1, diag1 = run(broad_cache, params, exec_fn)
+output1, diag1 = broad_cache.run(params, exec_fn)
 # Executes all 6 points: (a,1), (a,2), (a,3), (b,1), (b,2), (b,3)
 
 # Later, request just strat="a" - will find and reuse the broad cache
@@ -512,7 +564,7 @@ memo_a = auto_load(
     allow_superset=True,  # Enable superset detection
     merge_fn=merge_fn,
 )
-output2, diag2 = run(memo_a, params, exec_fn)
+output2, diag2 = memo_a.run(params, exec_fn)
 # Only executes the 3 points for strat="a", reuses cached data
 assert diag2.cached_chunks == 1  # All data reused
 assert diag2.executed_chunks == 0
