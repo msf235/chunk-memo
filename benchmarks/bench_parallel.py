@@ -19,7 +19,7 @@ def exec_fn(params, s):
 
 
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
-    start_case = time.perf_counter()
+    # breakpoint()
     axis_values = {"s": list(range(n_points))}
     cache_root = root / f"exec_{exec_chunk_size}" / scenario
     memo = ChunkCache(
@@ -36,10 +36,12 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     elif scenario == "warm":
         run(memo, params, exec_fn)
 
+    start_case = time.perf_counter()
     status = memo.cache_status(params, s=axis_values["s"])
 
-    items = [{"s": value} for value in axis_values["s"]]
     load_time = time.perf_counter() - start_case
+
+    items = [{"s": value} for value in axis_values["s"]]
     start = time.perf_counter()
     with ProcessPoolExecutor(max_workers=8) as executor:
         memo_parallel_run(
