@@ -74,7 +74,8 @@ memo = ChunkCache(
     axis_values=axis_values,
     merge_fn=merge_fn,
 )
-output, diag = memo.run(params, exec_fn)
+memo.set_params(params)
+output, diag = memo.run(exec_fn)
 print(output)
 print(diag)
 ```
@@ -190,7 +191,8 @@ memo = ChunkCache(
     merge_fn=merge_fn,
 )
 
-output, diag = memo.run(params, exec_fn)
+memo.set_params(params)
+output, diag = memo.run(exec_fn)
 ```
 
 #### Important notes
@@ -203,10 +205,11 @@ output, diag = memo.run(params, exec_fn)
 ### run
 
 ```python
-output, diagnostics = memo.run(params, exec_fn)
+memo.set_params(params)
+output, diagnostics = memo.run(exec_fn)
 # Or run a subset
-# output, diagnostics = memo.run(params, exec_fn, strat=["a"], s=[1, 2, 3])
-# output, diagnostics = memo.run(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# output, diagnostics = memo.run(exec_fn, strat=["a"], s=[1, 2, 3])
+# output, diagnostics = memo.run(exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
@@ -214,10 +217,11 @@ Runs missing chunks, caches them, and returns merged output with diagnostics.
 ### run_streaming
 
 ```python
-diagnostics = memo.run_streaming(params, exec_fn)
+memo.set_params(params)
+diagnostics = memo.run_streaming(exec_fn)
 # Or run a subset
-# diagnostics = memo.run_streaming(params, exec_fn, strat=["a"], s=[1, 2, 3])
-# diagnostics = memo.run_streaming(params, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# diagnostics = memo.run_streaming(exec_fn, strat=["a"], s=[1, 2, 3])
+# diagnostics = memo.run_streaming(exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Executes missing chunks and flushes them to disk without returning outputs.
@@ -410,6 +414,8 @@ Use cases:
   - Avoid creating redundant caches for overlapping data
 
 ```python
+import functools
+
 from shard_memo import memo_parallel_run, memo_parallel_run_streaming
 
 status = exec_point.cache_status(
@@ -436,14 +442,14 @@ parallel_kwargs = {
 
 parallel_output, parallel_diag = memo_parallel_run(
     items,
-    exec_fn=exec_fn,
+    exec_fn=functools.partial(exec_fn, params),
     **parallel_kwargs,
     cache_status=status,
 )
 
 stream_diag = memo_parallel_run_streaming(
     items,
-    exec_fn=exec_fn,
+    exec_fn=functools.partial(exec_fn, params),
     cache_status_fn=memo.cache_status,
     write_metadata=memo.write_metadata,
     chunk_hash=memo.chunk_hash,
@@ -474,12 +480,12 @@ memo_parallel_run(
     *,
     exec_fn: Callable[..., Any],
     cache_status_fn: Callable[..., Mapping[str, Any]],
-    write_metadata: Callable[[dict[str, Any]], Path],
-    chunk_hash: Callable[[dict[str, Any], ChunkKey], str],
-    resolve_cache_path: Callable[[dict[str, Any], ChunkKey, str], Path],
+    write_metadata: Callable[[], Path],
+    chunk_hash: Callable[[ChunkKey], str],
+    resolve_cache_path: Callable[[ChunkKey, str], Path],
     load_payload: Callable[[Path], dict[str, Any] | None],
     write_chunk_payload: Callable[..., Path],
-    update_chunk_index: Callable[[dict[str, Any], str, ChunkKey], None],
+    update_chunk_index: Callable[[str, ChunkKey], None],
     build_item_maps_from_axis_values: Callable[..., Any],
     build_item_maps_from_chunk_output: Callable[..., Any],
     reconstruct_output_from_items: Callable[..., Any],
@@ -501,13 +507,13 @@ memo_parallel_run_streaming(
     *,
     exec_fn: Callable[..., Any],
     cache_status_fn: Callable[..., Mapping[str, Any]],
-    write_metadata: Callable[[dict[str, Any]], Path],
-    chunk_hash: Callable[[dict[str, Any], ChunkKey], str],
-    resolve_cache_path: Callable[[dict[str, Any], ChunkKey, str], Path],
+    write_metadata: Callable[[], Path],
+    chunk_hash: Callable[[ChunkKey], str],
+    resolve_cache_path: Callable[[ChunkKey, str], Path],
     load_payload: Callable[[Path], dict[str, Any] | None],
     write_chunk_payload: Callable[..., Path],
-    update_chunk_index: Callable[[dict[str, Any], str, ChunkKey], None],
-    load_chunk_index: Callable[[dict[str, Any]], dict[str, Any] | None],
+    update_chunk_index: Callable[[str, ChunkKey], None],
+    load_chunk_index: Callable[[], dict[str, Any] | None],
     build_item_maps_from_axis_values: Callable[..., Any],
     build_item_maps_from_chunk_output: Callable[..., Any],
     reconstruct_output_from_items: Callable[..., Any],
@@ -551,7 +557,8 @@ broad_cache = ChunkCache(
     merge_fn=merge_fn,
 )
 params = {"alpha": 0.4}
-output1, diag1 = broad_cache.run(params, exec_fn)
+broad_cache.set_params(params)
+output1, diag1 = broad_cache.run(exec_fn)
 # Executes all 6 points: (a,1), (a,2), (a,3), (b,1), (b,2), (b,3)
 
 # Later, request just strat="a" - will find and reuse the broad cache
@@ -564,7 +571,8 @@ memo_a = auto_load(
     allow_superset=True,  # Enable superset detection
     merge_fn=merge_fn,
 )
-output2, diag2 = memo_a.run(params, exec_fn)
+memo_a.set_params(params)
+output2, diag2 = memo_a.run(exec_fn)
 # Only executes the 3 points for strat="a", reuses cached data
 assert diag2.cached_chunks == 1  # All data reused
 assert diag2.executed_chunks == 0

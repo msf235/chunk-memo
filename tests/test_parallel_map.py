@@ -1,5 +1,7 @@
 import tempfile
 
+import functools
+
 from shard_memo import ChunkCache, memo_parallel_run
 from shard_memo.runners import run as _memo_run
 
@@ -39,8 +41,14 @@ def _parallel_kwargs(memo):
     }
 
 
+def _set_params(memo, params):
+    memo.set_params(params)
+
+
 def memo_run(memo, params, exec_fn, **kwargs):
-    return _memo_run(params, exec_fn, **_run_kwargs(memo), **kwargs)
+    _set_params(memo, params)
+    exec_fn_bound = functools.partial(exec_fn, params)
+    return _memo_run(exec_fn_bound, **_run_kwargs(memo), **kwargs)
 
 
 def test_memo_parallel_run_returns_requested_points():
@@ -54,14 +62,13 @@ def test_memo_parallel_run_returns_requested_points():
             cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
+        _set_params(memo, params)
         memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
 
-        status = memo.cache_status(
-            params, strat=axis_values["strat"], s=axis_values["s"]
-        )
+        status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
         outputs, diag = memo_parallel_run(
             [item_from_index(item, axis_values) for item in items],
-            exec_fn=exec_fn_grid,
+            exec_fn=functools.partial(exec_fn_grid, params),
             **_parallel_kwargs(memo),
             cache_status=status,
             map_fn_kwargs={"chunksize": 1},

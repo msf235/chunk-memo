@@ -1,6 +1,7 @@
 import shutil
 import time
 import time
+import functools
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -30,41 +31,15 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     )
 
     params = {"sleep_s": sleep_s}
+    memo.set_params(params)
     if scenario == "half":
         s_vals = axis_values["s"][: n_points // 2]
-        run(
-            params,
-            exec_fn,
-            prepare_run=memo.prepare_run,
-            chunk_hash=memo.chunk_hash,
-            resolve_cache_path=memo.resolve_cache_path,
-            load_payload=memo.load_payload,
-            write_chunk_payload=memo.write_chunk_payload,
-            update_chunk_index=memo.update_chunk_index,
-            build_item_maps_from_chunk_output=memo.build_item_maps_from_chunk_output,
-            extract_items_from_map=memo.extract_items_from_map,
-            collect_chunk_data=memo.collect_chunk_data,
-            context=memo,
-            s=s_vals,
-        )
+        memo.run(exec_fn, s=s_vals)
     elif scenario == "warm":
-        run(
-            params,
-            exec_fn,
-            prepare_run=memo.prepare_run,
-            chunk_hash=memo.chunk_hash,
-            resolve_cache_path=memo.resolve_cache_path,
-            load_payload=memo.load_payload,
-            write_chunk_payload=memo.write_chunk_payload,
-            update_chunk_index=memo.update_chunk_index,
-            build_item_maps_from_chunk_output=memo.build_item_maps_from_chunk_output,
-            extract_items_from_map=memo.extract_items_from_map,
-            collect_chunk_data=memo.collect_chunk_data,
-            context=memo,
-        )
+        memo.run(exec_fn)
 
     start_case = time.perf_counter()
-    status = memo.cache_status(params, s=axis_values["s"])
+    status = memo.cache_status(s=axis_values["s"])
 
     load_time = time.perf_counter() - start_case
 
@@ -73,7 +48,7 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     with ProcessPoolExecutor(max_workers=8) as executor:
         memo_parallel_run(
             items,
-            exec_fn=exec_fn,
+            exec_fn=functools.partial(exec_fn, params),
             cache_status_fn=memo.cache_status,
             write_metadata=memo.write_metadata,
             chunk_hash=memo.chunk_hash,

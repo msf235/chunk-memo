@@ -116,7 +116,6 @@ def _payload_item_map(
     write_chunk_payload: WriteChunkPayloadFn,
     chunk_key: ChunkKey,
     payload: dict[str, Any],
-    params: dict[str, Any] | None = None,
     chunk_hash: str | None = None,
     write_back: bool = False,
 ) -> dict[str, Any] | None:
@@ -131,9 +130,9 @@ def _payload_item_map(
             if item_axis_vals is not None:
                 payload["axis_vals"] = item_axis_vals
             if write_back:
-                if params is None or chunk_hash is None:
-                    raise ValueError("params and chunk_hash required for write_back")
-                path = resolve_cache_path(params, chunk_key, chunk_hash)
+                if chunk_hash is None:
+                    raise ValueError("chunk_hash required for write_back")
+                path = resolve_cache_path(chunk_key, chunk_hash)
                 write_chunk_payload(path, payload, existing=payload)
     return item_map
 
@@ -143,7 +142,6 @@ def _save_chunk_payload(
     resolve_cache_path: ResolveCachePathFn,
     write_chunk_payload: WriteChunkPayloadFn,
     update_chunk_index: UpdateChunkIndexFn,
-    params_dict: dict[str, Any],
     chunk_key: ChunkKey,
     chunk_output: Any,
     item_map: dict[str, Any] | None,
@@ -171,24 +169,23 @@ def _save_chunk_payload(
             payload["output"] = chunk_output
     if spec_fn is not None:
         payload["axis_vals"] = spec_fn()
-    path = resolve_cache_path(params_dict, chunk_key, chunk_hash)
+    path = resolve_cache_path(chunk_key, chunk_hash)
     write_chunk_payload(
         path,
         payload,
         existing=cached_payloads.get(chunk_key),
     )
-    update_chunk_index(params_dict, chunk_hash, chunk_key)
+    update_chunk_index(chunk_hash, chunk_key)
     return payload
 
 
 def _exec_with_item(
     exec_fn: Callable[..., Any],
-    params: dict[str, Any],
     item: Any,
 ) -> Any:
     if isinstance(item, Mapping):
-        return exec_fn(params, **item)
-    return exec_fn(params, item)
+        return exec_fn(**item)
+    return exec_fn(item)
 
 
 def _map_executor(
@@ -227,19 +224,16 @@ def _require_axis_info(
 def _resolve_cache_status(
     cache_status_fn: CacheStatusFn,
     cache_status: CacheStatus | None,
-    params: dict[str, Any] | None,
     axis_indices: Mapping[str, Any] | None,
     axes: Mapping[str, Any],
 ) -> CacheStatus:
     if cache_status is not None:
-        if params is not None or axis_indices is not None or axes:
+        if axis_indices is not None or axes:
             raise ValueError(
                 "cache_status cannot be combined with params or axis selections"
             )
         return cache_status
-    if params is None:
-        raise ValueError("params is required when cache_status is not provided")
-    return cache_status_fn(params, axis_indices=axis_indices, **axes)
+    return cache_status_fn(axis_indices=axis_indices, **axes)
 
 
 def _prepare_parallel_setup(
@@ -265,7 +259,7 @@ def _prepare_parallel_setup(
     if params_dict is None:
         params_dict = _require_params(cache_status)
     if write_metadata:
-        write_metadata_fn(params_dict)
+        write_metadata_fn()
 
     cached_chunks: list[ChunkKey] = list(cache_status.get("cached_chunks", []))
     missing_chunks: list[ChunkKey] = list(cache_status.get("missing_chunks", []))
@@ -350,7 +344,6 @@ def _scan_cached_chunk_items(
     build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn,
     write_chunk_payload: WriteChunkPayloadFn,
     item_hash: ItemHashFn,
-    params_dict: dict[str, Any],
     cached_chunks: Sequence[ChunkKey],
     cached_chunk_items: Sequence[Sequence[Any]],
     *,
@@ -374,8 +367,8 @@ def _scan_cached_chunk_items(
             continue
         update_processed(len(chunk_items))
         full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
-        chunk_hash_value = chunk_hash(params_dict, chunk_key)
-        path = resolve_cache_path(params_dict, chunk_key, chunk_hash_value)
+        chunk_hash_value = chunk_hash(chunk_key)
+        path = resolve_cache_path(chunk_key, chunk_hash_value)
         if not chunk_exists(chunk_hash_value, path):
             tracker.register(chunk_key, list(chunk_items))
             continue
@@ -643,11 +636,10 @@ def _load_chunk_payload(
     chunk_hash: ChunkHashFn,
     resolve_cache_path: ResolveCachePathFn,
     load_payload: LoadPayloadFn,
-    params: dict[str, Any],
     chunk_key: ChunkKey,
 ) -> tuple[str, Path, dict[str, Any] | None]:
-    chunk_hash_value = chunk_hash(params, chunk_key)
-    path = resolve_cache_path(params, chunk_key, chunk_hash_value)
+    chunk_hash_value = chunk_hash(chunk_key)
+    path = resolve_cache_path(chunk_key, chunk_hash_value)
     payload = load_payload(path)
     return chunk_hash_value, path, payload
 
@@ -669,7 +661,6 @@ def prepare_chunk_run(
 
 
 def run(
-    params: dict[str, Any],
     exec_fn: Callable[..., Any],
     *,
     prepare_run: PrepareRunFn,
@@ -686,9 +677,8 @@ def run(
     **axes: Any,
 ) -> Tuple[Any, Diagnostics]:
     """Run memoized execution with output via the cache runner."""
-    axis_values, chunk_keys, requested_items = prepare_run(params, axis_indices, **axes)
+    axis_values, chunk_keys, requested_items = prepare_run(axis_indices, **axes)
     return run_chunks(
-        params,
         chunk_keys,
         exec_fn,
         chunk_hash=chunk_hash,
@@ -705,7 +695,6 @@ def run(
 
 
 def run_streaming(
-    params: dict[str, Any],
     exec_fn: Callable[..., Any],
     *,
     prepare_run: PrepareRunFn,
@@ -720,9 +709,8 @@ def run_streaming(
     **axes: Any,
 ) -> Diagnostics:
     """Run memoized execution without returning outputs."""
-    axis_values, chunk_keys, requested_items = prepare_run(params, axis_indices, **axes)
+    axis_values, chunk_keys, requested_items = prepare_run(axis_indices, **axes)
     return run_chunks_streaming(
-        params,
         chunk_keys,
         exec_fn,
         chunk_hash=chunk_hash,
@@ -737,7 +725,6 @@ def run_streaming(
 
 
 def execute_and_save_chunk(
-    params: dict[str, Any],
     chunk_key: ChunkKey,
     exec_fn: Callable[..., Any],
     chunk_hash: str,
@@ -752,7 +739,7 @@ def execute_and_save_chunk(
     """Execute a chunk, persist payload, and update index."""
     diagnostics.executed_chunks += 1
     chunk_axes = {axis: list(values) for axis, values in chunk_key}
-    chunk_output = exec_fn(params, **chunk_axes)
+    chunk_output = exec_fn(**chunk_axes)
     diagnostics.max_stream_items = max(
         diagnostics.max_stream_items,
         _stream_item_count(chunk_output),
@@ -768,18 +755,17 @@ def execute_and_save_chunk(
             payload["axis_vals"] = item_axis_vals
     else:
         payload["output"] = chunk_output
-    path = resolve_cache_path(params, chunk_key, chunk_hash)
+    path = resolve_cache_path(chunk_key, chunk_hash)
     write_chunk_payload(
         path,
         payload,
         existing=existing_payload,
     )
-    update_chunk_index(params, chunk_hash, chunk_key)
+    update_chunk_index(chunk_hash, chunk_key)
     return chunk_output, item_map
 
 
 def run_chunks(
-    params: dict[str, Any],
     chunk_keys: Sequence[ChunkKey],
     exec_fn: Callable[..., Any],
     *,
@@ -804,7 +790,7 @@ def run_chunks(
 
     def process_chunk(chunk_key: ChunkKey, processed: int) -> tuple[Any, bool, bool]:
         chunk_hash_value, path, payload = _load_chunk_payload(
-            chunk_hash, resolve_cache_path, load_payload, params, chunk_key
+            chunk_hash, resolve_cache_path, load_payload, chunk_key
         )
         existing_payload = payload
         requested_items = (
@@ -829,7 +815,6 @@ def run_chunks(
                 return cached_output, True, False
 
         chunk_output, item_map = execute_and_save_chunk(
-            params,
             chunk_key,
             exec_fn,
             chunk_hash_value,
@@ -868,7 +853,6 @@ def run_chunks(
 
 
 def run_chunks_streaming(
-    params: dict[str, Any],
     chunk_keys: Sequence[ChunkKey],
     exec_fn: Callable[..., Any],
     *,
@@ -889,7 +873,7 @@ def run_chunks_streaming(
     for processed, chunk_key in enumerate(chunk_keys, start=1):
         update_processed(chunk_key_size(chunk_key))
         chunk_hash_value, path, payload = _load_chunk_payload(
-            chunk_hash, resolve_cache_path, load_payload, params, chunk_key
+            chunk_hash, resolve_cache_path, load_payload, chunk_key
         )
         if payload is not None:
             if requested_items_by_chunk is None:
@@ -903,7 +887,6 @@ def run_chunks_streaming(
                 write_chunk_payload=write_chunk_payload,
                 chunk_key=chunk_key,
                 payload=payload,
-                params=params,
                 chunk_hash=chunk_hash_value,
                 write_back=True,
             )
@@ -920,7 +903,6 @@ def run_chunks_streaming(
                 continue
 
         execute_and_save_chunk(
-            params,
             chunk_key,
             exec_fn,
             chunk_hash_value,
@@ -968,7 +950,6 @@ def memo_parallel_run(
     item_hash: ItemHashFn,
     context: RunnerContext,
     cache_status: CacheStatus | None = None,
-    params: dict[str, Any] | None = None,
     axis_indices: Mapping[str, Any] | None = None,
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
@@ -982,7 +963,6 @@ def memo_parallel_run(
     cache_status = _resolve_cache_status(
         cache_status_fn,
         cache_status,
-        params,
         axis_indices,
         axes,
     )
@@ -1037,7 +1017,6 @@ def memo_parallel_run(
         build_item_maps_from_chunk_output,
         write_chunk_payload,
         item_hash,
-        params_dict,
         cached_chunks,
         cached_chunk_items,
         axis_extractor=axis_extractor,
@@ -1068,7 +1047,7 @@ def memo_parallel_run(
 
     if missing_items:
         diagnostics.executed_chunks = len(tracker.missing_chunk_order)
-        exec_fn = functools.partial(_exec_with_item, exec_fn, params_dict)
+        exec_fn = functools.partial(_exec_with_item, exec_fn)
         exec_iter = map_fn_resolved(
             exec_fn,
             missing_items,
@@ -1100,12 +1079,11 @@ def memo_parallel_run(
                 axis_values,
                 chunk_outputs,
             )
-            chunk_hash_value = chunk_hash(params_dict, chunk_key)
+            chunk_hash_value = chunk_hash(chunk_key)
             _save_chunk_payload(
                 resolve_cache_path=resolve_cache_path,
                 write_chunk_payload=write_chunk_payload,
                 update_chunk_index=update_chunk_index,
-                params_dict=params_dict,
                 chunk_key=chunk_key,
                 chunk_output=chunk_output,
                 item_map=item_map,
@@ -1148,7 +1126,6 @@ def memo_parallel_run_streaming(
     item_hash: ItemHashFn,
     context: RunnerContext,
     cache_status: CacheStatus | None = None,
-    params: dict[str, Any] | None = None,
     axis_indices: Mapping[str, Any] | None = None,
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
@@ -1162,13 +1139,12 @@ def memo_parallel_run_streaming(
     cache_status = _resolve_cache_status(
         cache_status_fn,
         cache_status,
-        params,
         axis_indices,
         axes,
     )
     profile_start = time.monotonic() if context.profile else None
     params_dict = _require_params(cache_status)
-    write_metadata(params_dict)
+    write_metadata()
     if context.profile and context.verbose >= 1 and profile_start is not None:
         print(f"[ShardMemo] profile metadata_s={time.monotonic() - profile_start:0.3f}")
 
@@ -1190,7 +1166,7 @@ def memo_parallel_run_streaming(
     map_fn_kwargs_resolved = setup.map_fn_kwargs
     total_chunks = diagnostics.total_chunks
 
-    chunk_index = load_chunk_index(params_dict) or {}
+    chunk_index = load_chunk_index() or {}
     use_index = bool(chunk_index)
     if context.profile and context.verbose >= 1 and profile_start is not None:
         print(
@@ -1237,7 +1213,6 @@ def memo_parallel_run_streaming(
         build_item_maps_from_chunk_output,
         write_chunk_payload,
         item_hash,
-        params_dict,
         cached_chunks,
         cached_chunk_items,
         axis_extractor=axis_extractor,
@@ -1277,7 +1252,7 @@ def memo_parallel_run_streaming(
 
     if missing_items:
         diagnostics.executed_chunks = len(tracker.missing_chunk_order)
-        exec_fn = functools.partial(_exec_with_item, exec_fn, params_dict)
+        exec_fn = functools.partial(_exec_with_item, exec_fn)
         exec_iter = map_fn_resolved(
             exec_fn,
             missing_items,
@@ -1318,12 +1293,11 @@ def memo_parallel_run_streaming(
                 axis_values,
                 chunk_outputs,
             )
-            chunk_hash_value = chunk_hash(params_dict, chunk_key)
+            chunk_hash_value = chunk_hash(chunk_key)
             _save_chunk_payload(
                 resolve_cache_path=resolve_cache_path,
                 write_chunk_payload=write_chunk_payload,
                 update_chunk_index=update_chunk_index,
-                params_dict=params_dict,
                 chunk_key=chunk_key,
                 chunk_output=chunk_output,
                 item_map=item_map,

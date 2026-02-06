@@ -1,4 +1,5 @@
 import itertools
+import functools
 import tempfile
 
 from shard_memo import ChunkCache, memo_parallel_run
@@ -44,8 +45,14 @@ def _parallel_kwargs(memo):
     }
 
 
+def _set_params(memo, params):
+    memo.set_params(params)
+
+
 def memo_run(memo, params, exec_fn, **kwargs):
-    return _memo_run(params, exec_fn, **_run_kwargs(memo), **kwargs)
+    _set_params(memo, params)
+    exec_fn_bound = functools.partial(exec_fn, params)
+    return _memo_run(exec_fn_bound, **_run_kwargs(memo), **kwargs)
 
 
 def test_memo_parallel_run_caches_missing_points():
@@ -57,20 +64,18 @@ def test_memo_parallel_run_caches_missing_points():
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )
-
         params = {"alpha": 0.4}
+        _set_params(memo, params)
         items = [
             {"strat": "a", "s": 1},
             {"strat": "b", "s": 4},
             {"strat": "a", "s": 2},
         ]
-        cache_status = memo.cache_status(
-            params, strat=axis_values["strat"], s=axis_values["s"]
-        )
+        cache_status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
 
         output, diag = memo_parallel_run(
             items,
-            exec_fn=exec_fn_grid,
+            exec_fn=functools.partial(exec_fn_grid, params),
             **_parallel_kwargs(memo),
             cache_status=cache_status,
             collate_fn=collate_fn,
@@ -91,8 +96,8 @@ def test_memo_parallel_run_reuses_partial_chunks():
             merge_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )
-
         params = {"alpha": 0.4}
+        _set_params(memo, params)
         memo_run(memo, params, exec_fn_grid)
 
         items = [
@@ -100,13 +105,11 @@ def test_memo_parallel_run_reuses_partial_chunks():
             {"strat": "a", "s": 4},
             {"strat": "b", "s": 2},
         ]
-        cache_status = memo.cache_status(
-            params, strat=axis_values["strat"], s=axis_values["s"]
-        )
+        cache_status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
 
         output, diag = memo_parallel_run(
             items,
-            exec_fn=exec_fn_grid,
+            exec_fn=functools.partial(exec_fn_grid, params),
             **_parallel_kwargs(memo),
             cache_status=cache_status,
             collate_fn=collate_fn,

@@ -78,49 +78,30 @@ class ChunkMemo:
 
                 exec_fn = functools.partial(func, **exec_extras)
                 if streaming:
-                    return run_streaming(
-                        merged_params,
+                    self.cache.params = merged_params
+                    return self.cache.run_streaming(
                         exec_fn,
-                        prepare_run=self.cache.prepare_run,
-                        chunk_hash=self.cache.chunk_hash,
-                        resolve_cache_path=self.cache.resolve_cache_path,
-                        load_payload=self.cache.load_payload,
-                        write_chunk_payload=self.cache.write_chunk_payload,
-                        update_chunk_index=self.cache.update_chunk_index,
-                        build_item_maps_from_chunk_output=self.cache.build_item_maps_from_chunk_output,
-                        context=cast(RunnerContext, self.cache),
                         axis_indices=axis_indices,
                         **axis_inputs,
                     )
-                return run(
-                    merged_params,
+                self.cache.params = merged_params
+                return self.cache.run(
                     exec_fn,
-                    prepare_run=self.cache.prepare_run,
-                    chunk_hash=self.cache.chunk_hash,
-                    resolve_cache_path=self.cache.resolve_cache_path,
-                    load_payload=self.cache.load_payload,
-                    write_chunk_payload=self.cache.write_chunk_payload,
-                    update_chunk_index=self.cache.update_chunk_index,
-                    build_item_maps_from_chunk_output=self.cache.build_item_maps_from_chunk_output,
-                    extract_items_from_map=self.cache.extract_items_from_map,
-                    collect_chunk_data=self.cache.collect_chunk_data,
-                    context=cast(RunnerContext, self.cache),
                     axis_indices=axis_indices,
                     **axis_inputs,
                 )
 
             def cache_status(
-                params: dict[str, Any],
+                params: dict[str, Any] | None = None,
                 *,
                 axis_indices: Mapping[str, Any] | None = None,
                 **axes: Any,
             ):
                 merged_params, _, axis_inputs = self._prepare_params_and_extras(
-                    params, axes, params_arg
+                    params or self.cache.params, axes, params_arg
                 )
-                return self.cache.cache_status(
-                    merged_params, axis_indices=axis_indices, **axis_inputs
-                )
+                self.cache.params = merged_params
+                return self.cache.cache_status(axis_indices=axis_indices, **axis_inputs)
 
             setattr(wrapper, "cache_status", cache_status)
             return wrapper

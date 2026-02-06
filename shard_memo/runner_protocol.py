@@ -41,13 +41,13 @@ PrepareRunFn = Callable[
     ],
 ]
 CacheStatusFn = Callable[..., CacheStatus]
-WriteMetadataFn = Callable[[dict[str, Any]], Path]
-ChunkHashFn = Callable[[dict[str, Any], ChunkKey], str]
-ResolveCachePathFn = Callable[[dict[str, Any], ChunkKey, str], Path]
+WriteMetadataFn = Callable[[], Path]
+ChunkHashFn = Callable[[ChunkKey], str]
+ResolveCachePathFn = Callable[[ChunkKey, str], Path]
 LoadPayloadFn = Callable[[Path], dict[str, Any] | None]
 WriteChunkPayloadFn = Callable[..., Path]
-UpdateChunkIndexFn = Callable[[dict[str, Any], str, ChunkKey], None]
-LoadChunkIndexFn = Callable[[dict[str, Any]], dict[str, Any] | None]
+UpdateChunkIndexFn = Callable[[str, ChunkKey], None]
+LoadChunkIndexFn = Callable[[], dict[str, Any] | None]
 BuildItemMapsFromAxisValuesFn = Callable[
     ...,
     tuple[dict[str, Any], dict[str, dict[str, Any]]],

@@ -1,7 +1,8 @@
 from pathlib import Path
 
+import functools
+
 from shard_memo import ChunkCache, ChunkMemo, memo_parallel_run
-from shard_memo.runners import run
 
 
 def exec_fn(params, strat, s):
@@ -39,20 +40,8 @@ def main():
         merge_fn=merge_fn,
         verbose=1,
     )
-
-    run_kwargs = {
-        "prepare_run": memo.prepare_run,
-        "chunk_hash": memo.chunk_hash,
-        "resolve_cache_path": memo.resolve_cache_path,
-        "load_payload": memo.load_payload,
-        "write_chunk_payload": memo.write_chunk_payload,
-        "update_chunk_index": memo.update_chunk_index,
-        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
-        "extract_items_from_map": memo.extract_items_from_map,
-        "collect_chunk_data": memo.collect_chunk_data,
-        "context": memo,
-    }
-    output, diag = run(params, exec_fn, **run_kwargs)
+    memo.set_params(params)
+    output, diag = memo.run(exec_fn)
     print("Output:", output)
     print("Diagnostics:", diag)
 
@@ -93,9 +82,8 @@ def main():
     }
     bridge_output, bridge_diag = memo_parallel_run(
         items,
-        exec_fn=exec_fn,
+        exec_fn=functools.partial(exec_fn, params),
         **parallel_kwargs,
-        params=params,
         strat=axis_values["strat"],
         s=axis_values["s"],
         map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -109,9 +97,8 @@ def main():
     with ProcessPoolExecutor(max_workers=4) as executor:
         pooled_output, pooled_diag = memo_parallel_run(
             items,
-            exec_fn=exec_fn,
+            exec_fn=functools.partial(exec_fn, params),
             **parallel_kwargs,
-            params=params,
             strat=axis_values["strat"],
             s=axis_values["s"],
             map_fn=executor.map,
