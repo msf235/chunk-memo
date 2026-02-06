@@ -43,6 +43,21 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
 
     items = [{"s": value} for value in axis_values["s"]]
     start = time.perf_counter()
+    parallel_kwargs = {
+        "cache_status_fn": memo.cache_status,
+        "write_metadata": memo.write_metadata,
+        "chunk_hash": memo.chunk_hash,
+        "resolve_cache_path": memo.resolve_cache_path,
+        "load_payload": memo.load_payload,
+        "write_chunk_payload": memo.write_chunk_payload,
+        "update_chunk_index": memo.update_chunk_index,
+        "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
+        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+        "reconstruct_output_from_items": memo.reconstruct_output_from_items,
+        "collect_chunk_data": memo.collect_chunk_data,
+        "item_hash": memo.item_hash,
+        "context": memo,
+    }
     with ProcessPoolExecutor(max_workers=8) as executor:
         memo_parallel_run(
             items,
@@ -50,7 +65,7 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
             cache_status=status,
             map_fn=executor.map,
             map_fn_kwargs={"chunksize": exec_chunk_size},
-            **memo.parallel_ops(),
+            **parallel_kwargs,
         )
     end_time = time.perf_counter()
     run_time = end_time - start

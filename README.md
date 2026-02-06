@@ -128,80 +128,15 @@ Notes:
 - `warn_on_overlap`: if True, warn when caches have same `params` but partially
   overlapping `axis_values`.
 
-### axis_values: Memory-efficient lazy loading
+### axis_values: lists and iterables
 
-The `axis_values` parameter supports both traditional lists/tuples and **callable functions** for memory-efficient lazy loading.
+`axis_values` must be concrete iterables (lists, tuples, ranges, or other iterable objects). Callables are not supported by the current implementation.
 
-#### Why use callables?
+Ordering rules:
+- If the value is a sequence (list/tuple), order is preserved.
+- If the value is a non-sequence iterable, values are materialized and sorted by a stable serialization of each value. This makes order deterministic but may differ from the original iteration order.
 
-When working with very large datasets (millions of values), storing full lists in memory can be expensive. Callable axis_values enable:
-- **Lazy loading**: Values are computed on-demand, not upfront
-- **External data sources**: Load values from databases, files, or APIs as needed
-- **Memory efficiency**: Only required values are loaded into memory at runtime
-
-#### Callable patterns
-
-**Index-based callable** (recommended for large datasets):
-```python
-axis_values = {
-    "large_axis": lambda idx: expensive_data_source[idx],
-}
-```
-The callable receives an index and returns the value at that index.
-
-**List-returning callable** (useful when full iteration is needed):
-```python
-axis_values = {
-    "small_axis": lambda: ["a", "b", "c"],
-}
-```
-The callable takes no arguments and returns the full list.
-
-#### Mixed approach (small lists + large callables)
-
-You can mix both patterns for optimal memory usage:
-```python
-axis_values = {
-    "small_axis": ["a", "b"],  # Small list - keep in memory
-    "large_axis": lambda idx: large_db.query(idx),  # Large - lazy load
-}
-```
-
-#### Usage example
-
-```python
-from shard_memo import ChunkCache
-
-# Traditional approach - all values in memory
-axis_values_lists = {
-    "strat": ["a", "b"],
-    "s": [1, 2, 3, 4],
-}
-
-# Memory-efficient approach - lazy loading
-axis_values_callables = {
-    "strat": lambda idx: ["a", "b"][idx],  # Could load from disk/DB
-    "s": lambda idx: [1, 2, 3, 4][idx],
-}
-
-# Both work identically
-memo = ChunkCache(
-    cache_root="./cache",
-    cache_chunk_spec={"strat": 1, "s": 2},
-    axis_values=axis_values_callables,  # or axis_values_lists
-    merge_fn=merge_fn,
-)
-
-memo.set_params(params)
-output, diag = run(memo, exec_fn)
-```
-
-#### Important notes
-
-- Callable axis_values are converted to a serializable representation for metadata
-- Cache lookups and chunking still work identically regardless of list vs callable
-- When using callables with external sources, ensure values are deterministic and consistent
-- See `examples/callable_axis_values.py` for a complete working example
+Axis values must be hashable and unique within each axis. Duplicates will collapse to a single entry in the internal index map.
 
 ### run
 
@@ -431,7 +366,22 @@ status = exec_point.cache_status(
     extra=2,
 )
 
-parallel_kwargs = memo.parallel_ops()
+parallel_kwargs = {
+    "cache_status_fn": memo.cache_status,
+    "write_metadata": memo.write_metadata,
+    "chunk_hash": memo.chunk_hash,
+    "resolve_cache_path": memo.resolve_cache_path,
+    "load_payload": memo.load_payload,
+    "write_chunk_payload": memo.write_chunk_payload,
+    "update_chunk_index": memo.update_chunk_index,
+    "load_chunk_index": memo.load_chunk_index,
+    "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
+    "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
+    "reconstruct_output_from_items": memo.reconstruct_output_from_items,
+    "collect_chunk_data": memo.collect_chunk_data,
+    "item_hash": memo.item_hash,
+    "context": memo,
+}
 
 parallel_output, parallel_diag = memo_parallel_run(
     items,
@@ -452,7 +402,12 @@ Parallel runner notes:
 - `memo_parallel_run` expects a `cache_status`-shaped dict.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
-- `ChunkCache.parallel_ops()` returns the cache operations dict shown above.
+- `memo_parallel_run_streaming` only writes cache payloads, it does not return outputs.
+
+Item formats for `memo_parallel_run` and `memo_parallel_run_streaming`:
+- Mapping items: each item is a dict with keys for every axis name (in any order).
+- Positional items: each item is a tuple/list ordered by `axis_order`.
+- Single-axis shorthand: if there is exactly one axis, a scalar item is allowed.
 
 ### memo_parallel_run
 
@@ -508,6 +463,7 @@ memo_parallel_run_streaming(
 ) -> Diagnostics
 ```
 
+
 ## Caching behavior
 
 - Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.
@@ -520,6 +476,12 @@ memo_parallel_run_streaming(
   chunk when you request fewer axis values.
 - Changing split values creates new chunks automatically.
 - Adding values to a list reuses existing chunks and computes only new ones.
+
+## Defaults and ordering
+
+- `cache_root` defaults to `.shard_memo` under the current working directory when not provided.
+- `axis_order` defaults to lexicographic order of axis names.
+- If `cache_chunk_spec` is omitted, each axis defaults to a chunk size of 1. For list/tuple axes this is overridden to the full axis length; other iterables still default to 1.
 
 ## Examples
 
@@ -593,12 +555,6 @@ Run the basic example script:
 
 ```bash
 python examples/basic.py
-```
-
-Run the callable axis_values example (memory-efficient lazy loading):
-
-```bash
-python examples/callable_axis_values.py
 ```
 
 ## Notes

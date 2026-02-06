@@ -229,25 +229,6 @@ class ChunkCache:
         }
         return cast(CacheStatus, payload)
 
-    def parallel_ops(self) -> dict[str, Any]:
-        """Return cache operations for memo_parallel_run helpers."""
-        return {
-            "cache_status_fn": self.cache_status,
-            "write_metadata": self.write_metadata,
-            "chunk_hash": self.chunk_hash,
-            "resolve_cache_path": self.resolve_cache_path,
-            "load_payload": self.load_payload,
-            "write_chunk_payload": self.write_chunk_payload,
-            "update_chunk_index": self.update_chunk_index,
-            "load_chunk_index": self.load_chunk_index,
-            "build_item_maps_from_axis_values": self.build_item_maps_from_axis_values,
-            "build_item_maps_from_chunk_output": self.build_item_maps_from_chunk_output,
-            "reconstruct_output_from_items": self.reconstruct_output_from_items,
-            "collect_chunk_data": self.collect_chunk_data,
-            "item_hash": self.item_hash,
-            "context": self,
-        }
-
     def slice(
         self,
         params: dict[str, Any],
