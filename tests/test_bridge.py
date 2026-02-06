@@ -3,28 +3,12 @@ import functools
 import tempfile
 
 from shard_memo import ChunkCache, memo_parallel_run
-from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs
 
 
 def collate_fn(outputs):
     return outputs
-
-
-def _run_kwargs(memo):
-    return {
-        "prepare_run": memo.prepare_run,
-        "chunk_hash": memo.chunk_hash,
-        "resolve_cache_path": memo.resolve_cache_path,
-        "load_payload": memo.load_payload,
-        "write_chunk_payload": memo.write_chunk_payload,
-        "update_chunk_index": memo.update_chunk_index,
-        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
-        "extract_items_from_map": memo.extract_items_from_map,
-        "collect_chunk_data": memo.collect_chunk_data,
-        "context": memo,
-    }
 
 
 def _parallel_kwargs(memo):
@@ -47,12 +31,12 @@ def _parallel_kwargs(memo):
 
 def _set_params(memo, params):
     memo.set_params(params)
+    memo.write_metadata()
 
 
 def memo_run(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    exec_fn_bound = functools.partial(exec_fn, params)
-    return _memo_run(exec_fn_bound, **_run_kwargs(memo), **kwargs)
+    return memo.run(exec_fn, **kwargs)
 
 
 def test_memo_parallel_run_caches_missing_points():

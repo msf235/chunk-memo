@@ -26,7 +26,6 @@ from .runner_protocol import (
     ItemHashFn,
     LoadChunkIndexFn,
     LoadPayloadFn,
-    PrepareRunFn,
     ReconstructOutputFromItemsFn,
     ResolveCachePathFn,
     RunnerContext,
@@ -661,67 +660,25 @@ def prepare_chunk_run(
 
 
 def run(
+    cache: Any,
     exec_fn: Callable[..., Any],
     *,
-    prepare_run: PrepareRunFn,
-    chunk_hash: ChunkHashFn,
-    resolve_cache_path: ResolveCachePathFn,
-    load_payload: LoadPayloadFn,
-    write_chunk_payload: WriteChunkPayloadFn,
-    update_chunk_index: UpdateChunkIndexFn,
-    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn,
-    extract_items_from_map: ExtractItemsFromMapFn,
-    collect_chunk_data: CollectChunkDataFn,
-    context: RunnerContext,
     axis_indices: Mapping[str, Any] | None = None,
     **axes: Any,
 ) -> Tuple[Any, Diagnostics]:
     """Run memoized execution with output via the cache runner."""
-    axis_values, chunk_keys, requested_items = prepare_run(axis_indices, **axes)
-    return run_chunks(
-        chunk_keys,
-        exec_fn,
-        chunk_hash=chunk_hash,
-        resolve_cache_path=resolve_cache_path,
-        load_payload=load_payload,
-        write_chunk_payload=write_chunk_payload,
-        update_chunk_index=update_chunk_index,
-        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
-        extract_items_from_map=extract_items_from_map,
-        collect_chunk_data=collect_chunk_data,
-        context=context,
-        requested_items_by_chunk=requested_items,
-    )
+    return cache.run(exec_fn, axis_indices=axis_indices, **axes)
 
 
 def run_streaming(
+    cache: Any,
     exec_fn: Callable[..., Any],
     *,
-    prepare_run: PrepareRunFn,
-    chunk_hash: ChunkHashFn,
-    resolve_cache_path: ResolveCachePathFn,
-    load_payload: LoadPayloadFn,
-    write_chunk_payload: WriteChunkPayloadFn,
-    update_chunk_index: UpdateChunkIndexFn,
-    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn,
-    context: RunnerContext,
     axis_indices: Mapping[str, Any] | None = None,
     **axes: Any,
 ) -> Diagnostics:
     """Run memoized execution without returning outputs."""
-    axis_values, chunk_keys, requested_items = prepare_run(axis_indices, **axes)
-    return run_chunks_streaming(
-        chunk_keys,
-        exec_fn,
-        chunk_hash=chunk_hash,
-        resolve_cache_path=resolve_cache_path,
-        load_payload=load_payload,
-        write_chunk_payload=write_chunk_payload,
-        update_chunk_index=update_chunk_index,
-        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
-        context=context,
-        requested_items_by_chunk=requested_items,
-    )
+    return cache.run_streaming(exec_fn, axis_indices=axis_indices, **axes)
 
 
 def execute_and_save_chunk(

@@ -212,6 +212,8 @@ output, diagnostics = memo.run(exec_fn)
 # output, diagnostics = memo.run(exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
+Selection is always derived via `memo.slice(...)` under the hood.
+
 Runs missing chunks, caches them, and returns merged output with diagnostics.
 
 ### run_streaming

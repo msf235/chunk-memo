@@ -32,14 +32,6 @@ class RunnerContext(Protocol):
     merge_fn: Callable[[list[Any]], Any] | None
 
 
-PrepareRunFn = Callable[
-    ...,
-    tuple[
-        dict[str, Any],
-        list[ChunkKey],
-        Mapping[ChunkKey, list[Tuple[Any, ...]]] | None,
-    ],
-]
 CacheStatusFn = Callable[..., CacheStatus]
 WriteMetadataFn = Callable[[], Path]
 ChunkHashFn = Callable[[ChunkKey], str]

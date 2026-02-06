@@ -1,13 +1,10 @@
 import itertools
-import functools
 import tempfile
 import time
 
 import pytest  # type: ignore[import-not-found]
 
 from shard_memo import ChunkCache, ChunkMemo
-from shard_memo.runners import run as _memo_run
-from shard_memo.runners import run_streaming as _memo_run_streaming
 
 from .utils import exec_fn_grid
 
@@ -31,48 +28,19 @@ def merge_fn(chunks):
     return merged
 
 
-def _run_kwargs(memo):
-    return {
-        "prepare_run": memo.prepare_run,
-        "chunk_hash": memo.chunk_hash,
-        "resolve_cache_path": memo.resolve_cache_path,
-        "load_payload": memo.load_payload,
-        "write_chunk_payload": memo.write_chunk_payload,
-        "update_chunk_index": memo.update_chunk_index,
-        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
-        "extract_items_from_map": memo.extract_items_from_map,
-        "collect_chunk_data": memo.collect_chunk_data,
-        "context": memo,
-    }
-
-
-def _stream_kwargs(memo):
-    return {
-        "prepare_run": memo.prepare_run,
-        "chunk_hash": memo.chunk_hash,
-        "resolve_cache_path": memo.resolve_cache_path,
-        "load_payload": memo.load_payload,
-        "write_chunk_payload": memo.write_chunk_payload,
-        "update_chunk_index": memo.update_chunk_index,
-        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
-        "context": memo,
-    }
-
-
 def _set_params(memo, params):
     memo.set_params(params)
+    memo.write_metadata()
 
 
 def memo_run(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    exec_fn_bound = functools.partial(exec_fn, params)
-    return _memo_run(exec_fn_bound, **_run_kwargs(memo), **kwargs)
+    return memo.run(exec_fn, **kwargs)
 
 
 def memo_run_streaming(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    exec_fn_bound = functools.partial(exec_fn, params)
-    return _memo_run_streaming(exec_fn_bound, **_stream_kwargs(memo), **kwargs)
+    return memo.run_streaming(exec_fn, **kwargs)
 
 
 def exec_point_extra_default(params, strat, s, extra=1):
