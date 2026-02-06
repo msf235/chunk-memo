@@ -8,8 +8,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     Memory = None
 
-from shard_memo import ChunkCache
-from shard_memo.runners import run
+from shard_memo import ChunkCache, run
 
 
 def exec_fn(params, s):
@@ -87,7 +86,7 @@ def main():
     repeats = 5
     chunk_sizes = [1, 5, 10, 25, 50, 100]
 
-    print("Memo warm cache benchmark (memo.run)")
+    print("Memo warm cache benchmark (run)")
     print(f"n_points={n_points}, repeats={repeats}")
     print("chunk_size  cold_s  min_s    mean_s   max_s")
 

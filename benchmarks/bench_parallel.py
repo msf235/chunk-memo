@@ -1,13 +1,10 @@
+import functools
 import shutil
 import time
-import time
-import functools
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from shard_memo import ChunkCache, memo_parallel_run
-from shard_memo.runners import run
-from shard_memo.runners import run
+from shard_memo import ChunkCache, memo_parallel_run, run
 
 
 def exec_fn(params, s):

@@ -7,10 +7,9 @@ loading full lists into memory at initialization.
 """
 
 import tempfile
-
-from shard_memo import ChunkCache
-from shard_memo.runners import run
 from pathlib import Path
+
+from shard_memo import ChunkCache, run
 
 
 def make_lazy_axis_values():

@@ -2,8 +2,7 @@ from pathlib import Path
 
 import functools
 
-from shard_memo import ChunkCache, ChunkMemo, memo_parallel_run
-from shard_memo.runners import run
+from shard_memo import ChunkCache, ChunkMemo, memo_parallel_run, run
 
 
 def exec_fn(params, strat, s):
