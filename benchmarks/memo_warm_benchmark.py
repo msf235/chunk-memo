@@ -29,13 +29,13 @@ def run_warm_benchmark(*, n_points, chunk_size, repeats):
         )
         memo.set_params(params)
         start = time.perf_counter()
-        memo.run(exec_fn)
+        run(memo, exec_fn)
         cold_time = time.perf_counter() - start
 
         run_times = []
         for _ in range(repeats):
             start = time.perf_counter()
-            memo.run(exec_fn)
+            run(memo, exec_fn)
             run_times.append(time.perf_counter() - start)
 
     return {

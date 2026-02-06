@@ -3,6 +3,7 @@ from pathlib import Path
 import functools
 
 from shard_memo import ChunkCache, ChunkMemo, memo_parallel_run
+from shard_memo.runners import run
 
 
 def exec_fn(params, strat, s):
@@ -41,7 +42,7 @@ def main():
         verbose=1,
     )
     memo.set_params(params)
-    output, diag = memo.run(exec_fn)
+    output, diag = run(memo, exec_fn)
     print("Output:", output)
     print("Diagnostics:", diag)
 

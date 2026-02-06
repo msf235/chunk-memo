@@ -7,6 +7,7 @@ from pathlib import Path
 
 from shard_memo import ChunkCache, memo_parallel_run
 from shard_memo.runners import run
+from shard_memo.runners import run
 
 
 def exec_fn(params, s):
@@ -34,9 +35,9 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     memo.set_params(params)
     if scenario == "half":
         s_vals = axis_values["s"][: n_points // 2]
-        memo.run(exec_fn, s=s_vals)
+        run(memo, exec_fn, s=s_vals)
     elif scenario == "warm":
-        memo.run(exec_fn)
+        run(memo, exec_fn)
 
     start_case = time.perf_counter()
     status = memo.cache_status(s=axis_values["s"])

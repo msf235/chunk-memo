@@ -3,6 +3,7 @@ import functools
 from concurrent.futures import ProcessPoolExecutor
 
 from shard_memo import ChunkCache, memo_parallel_run, memo_parallel_run_streaming
+from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, item_dicts, observed_items
 
@@ -50,7 +51,7 @@ def _set_params(memo, params):
 
 def memo_run(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    return memo.run(exec_fn, **kwargs)
+    return _memo_run(memo, exec_fn, **kwargs)
 
 
 def test_memo_parallel_run_missing_only():

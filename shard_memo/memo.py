@@ -78,14 +78,16 @@ class ChunkMemo:
 
                 exec_fn = functools.partial(func, **exec_extras)
                 if streaming:
-                    self.cache.params = merged_params
-                    return self.cache.run_streaming(
+                    self.cache.set_params(merged_params)
+                    return run_streaming(
+                        self.cache,
                         exec_fn,
                         axis_indices=axis_indices,
                         **axis_inputs,
                     )
-                self.cache.params = merged_params
-                return self.cache.run(
+                self.cache.set_params(merged_params)
+                return run(
+                    self.cache,
                     exec_fn,
                     axis_indices=axis_indices,
                     **axis_inputs,

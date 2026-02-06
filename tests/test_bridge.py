@@ -3,6 +3,7 @@ import functools
 import tempfile
 
 from shard_memo import ChunkCache, memo_parallel_run
+from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs
 
@@ -36,7 +37,7 @@ def _set_params(memo, params):
 
 def memo_run(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    return memo.run(exec_fn, **kwargs)
+    return _memo_run(memo, exec_fn, **kwargs)
 
 
 def test_memo_parallel_run_caches_missing_points():

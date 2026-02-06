@@ -75,7 +75,7 @@ memo = ChunkCache(
     merge_fn=merge_fn,
 )
 memo.set_params(params)
-output, diag = memo.run(exec_fn)
+output, diag = run(memo, exec_fn)
 print(output)
 print(diag)
 ```
@@ -192,7 +192,7 @@ memo = ChunkCache(
 )
 
 memo.set_params(params)
-output, diag = memo.run(exec_fn)
+output, diag = run(memo, exec_fn)
 ```
 
 #### Important notes
@@ -206,13 +206,17 @@ output, diag = memo.run(exec_fn)
 
 ```python
 memo.set_params(params)
-output, diagnostics = memo.run(exec_fn)
+output, diagnostics = run(memo, exec_fn)
 # Or run a subset
-# output, diagnostics = memo.run(exec_fn, strat=["a"], s=[1, 2, 3])
-# output, diagnostics = memo.run(exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# output, diagnostics = run(memo, exec_fn, strat=["a"], s=[1, 2, 3])
+# output, diagnostics = run(memo, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Selection is always derived via `memo.slice(...)` under the hood.
+
+### Cache vs runners
+
+`ChunkCache` is run-agnostic. It exposes cache semantics (axis normalization, selection via `slice`, hashing, and I/O). Execution is handled by runner helpers like `run` and `run_streaming`, which consume a cache plus an exec function. This keeps cache state independent from execution state.
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
 
@@ -220,10 +224,10 @@ Runs missing chunks, caches them, and returns merged output with diagnostics.
 
 ```python
 memo.set_params(params)
-diagnostics = memo.run_streaming(exec_fn)
+diagnostics = run_streaming(memo, exec_fn)
 # Or run a subset
-# diagnostics = memo.run_streaming(exec_fn, strat=["a"], s=[1, 2, 3])
-# diagnostics = memo.run_streaming(exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# diagnostics = run_streaming(memo, exec_fn, strat=["a"], s=[1, 2, 3])
+# diagnostics = run_streaming(memo, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 ```
 
 Executes missing chunks and flushes them to disk without returning outputs.
@@ -551,6 +555,7 @@ more specific requests using `allow_superset=True`:
 ```python
 # Create a broad cache with strat=["a", "b"]
 from shard_memo import ChunkCache
+from shard_memo.runners import run, run_streaming
 
 broad_cache = ChunkCache(
     cache_root="./memo_cache",
@@ -560,7 +565,7 @@ broad_cache = ChunkCache(
 )
 params = {"alpha": 0.4}
 broad_cache.set_params(params)
-output1, diag1 = broad_cache.run(exec_fn)
+output1, diag1 = run(broad_cache, exec_fn)
 # Executes all 6 points: (a,1), (a,2), (a,3), (b,1), (b,2), (b,3)
 
 # Later, request just strat="a" - will find and reuse the broad cache
@@ -574,7 +579,7 @@ memo_a = auto_load(
     merge_fn=merge_fn,
 )
 memo_a.set_params(params)
-output2, diag2 = memo_a.run(exec_fn)
+output2, diag2 = run(memo_a, exec_fn)
 # Only executes the 3 points for strat="a", reuses cached data
 assert diag2.cached_chunks == 1  # All data reused
 assert diag2.executed_chunks == 0

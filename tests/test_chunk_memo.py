@@ -35,12 +35,12 @@ def _set_params(memo, params):
 
 def memo_run(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    return memo.run(exec_fn, **kwargs)
+    return _memo_run(memo, exec_fn, **kwargs)
 
 
 def memo_run_streaming(memo, params, exec_fn, **kwargs):
     _set_params(memo, params)
-    return memo.run_streaming(exec_fn, **kwargs)
+    return _memo_run_streaming(memo, exec_fn, **kwargs)
 
 
 def exec_point_extra_default(params, strat, s, extra=1):
@@ -1069,3 +1069,7 @@ def test_allow_superset_multiple_axes_subset():
         assert output
         assert diag.cached_chunks > 0
         assert diag.executed_chunks == 0
+
+
+from shard_memo.runners import run as _memo_run
+from shard_memo.runners import run_streaming as _memo_run_streaming

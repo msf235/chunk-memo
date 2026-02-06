@@ -667,7 +667,30 @@ def run(
     **axes: Any,
 ) -> Tuple[Any, Diagnostics]:
     """Run memoized execution with output via the cache runner."""
-    return cache.run(exec_fn, axis_indices=axis_indices, **axes)
+    if axis_indices is not None or axes:
+        sliced = cache.slice(cache.params, axis_indices=axis_indices, **axes)
+        return run(sliced, exec_fn)
+    exec_fn_bound = cache._bind_exec_fn(exec_fn)
+    cache.write_metadata()
+    chunk_keys = (
+        cache._normalized_chunk_keys
+        if cache._normalized_chunk_keys is not None
+        else cache._build_chunk_keys()
+    )
+    return run_chunks(
+        chunk_keys,
+        exec_fn_bound,
+        chunk_hash=cache.chunk_hash,
+        resolve_cache_path=cache.resolve_cache_path,
+        load_payload=cache.load_payload,
+        write_chunk_payload=cache.write_chunk_payload,
+        update_chunk_index=cache.update_chunk_index,
+        build_item_maps_from_chunk_output=cache.build_item_maps_from_chunk_output,
+        extract_items_from_map=cache.extract_items_from_map,
+        collect_chunk_data=cache.collect_chunk_data,
+        context=cache,
+        requested_items_by_chunk=cache._selected_items_by_chunk,
+    )
 
 
 def run_streaming(
@@ -678,7 +701,28 @@ def run_streaming(
     **axes: Any,
 ) -> Diagnostics:
     """Run memoized execution without returning outputs."""
-    return cache.run_streaming(exec_fn, axis_indices=axis_indices, **axes)
+    if axis_indices is not None or axes:
+        sliced = cache.slice(cache.params, axis_indices=axis_indices, **axes)
+        return run_streaming(sliced, exec_fn)
+    exec_fn_bound = cache._bind_exec_fn(exec_fn)
+    cache.write_metadata()
+    chunk_keys = (
+        cache._normalized_chunk_keys
+        if cache._normalized_chunk_keys is not None
+        else cache._build_chunk_keys()
+    )
+    return run_chunks_streaming(
+        chunk_keys,
+        exec_fn_bound,
+        chunk_hash=cache.chunk_hash,
+        resolve_cache_path=cache.resolve_cache_path,
+        load_payload=cache.load_payload,
+        write_chunk_payload=cache.write_chunk_payload,
+        update_chunk_index=cache.update_chunk_index,
+        build_item_maps_from_chunk_output=cache.build_item_maps_from_chunk_output,
+        context=cache,
+        requested_items_by_chunk=cache._selected_items_by_chunk,
+    )
 
 
 def execute_and_save_chunk(
