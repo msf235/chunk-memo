@@ -45,8 +45,7 @@ pip install -e .
 ## Quick start
 
 ```python
-from shard_memo import ChunkCache
-from shard_memo.runners import run
+from shard_memo import ChunkCache, run
 
 
 def exec_fn(params, strat, s):
@@ -82,8 +81,10 @@ print(diag)
 
 ## Module layout
 
-- `shard_memo/memo.py`: cache logic (`ChunkCache`).
-- `shard_memo/runners.py`: execution runners (serial and parallel).
+- `shard_memo/cache.py`: cache logic (`ChunkCache`).
+- `shard_memo/runners.py`: serial runner entry points and re-exports.
+- `shard_memo/runners_parallel.py`: parallel runners and planning helpers.
+- `shard_memo/runners_common.py`: shared runner utilities and diagnostics.
 - `shard_memo/bridge.py`: removed (parallel runners live in `shard_memo.runners`).
 - `shard_memo/__init__.py`: re-exports public APIs, including `auto_load()`.
 
@@ -430,46 +431,20 @@ status = exec_point.cache_status(
     extra=2,
 )
 
-parallel_kwargs = {
-    "cache_status_fn": memo.cache_status,
-    "write_metadata": memo.write_metadata,
-    "chunk_hash": memo.chunk_hash,
-    "resolve_cache_path": memo.resolve_cache_path,
-    "load_payload": memo.load_payload,
-    "write_chunk_payload": memo.write_chunk_payload,
-    "update_chunk_index": memo.update_chunk_index,
-    "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
-    "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
-    "reconstruct_output_from_items": memo.reconstruct_output_from_items,
-    "collect_chunk_data": memo.collect_chunk_data,
-    "item_hash": memo.item_hash,
-    "context": memo,
-}
+parallel_kwargs = memo.parallel_ops()
 
 parallel_output, parallel_diag = memo_parallel_run(
     items,
     exec_fn=functools.partial(exec_fn, params),
-    **parallel_kwargs,
     cache_status=status,
+    **parallel_kwargs,
 )
 
 stream_diag = memo_parallel_run_streaming(
     items,
     exec_fn=functools.partial(exec_fn, params),
-    cache_status_fn=memo.cache_status,
-    write_metadata=memo.write_metadata,
-    chunk_hash=memo.chunk_hash,
-    resolve_cache_path=memo.resolve_cache_path,
-    load_payload=memo.load_payload,
-    write_chunk_payload=memo.write_chunk_payload,
-    update_chunk_index=memo.update_chunk_index,
-    load_chunk_index=memo.load_chunk_index,
-    build_item_maps_from_axis_values=memo.build_item_maps_from_axis_values,
-    build_item_maps_from_chunk_output=memo.build_item_maps_from_chunk_output,
-    reconstruct_output_from_items=memo.reconstruct_output_from_items,
-    item_hash=memo.item_hash,
-    context=memo,
     cache_status=status,
+    **parallel_kwargs,
 )
 ```
 
@@ -477,6 +452,7 @@ Parallel runner notes:
 - `memo_parallel_run` expects a `cache_status`-shaped dict.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
+- `ChunkCache.parallel_ops()` returns the cache operations dict shown above.
 
 ### memo_parallel_run
 
@@ -554,8 +530,7 @@ more specific requests using `allow_superset=True`:
 
 ```python
 # Create a broad cache with strat=["a", "b"]
-from shard_memo import ChunkCache
-from shard_memo.runners import run, run_streaming
+from shard_memo import ChunkCache, run, run_streaming
 
 broad_cache = ChunkCache(
     cache_root="./memo_cache",
@@ -635,16 +610,16 @@ python examples/callable_axis_values.py
 ### ChunkCache
 
 `ChunkCache` holds cache configuration, metadata, and chunk planning. It does
-not execute runs directly; use `run` / `run_streaming` from `shard_memo.runners`.
+not execute runs directly; use `run` / `run_streaming` from `shard_memo`.
 
 ```python
-from shard_memo import ChunkCache
-from shard_memo.runners import run
+from shard_memo import ChunkCache, run
 
 cache = ChunkCache(
     cache_root="./cache",
     cache_chunk_spec={"strat": 1, "s": 2},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3, 4]},
 )
-output, diag = run(cache, params, exec_fn)
+cache.set_params(params)
+output, diag = run(cache, exec_fn)
 ```

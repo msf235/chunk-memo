@@ -7,7 +7,6 @@ import inspect
 from typing import Any, Callable, Mapping, Tuple, cast
 
 from .cache import ChunkCache
-from .runner_protocol import RunnerContext
 from .runners import Diagnostics, run, run_streaming
 
 

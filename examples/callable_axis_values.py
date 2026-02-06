@@ -7,7 +7,6 @@ loading full lists into memory at initialization.
 """
 
 import tempfile
-from pathlib import Path
 
 from shard_memo import ChunkCache, run
 

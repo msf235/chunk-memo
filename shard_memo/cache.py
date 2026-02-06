@@ -17,10 +17,6 @@ from .data_write_utils import (
     _atomic_write_pickle,
 )
 from .runner_protocol import CacheStatus
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .runners import Diagnostics
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
@@ -115,8 +111,9 @@ class ChunkCache:
             ...     axis_values={"strat": ["a"], "s": [1, 2, 3]},
             ... )
             >>> params = {"alpha": 0.4}
-            >>> paths = cache.paths_for(params)
-            >>> for chunk_key, chunk_hash, path in paths["chunk_paths"]:
+            >>> cache.set_params(params)
+            >>> for chunk_key, chunk_hash in cache.chunk_hashes_for():
+            ...     path = cache.resolve_cache_path(chunk_key, chunk_hash)
             ...     payload = {"output": []}
             ...     cache.write_chunk_payload(path, payload)
         """
@@ -232,6 +229,25 @@ class ChunkCache:
         }
         return cast(CacheStatus, payload)
 
+    def parallel_ops(self) -> dict[str, Any]:
+        """Return cache operations for memo_parallel_run helpers."""
+        return {
+            "cache_status_fn": self.cache_status,
+            "write_metadata": self.write_metadata,
+            "chunk_hash": self.chunk_hash,
+            "resolve_cache_path": self.resolve_cache_path,
+            "load_payload": self.load_payload,
+            "write_chunk_payload": self.write_chunk_payload,
+            "update_chunk_index": self.update_chunk_index,
+            "load_chunk_index": self.load_chunk_index,
+            "build_item_maps_from_axis_values": self.build_item_maps_from_axis_values,
+            "build_item_maps_from_chunk_output": self.build_item_maps_from_chunk_output,
+            "reconstruct_output_from_items": self.reconstruct_output_from_items,
+            "collect_chunk_data": self.collect_chunk_data,
+            "item_hash": self.item_hash,
+            "context": self,
+        }
+
     def slice(
         self,
         params: dict[str, Any],
@@ -284,6 +300,22 @@ class ChunkCache:
             sliced._normalized_chunk_keys = normalized_chunk_keys
         return sliced
 
+    def bind_exec_fn(self, exec_fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Bind the cache params (and any fixed axes) to exec_fn."""
+        return self._bind_exec_fn(exec_fn)
+
+    def resolved_chunk_keys(self) -> list[ChunkKey]:
+        """Return precomputed chunk keys if available, else build them."""
+        if self._normalized_chunk_keys is not None:
+            return list(self._normalized_chunk_keys)
+        return self._build_chunk_keys()
+
+    def requested_items_by_chunk(
+        self,
+    ) -> Mapping[ChunkKey, list[Tuple[Any, ...]]] | None:
+        """Return requested items per chunk for a sliced cache, if any."""
+        return self._selected_items_by_chunk
+
     def resolve_cache_path(self, chunk_key: ChunkKey, chunk_hash: str) -> Path:
         memo_root = self._memo_root()
         if self.cache_path_fn is None:
@@ -325,26 +357,6 @@ class ChunkCache:
         """Return chunk keys with their hashes for the requested axes."""
         chunk_keys = self._chunk_keys_for(axis_indices=axis_indices, **axes)
         return [(chunk_key, self.chunk_hash(chunk_key)) for chunk_key in chunk_keys]
-
-    def paths_for(
-        self,
-        *,
-        axis_indices: Mapping[str, Any] | None = None,
-        **axes: Any,
-    ) -> dict[str, Any]:
-        """Return cache paths for the requested axes."""
-        memo_root = self._memo_root()
-        chunk_keys = self._chunk_keys_for(axis_indices=axis_indices, **axes)
-        chunk_paths: list[tuple[ChunkKey, str, Path]] = []
-        for chunk_key in chunk_keys:
-            chunk_hash = self.chunk_hash(chunk_key)
-            path = self.resolve_cache_path(chunk_key, chunk_hash)
-            chunk_paths.append((chunk_key, chunk_hash, path))
-        return {
-            "memo_root": memo_root,
-            "metadata_path": memo_root / "metadata.json",
-            "chunk_paths": chunk_paths,
-        }
 
     def apply_payload_timestamps(
         self,
@@ -600,16 +612,6 @@ class ChunkCache:
             size = self._resolve_axis_chunk_size(axis)
             ordered.append((axis, requested_values, size))
         return ordered
-
-    def expand_cache_status(
-        self, cache_status: Mapping[str, Any]
-    ) -> tuple[Mapping[str, Any], Tuple[str, ...], dict[str, dict[Any, int]]]:
-        axis_values = cache_status.get("axis_values")
-        if not isinstance(axis_values, Mapping):
-            raise ValueError("cache_status must include axis_values for memo axes")
-        axis_order = self._resolve_axis_order(dict(axis_values))
-        axis_chunk_maps = self._axis_chunk_maps(axis_values, axis_order)
-        return axis_values, axis_order, axis_chunk_maps
 
     def _axis_chunk_maps(
         self, axis_values: Mapping[str, Any], axis_order: Sequence[str]
