@@ -29,7 +29,7 @@ class RunnerContext(Protocol):
 
     verbose: int
     profile: bool
-    merge_fn: Callable[[list[Any]], Any] | None
+    collate_fn: Callable[[list[Any]], Any] | None
 
 
 WriteMetadataFn = Callable[[], Path]

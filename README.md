@@ -58,7 +58,7 @@ def exec_fn(params, strat, s):
     return outputs
 
 
-def merge_fn(chunks):
+def collate_fn(chunks):
     merged = []
     for chunk in chunks:
         merged.extend(chunk)
@@ -71,7 +71,7 @@ memo = ChunkCache(
     cache_root="./memo_cache",
     cache_chunk_spec={"strat": 1, "s": 3},
     axis_values=axis_values,
-    merge_fn=merge_fn,
+    collate_fn=collate_fn,
 )
 memo.set_params(params)
 output, diag = run(memo, exec_fn)
@@ -100,7 +100,7 @@ ChunkCache(
     cache_root: str | Path,
     cache_chunk_spec: dict[str, int | dict],
     axis_values: dict[str, Any],
-    merge_fn: Callable[[list], Any] | None = None,
+    collate_fn: Callable[[list], Any] | None = None,
     cache_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
     cache_path_fn: Callable[[dict, tuple, str, str], Path | str] | None = None,
@@ -117,7 +117,7 @@ Notes:
 - `exec_fn(params, **axes)`: chunk-level function; each axis receives a
   vector of values for that chunk. Supply it to `run` or use
   `run_wrap`/`streaming_wrap`.
-- `merge_fn` defaults to returning a list of chunk outputs.
+- `collate_fn` defaults to returning a list of chunk outputs.
 - `axis_values` defines the canonical grid for cache chunking.
 - `cache_path_fn` can be used to place cache files in nested directories. Paths
   are resolved under a memo-specific cache directory.
@@ -151,13 +151,14 @@ output, diagnostics = run(memo, exec_fn)
 ```
 
 Selection is handled via `memo.slice(...)` before calling the runners.
+Pass `collate_fn` to override the cache-level `collate_fn` for this run.
 
 ### Cache vs runners
 
 `ChunkCache` is run-agnostic. It exposes cache semantics (axis normalization, selection via `slice`, hashing, and I/O). Execution is handled by runner helpers like `run` and `run_streaming`, which consume a cache plus an exec function. This keeps cache state independent from execution state.
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
-Pass `collate_fn` to override the cache-level `merge_fn` for this run.
+Pass `collate_fn` to override the cache-level `collate_fn` for this run.
 
 ### run_streaming
 
@@ -178,7 +179,8 @@ Executes missing chunks and flushes them to disk without returning outputs.
 
 These are low-level helpers that expect a cache object and a list of chunk keys.
 The cache should already represent the desired axis subset (use `memo.slice(...)`
-first if needed).
+first if needed). You can pass `collate_fn` to override the cache-level
+`collate_fn` for the duration of the call.
 
 ```python
 chunk_keys = memo.resolved_chunk_keys()
@@ -282,7 +284,7 @@ Returns a list of compatible cache entries (same structure as `discover_caches`)
 memo = ChunkCache.load_from_cache(
     cache_root,
     cache_hash="abc123...",
-    merge_fn=merge_fn,
+    collate_fn=collate_fn,
     verbose=1,
     exclusive=False,
     warn_on_overlap=False,
@@ -311,7 +313,7 @@ memo = ChunkCache.auto_load(
     params=params_dict,
     axis_values=axis_values_dict,
     cache_chunk_spec=chunk_spec_dict,
-    merge_fn=merge_fn,
+    collate_fn=collate_fn,
     cache_chunk_enumerator=cache_chunk_enumerator,
     chunk_hash_fn=chunk_hash_fn,
     cache_path_fn=cache_path_fn,
@@ -352,7 +354,7 @@ memo = auto_load(
     params=params_dict,
     axis_values=axis_values_dict,
     cache_chunk_spec=chunk_spec_dict,
-    merge_fn=merge_fn,
+    collate_fn=collate_fn,
     exclusive=False,
     warn_on_overlap=False,
     allow_superset=False,
@@ -499,7 +501,7 @@ broad_cache = ChunkCache(
     cache_root="./memo_cache",
     cache_chunk_spec={"strat": 1, "s": 3},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
-    merge_fn=merge_fn,
+    collate_fn=collate_fn,
 )
 params = {"alpha": 0.4}
 broad_cache.set_params(params)
@@ -514,7 +516,7 @@ memo_a = auto_load(
     params=params,
     axis_values={"strat": ["a"]},  # Subset of original
     allow_superset=True,  # Enable superset detection
-    merge_fn=merge_fn,
+    collate_fn=collate_fn,
 )
 memo_a.set_params(params)
 output2, diag2 = run(memo_a, exec_fn)

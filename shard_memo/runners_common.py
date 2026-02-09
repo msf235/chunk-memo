@@ -263,8 +263,8 @@ def _merge_outputs(
     diagnostics.merges += 1
     if collate_fn is not None:
         return collate_fn(outputs)
-    if context.merge_fn is not None:
-        return context.merge_fn(outputs)
+    if context.collate_fn is not None:
+        return context.collate_fn(outputs)
     return outputs
 
 

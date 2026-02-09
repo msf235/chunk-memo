@@ -54,6 +54,7 @@ def run(
     """Run memoized execution with output via the cache runner.
 
     The cache must already represent the desired axis subset.
+    collate_fn overrides cache.collate_fn for this run.
     """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     write_metadata_fn = (
@@ -98,6 +99,7 @@ def run_streaming(
     """Run memoized execution without returning outputs.
 
     The cache must already represent the desired axis subset.
+    collate_fn is accepted for API parity but has no effect without outputs.
     """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     write_metadata_fn = (
@@ -180,7 +182,10 @@ def run_chunks(
     extract_items_from_map: ExtractItemsFromMapFn | None = None,
     context: RunnerContext | None = None,
 ) -> Tuple[Any, Diagnostics]:
-    """Run a list of chunk keys and return merged output."""
+    """Run a list of chunk keys and return merged output.
+
+    collate_fn overrides cache.collate_fn for this run.
+    """
     deps = resolve_runner_deps(
         cache=cache,
         context=context,
@@ -211,8 +216,8 @@ def run_chunks(
     collate_fn_resolved: MergeFn
     if collate_fn is not None:
         collate_fn_resolved = collate_fn
-    elif context.merge_fn is not None:
-        collate_fn_resolved = context.merge_fn
+    elif context.collate_fn is not None:
+        collate_fn_resolved = context.collate_fn
     else:
         collate_fn_resolved = lambda chunk: chunk
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
@@ -318,7 +323,10 @@ def run_chunks_streaming(
     extract_items_from_map: ExtractItemsFromMapFn | None = None,
     context: RunnerContext | None = None,
 ) -> Diagnostics:
-    """Run chunks and flush payloads to disk only."""
+    """Run chunks and flush payloads to disk only.
+
+    collate_fn is accepted for API parity but has no effect without outputs.
+    """
     deps = resolve_runner_deps(
         cache=cache,
         context=context,

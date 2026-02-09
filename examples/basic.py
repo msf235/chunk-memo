@@ -20,7 +20,7 @@ def exec_fn(params, strat, s):
     return outputs
 
 
-def merge_fn(chunks):
+def collate_fn(chunks):
     merged = []
     for chunk in chunks:
         merged.extend(chunk)
@@ -37,7 +37,7 @@ def main():
         cache_root=output_root / "memo_run_cache",
         cache_chunk_spec={"strat": 1, "s": 3},
         axis_values=axis_values,
-        merge_fn=merge_fn,
+        collate_fn=collate_fn,
         verbose=1,
     )
     memo.set_params(params)

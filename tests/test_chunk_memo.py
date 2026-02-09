@@ -21,7 +21,7 @@ def exec_fn_sleep(params, strat, s):
     return outputs
 
 
-def merge_fn(chunks):
+def collate_fn(chunks):
     merged = []
     for chunk in chunks:
         merged.extend(chunk)
@@ -78,7 +78,7 @@ def run_memo(cache_root, *, merge=True, chunk_spec=None, axis_values):
         cache_root=cache_root,
         cache_chunk_spec=chunk_spec or {"strat": 1, "s": 3},
         axis_values=axis_values,
-        merge_fn=merge_fn if merge else None,
+        collate_fn=collate_fn if merge else None,
     )
 
 
@@ -135,7 +135,7 @@ def test_chunk_count_grid():
         assert diag.executed_chunks == 6
 
 
-def test_merge_fn_optional_returns_nested():
+def test_collate_fn_optional_returns_nested():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
@@ -273,7 +273,7 @@ def test_cache_chunk_enumerator_order():
     def exec_fn_marker(params, strat, s):
         return [{"marker": f"{strat[0]}-{s[0]}"}]
 
-    def merge_markers(chunks):
+    def collate_markers(chunks):
         return [chunk[0]["marker"] for chunk in chunks]
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -282,7 +282,7 @@ def test_cache_chunk_enumerator_order():
             cache_root=temp_dir,
             cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
-            merge_fn=merge_markers,
+            collate_fn=collate_markers,
             cache_chunk_enumerator=cache_chunk_enumerator,
         )
         params = {"alpha": 0.4}
@@ -414,7 +414,7 @@ def test_load_from_cache():
         output1, diag1 = memo_run(memo, params, exec_fn_grid)
 
         cache_hash = memo.cache_hash()
-        memo2 = ChunkCache.load_from_cache(temp_dir, cache_hash, merge_fn=merge_fn)
+        memo2 = ChunkCache.load_from_cache(temp_dir, cache_hash, collate_fn=collate_fn)
         output2, diag2 = memo_run(memo2, params, exec_fn_grid)
 
         assert output1 == output2
@@ -519,7 +519,7 @@ def test_singleton_via_regular_constructor():
             cache_root=temp_dir,
             cache_chunk_spec={},
             axis_values={},
-            merge_fn=None,
+            collate_fn=None,
         )
         output, diag = memo_run(memo, params, exec_fn_singleton)
 
@@ -539,7 +539,7 @@ def test_exclusive_mode_exact_match():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             exclusive=True,
         )
         with pytest.raises(
@@ -559,7 +559,7 @@ def test_exclusive_mode_rejects_different_chunking():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             exclusive=True,
         )
         with pytest.raises(
@@ -575,7 +575,7 @@ def test_warn_on_overlap():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         params = {"alpha": 0.4}
         memo_run(memo1, params, exec_fn_grid)
@@ -584,7 +584,7 @@ def test_warn_on_overlap():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 2},
             axis_values={"strat": ["a"], "s": [1, 2, 3, 4]},
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             warn_on_overlap=True,
         )
         with pytest.warns(UserWarning, match="Cache overlap detected"):
@@ -629,7 +629,7 @@ def test_auto_load_with_axis_values_exact():
         output1, diag1 = memo_run(memo1, params, exec_fn_grid)
 
         memo2 = ChunkCache.auto_load(
-            temp_dir, params, axis_values=axis_values, merge_fn=merge_fn
+            temp_dir, params, axis_values=axis_values, collate_fn=collate_fn
         )
         output2, diag2 = memo_run(memo2, params, exec_fn_grid)
 
@@ -652,7 +652,7 @@ def test_auto_load_ambiguous_no_axis_values():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 1},
             axis_values={"strat": ["a", "b"], "s": [1, 2]},
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo2, params, exec_fn_grid)
 
@@ -673,7 +673,7 @@ def test_auto_load_ambiguous_with_axis_values():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 2, "s": 3},
             axis_values=axis_values,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo2, params, exec_fn_grid)
 
@@ -690,7 +690,7 @@ def test_auto_load_with_cache_chunk_spec():
             params,
             axis_values=axis_values,
             cache_chunk_spec={"strat": 1, "s": 2},
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output, diag = memo_run(memo, params, exec_fn_grid)
 
@@ -718,7 +718,7 @@ def test_allow_superset_finds_superset_cache():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output1, diag1 = memo_run(memo_superset, params_superset, exec_fn_grid)
         assert diag1.total_chunks == 2
@@ -731,7 +731,7 @@ def test_allow_superset_finds_superset_cache():
             params_subset,
             axis_values=axis_values_subset,
             allow_superset=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output2, diag2 = memo_run(memo_subset, params_subset, exec_fn_grid)
 
@@ -748,7 +748,7 @@ def test_allow_superset_false_requires_exact_match():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
 
@@ -760,7 +760,7 @@ def test_allow_superset_false_requires_exact_match():
             params_subset,
             axis_values=axis_values_subset,
             allow_superset=False,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         _, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
 
@@ -778,7 +778,7 @@ def test_allow_superset_multiple_supersets_raises_error():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values1,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo1, params_superset, exec_fn_grid)
 
@@ -786,7 +786,7 @@ def test_allow_superset_multiple_supersets_raises_error():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values2,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo2, params_superset, exec_fn_grid)
 
@@ -810,7 +810,7 @@ def test_exclusive_prevents_subset_cache_creation():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             exclusive=True,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
@@ -827,7 +827,7 @@ def test_exclusive_prevents_subset_cache_creation():
                 params_subset,
                 axis_values=axis_values_subset,
                 exclusive=True,
-                merge_fn=merge_fn,
+                collate_fn=collate_fn,
             )
             memo_run(memo_subset, params_subset, exec_fn_grid)
 
@@ -841,7 +841,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             exclusive=True,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
@@ -858,7 +858,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
                 params_subset,
                 axis_values=axis_values_subset,
                 exclusive=True,
-                merge_fn=merge_fn,
+                collate_fn=collate_fn,
             )
             memo_run(memo, params_subset, exec_fn_grid)
 
@@ -871,7 +871,7 @@ def test_find_compatible_caches_with_allow_superset():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
 
@@ -904,7 +904,7 @@ def test_allow_superset_no_superset_creates_new():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_subset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output1, diag1 = memo_run(memo_subset, params_subset, exec_fn_grid)
         assert diag1.executed_chunks == 1
@@ -917,7 +917,7 @@ def test_allow_superset_no_superset_creates_new():
             params_different,
             axis_values=axis_values_different,
             allow_superset=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output2, diag2 = memo_run(memo_different, params_different, exec_fn_grid)
 
@@ -934,7 +934,7 @@ def test_allow_superset_mixed_params_and_axes():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
 
@@ -946,7 +946,7 @@ def test_allow_superset_mixed_params_and_axes():
             params_subset,
             axis_values=axis_values_subset,
             allow_superset=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
 
@@ -963,7 +963,7 @@ def test_allow_superset_partial_subset_match():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
 
@@ -975,7 +975,7 @@ def test_allow_superset_partial_subset_match():
             params_subset,
             axis_values=axis_values_subset,
             allow_superset=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
 
@@ -992,7 +992,7 @@ def test_exclusive_prevents_redundant_subset():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             exclusive=True,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
@@ -1005,7 +1005,7 @@ def test_exclusive_prevents_redundant_subset():
             params_subset,
             axis_values=axis_values_subset,
             exclusive=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
 
         with pytest.raises(
@@ -1023,7 +1023,7 @@ def test_allow_superset_with_different_params():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
 
@@ -1035,7 +1035,7 @@ def test_allow_superset_with_different_params():
             params_subset,
             axis_values=axis_values_subset,
             allow_superset=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
 
@@ -1052,7 +1052,7 @@ def test_allow_superset_multiple_axes_subset():
             cache_root=temp_dir,
             cache_chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         memo_run(memo_superset, params_superset, exec_fn_grid)
 
@@ -1064,7 +1064,7 @@ def test_allow_superset_multiple_axes_subset():
             params_subset,
             axis_values=axis_values_subset,
             allow_superset=True,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
         )
         output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
 

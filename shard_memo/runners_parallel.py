@@ -140,7 +140,9 @@ def _prepare_parallel_setup(
 
     if collate_fn is None:
         collate_fn = (
-            context.merge_fn if context.merge_fn is not None else lambda chunk: chunk
+            context.collate_fn
+            if context.collate_fn is not None
+            else lambda chunk: chunk
         )
     collate_fn = cast(Callable[[list[Any]], Any], collate_fn)
 
@@ -522,6 +524,7 @@ def run_parallel(
     """Execute items in parallel, reusing cached chunk data.
 
     cache must already represent the desired axis subset.
+    collate_fn overrides cache.collate_fn for this run.
     """
     cache_status = cache.cache_status()
     deps = resolve_runner_deps(
@@ -726,6 +729,7 @@ def run_parallel_streaming(
     """Parallel streaming run that flushes chunk payloads as ready.
 
     cache must already represent the desired axis subset.
+    collate_fn is accepted for API parity but has no effect without outputs.
     """
     cache_status = cache.cache_status()
     deps = resolve_runner_deps(

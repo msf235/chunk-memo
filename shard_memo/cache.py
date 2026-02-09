@@ -20,7 +20,7 @@ from .runner_protocol import CacheStatus
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
-MergeFn = Callable[[list[Any]], Any]
+CollateFn = Callable[[list[Any]], Any]
 AxisIndexMap = dict[str, dict[Any, int]]
 CachePathFn = Callable[[dict[str, Any], ChunkKey, str, str], Path | str]
 
@@ -64,7 +64,7 @@ class ChunkCache:
         cache_chunk_spec: dict[str, Any] | None,
         axis_values: dict[str, Any],
         params: dict[str, Any] | None = None,
-        merge_fn: MergeFn | None = None,
+        collate_fn: CollateFn | None = None,
         cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_path_fn: CachePathFn | None = None,
@@ -82,7 +82,7 @@ class ChunkCache:
             cache_root: Directory for chunk cache files.
             cache_chunk_spec: Per-axis chunk sizes (e.g., {"strat": 1, "s": 3}).
                 If None, defaults to size 1 for each axis.
-            merge_fn: Optional merge function for the list of chunk outputs.
+            collate_fn: Optional collate function for the list of chunk outputs.
             cache_chunk_enumerator: Optional chunk enumerator that defines the
                 cache chunk order.
             chunk_hash_fn: Optional override for chunk hashing.
@@ -129,7 +129,7 @@ class ChunkCache:
                 for axis in axis_values
             }
         self.cache_chunk_spec = cache_chunk_spec
-        self.merge_fn = merge_fn
+        self.collate_fn = collate_fn
         self.cache_chunk_enumerator = cache_chunk_enumerator
         self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash
         self.cache_path_fn = cache_path_fn
@@ -262,7 +262,7 @@ class ChunkCache:
             cache_chunk_spec=self.cache_chunk_spec,
             axis_values=normalized_axis_values,
             params=params,
-            merge_fn=self.merge_fn,
+            collate_fn=self.collate_fn,
             cache_chunk_enumerator=self.cache_chunk_enumerator,
             chunk_hash_fn=self.chunk_hash_fn,
             cache_path_fn=self.cache_path_fn,
@@ -1113,7 +1113,7 @@ class ChunkCache:
         params: dict[str, Any],
         axis_values: dict[str, Any] | None = None,
         cache_chunk_spec: dict[str, Any] | None = None,
-        merge_fn: MergeFn | None = None,
+        collate_fn: CollateFn | None = None,
         cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_path_fn: CachePathFn | None = None,
@@ -1146,7 +1146,7 @@ class ChunkCache:
             cache_chunk_spec: Optional chunk spec. Required when creating
                 a new cache with axis_values. Defaults to size 1 for
                 all axes.
-            merge_fn: Optional merge function.
+            collate_fn: Optional collate function.
             cache_chunk_enumerator: Optional chunk enumerator.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_path_fn: Optional override for cache file paths.
@@ -1203,7 +1203,7 @@ class ChunkCache:
             return cls.load_from_cache(
                 cache_root=cache_root,
                 cache_hash=cache_hash,
-                merge_fn=merge_fn,
+                collate_fn=collate_fn,
                 cache_chunk_enumerator=cache_chunk_enumerator,
                 chunk_hash_fn=chunk_hash_fn,
                 cache_path_fn=cache_path_fn,
@@ -1216,7 +1216,7 @@ class ChunkCache:
             cache_root=cache_root,
             cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values_map,
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             cache_chunk_enumerator=cache_chunk_enumerator,
             chunk_hash_fn=chunk_hash_fn,
             cache_path_fn=cache_path_fn,
@@ -1233,7 +1233,7 @@ class ChunkCache:
         cls,
         cache_root: str | Path,
         cache_hash: str,
-        merge_fn: MergeFn | None = None,
+        collate_fn: CollateFn | None = None,
         cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
         cache_path_fn: CachePathFn | None = None,
@@ -1251,7 +1251,7 @@ class ChunkCache:
         Args:
             cache_root: Directory containing caches.
             cache_hash: The hash identifying the specific cache.
-            merge_fn: Optional merge function for the list of chunk outputs.
+            collate_fn: Optional collate function for the list of chunk outputs.
             cache_chunk_enumerator: Optional chunk enumerator.
             chunk_hash_fn: Optional override for chunk hashing.
             cache_path_fn: Optional override for cache file paths.
@@ -1280,7 +1280,7 @@ class ChunkCache:
             cache_chunk_spec=cache_chunk_spec,
             axis_values=axis_values,
             params=metadata.get("params"),
-            merge_fn=merge_fn,
+            collate_fn=collate_fn,
             cache_chunk_enumerator=cache_chunk_enumerator,
             chunk_hash_fn=chunk_hash_fn,
             cache_path_fn=cache_path_fn,
