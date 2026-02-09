@@ -32,7 +32,6 @@ class RunnerContext(Protocol):
     merge_fn: Callable[[list[Any]], Any] | None
 
 
-CacheStatusFn = Callable[..., CacheStatus]
 WriteMetadataFn = Callable[[], Path]
 ChunkHashFn = Callable[[ChunkKey], str]
 ResolveCachePathFn = Callable[[ChunkKey, str], Path]
@@ -52,3 +51,22 @@ ExtractItemsFromMapFn = Callable[..., list[Any] | None]
 ReconstructOutputFromItemsFn = Callable[[ChunkKey, Mapping[str, Any]], list[Any] | None]
 CollectChunkDataFn = Callable[..., Any | None]
 ItemHashFn = Callable[[ChunkKey, Tuple[Any, ...]], str]
+
+
+class CacheProtocol(RunnerContext, Protocol):
+    """Protocol for cache objects used by runners."""
+
+    write_metadata: WriteMetadataFn
+    chunk_hash: ChunkHashFn
+    resolve_cache_path: ResolveCachePathFn
+    load_payload: LoadPayloadFn
+    write_chunk_payload: WriteChunkPayloadFn
+    update_chunk_index: UpdateChunkIndexFn
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn
+    collect_chunk_data: CollectChunkDataFn
+    extract_items_from_map: ExtractItemsFromMapFn
+    item_hash: ItemHashFn
+    load_chunk_index: LoadChunkIndexFn
+    requested_items_by_chunk: Callable[[], Mapping[ChunkKey, list[Tuple[Any, ...]]]]

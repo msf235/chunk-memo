@@ -10,7 +10,6 @@ from .utils import exec_fn_grid, item_dicts, observed_items
 
 def _parallel_kwargs(memo):
     return {
-        "cache_status_fn": memo.cache_status,
         "write_metadata": memo.write_metadata,
         "chunk_hash": memo.chunk_hash,
         "resolve_cache_path": memo.resolve_cache_path,
@@ -28,7 +27,6 @@ def _parallel_kwargs(memo):
 
 def _parallel_streaming_kwargs(memo):
     return {
-        "cache_status_fn": memo.cache_status,
         "write_metadata": memo.write_metadata,
         "chunk_hash": memo.chunk_hash,
         "resolve_cache_path": memo.resolve_cache_path,

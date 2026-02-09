@@ -44,7 +44,6 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     items = [{"s": value} for value in axis_values["s"]]
     start = time.perf_counter()
     parallel_kwargs = {
-        "cache_status_fn": memo.cache_status,
         "write_metadata": memo.write_metadata,
         "chunk_hash": memo.chunk_hash,
         "resolve_cache_path": memo.resolve_cache_path,
