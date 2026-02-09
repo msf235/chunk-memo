@@ -618,6 +618,10 @@ def run_parallel(
     *,
     exec_fn: Callable[..., Any],
     cache: CacheProtocol,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
     resolve_cache_path: ResolveCachePathFn | None = None,
@@ -630,9 +634,6 @@ def run_parallel(
     collect_chunk_data: CollectChunkDataFn | None = None,
     item_hash: ItemHashFn | None = None,
     context: RunnerContext | None = None,
-    map_fn: Callable[..., Iterable[Any]] | None = None,
-    map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[list[Any]], Any] | None = None,
 ) -> tuple[Any, Diagnostics]:
     """Execute items in parallel, reusing cached chunk data.
 
@@ -790,7 +791,12 @@ def run_parallel(
                 base_index + len(missing_chunks),
                 (base_index + len(missing_chunks)) == total_chunks,
             )
-    merged = _merge_outputs(context, outputs, diagnostics)
+    merged = _merge_outputs(
+        context,
+        outputs,
+        diagnostics,
+        collate_fn=collate_fn_resolved,
+    )
     if not merged and item_list:
         merged = exec_outputs if missing_items else []
     print_chunk_summary(diagnostics, context.verbose)
@@ -803,6 +809,10 @@ def run_parallel_streaming(
     *,
     exec_fn: Callable[..., Any],
     cache: CacheProtocol,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
     resolve_cache_path: ResolveCachePathFn | None = None,
@@ -815,9 +825,6 @@ def run_parallel_streaming(
     reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
     item_hash: ItemHashFn | None = None,
     context: RunnerContext | None = None,
-    map_fn: Callable[..., Iterable[Any]] | None = None,
-    map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[list[Any]], Any] | None = None,
 ) -> Diagnostics:
     """Parallel streaming run that flushes chunk payloads as ready.
 

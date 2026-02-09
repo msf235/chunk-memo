@@ -157,6 +157,7 @@ Selection is handled via `memo.slice(...)` before calling the runners.
 `ChunkCache` is run-agnostic. It exposes cache semantics (axis normalization, selection via `slice`, hashing, and I/O). Execution is handled by runner helpers like `run` and `run_streaming`, which consume a cache plus an exec function. This keeps cache state independent from execution state.
 
 Runs missing chunks, caches them, and returns merged output with diagnostics.
+Pass `collate_fn` to override the cache-level `merge_fn` for this run.
 
 ### run_streaming
 
@@ -171,6 +172,7 @@ diagnostics = run_streaming(memo, exec_fn)
 ```
 
 Executes missing chunks and flushes them to disk without returning outputs.
+`collate_fn` is accepted for API parity but has no effect without outputs.
 
 ### run_chunks / run_chunks_streaming (low-level)
 
@@ -416,6 +418,10 @@ run_parallel(
     *,
     exec_fn: Callable[..., Any],
     cache: CacheProtocol,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[List[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
     resolve_cache_path: Callable[[ChunkKey, str], Path] | None = None,
@@ -428,9 +434,6 @@ run_parallel(
     collect_chunk_data: Callable[..., Any] | None = None,
     item_hash: Callable[[ChunkKey, Tuple[Any, ...]], str] | None = None,
     context: RunnerContext | None = None,
-    map_fn: Callable[..., Iterable[Any]] | None = None,
-    map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[List[Any]], Any] | None = None,
 ) -> tuple[Any, Diagnostics]
 ```
 
@@ -442,6 +445,10 @@ run_parallel_streaming(
     *,
     exec_fn: Callable[..., Any],
     cache: CacheProtocol,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[List[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
     resolve_cache_path: Callable[[ChunkKey, str], Path] | None = None,
@@ -454,9 +461,6 @@ run_parallel_streaming(
     reconstruct_output_from_items: Callable[..., Any] | None = None,
     item_hash: Callable[[ChunkKey, Tuple[Any, ...]], str] | None = None,
     context: RunnerContext | None = None,
-    map_fn: Callable[..., Iterable[Any]] | None = None,
-    map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[List[Any]], Any] | None = None,
 ) -> Diagnostics
 ```
 

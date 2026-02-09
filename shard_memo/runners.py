@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Callable, Mapping, Sequence, Tuple
 
 from ._format import chunk_key_size, print_chunk_summary
 from .runner_protocol import (
     BuildItemMapsFromChunkOutputFn,
     CacheProtocol,
+    ChunkHashFn,
     ResolveCachePathFn,
+    RunnerContext,
     UpdateChunkIndexFn,
+    WriteMetadataFn,
     WriteChunkPayloadFn,
+    CollectChunkDataFn,
+    ExtractItemsFromMapFn,
+    LoadPayloadFn,
 )
 from .runners_parallel import run_parallel, run_parallel_streaming
 from .runners_common import (
@@ -27,39 +34,165 @@ from .runners_common import (
 MergeFn = Callable[[list[Any]], Any]
 
 
+@dataclasses.dataclass
+class _RunnerDeps:
+    chunk_hash: ChunkHashFn
+    resolve_cache_path: ResolveCachePathFn
+    load_payload: LoadPayloadFn
+    write_chunk_payload: WriteChunkPayloadFn
+    update_chunk_index: UpdateChunkIndexFn
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn
+    collect_chunk_data: CollectChunkDataFn
+    extract_items_from_map: ExtractItemsFromMapFn
+    context: RunnerContext
+
+
+def _resolve_runner_deps(
+    *,
+    cache: CacheProtocol,
+    context: RunnerContext | None,
+    chunk_hash: ChunkHashFn | None,
+    resolve_cache_path: ResolveCachePathFn | None,
+    load_payload: LoadPayloadFn | None,
+    write_chunk_payload: WriteChunkPayloadFn | None,
+    update_chunk_index: UpdateChunkIndexFn | None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None,
+    collect_chunk_data: CollectChunkDataFn | None,
+    extract_items_from_map: ExtractItemsFromMapFn | None,
+) -> _RunnerDeps:
+    missing: list[str] = []
+
+    def resolve(name: str, value: Any) -> Any:
+        if value is not None:
+            return value
+        if not hasattr(cache, name):
+            missing.append(name)
+            return None
+        return getattr(cache, name)
+
+    context_resolved = context if context is not None else cache
+    if context_resolved is None:
+        missing.append("context")
+
+    chunk_hash_resolved = resolve("chunk_hash", chunk_hash)
+    resolve_cache_path_resolved = resolve("resolve_cache_path", resolve_cache_path)
+    load_payload_resolved = resolve("load_payload", load_payload)
+    write_chunk_payload_resolved = resolve("write_chunk_payload", write_chunk_payload)
+    update_chunk_index_resolved = resolve("update_chunk_index", update_chunk_index)
+    build_item_maps_from_chunk_output_resolved = resolve(
+        "build_item_maps_from_chunk_output", build_item_maps_from_chunk_output
+    )
+    collect_chunk_data_resolved = resolve("collect_chunk_data", collect_chunk_data)
+    extract_items_from_map_resolved = resolve(
+        "extract_items_from_map", extract_items_from_map
+    )
+
+    if missing:
+        missing = list(dict.fromkeys(missing))
+        raise ValueError(
+            "Missing runner dependencies: "
+            + ", ".join(missing)
+            + ". Provide them explicitly or pass cache=..."
+        )
+
+    return _RunnerDeps(
+        chunk_hash=chunk_hash_resolved,
+        resolve_cache_path=resolve_cache_path_resolved,
+        load_payload=load_payload_resolved,
+        write_chunk_payload=write_chunk_payload_resolved,
+        update_chunk_index=update_chunk_index_resolved,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output_resolved,
+        collect_chunk_data=collect_chunk_data_resolved,
+        extract_items_from_map=extract_items_from_map_resolved,
+        context=context_resolved,
+    )
+
+
 def run(
     cache: Any,
     exec_fn: Callable[..., Any],
+    *,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    extract_items_from_map: ExtractItemsFromMapFn | None = None,
+    context: RunnerContext | None = None,
 ) -> Tuple[Any, Diagnostics]:
     """Run memoized execution with output via the cache runner.
 
     The cache must already represent the desired axis subset.
     """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
-    cache.write_metadata()
+    write_metadata_fn = (
+        write_metadata if write_metadata is not None else cache.write_metadata
+    )
+    write_metadata_fn()
     chunk_keys = cache.resolved_chunk_keys()
     return run_chunks(
         chunk_keys,
         exec_fn_bound,
         cache=cache,
+        collate_fn=collate_fn,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        collect_chunk_data=collect_chunk_data,
+        extract_items_from_map=extract_items_from_map,
+        context=context,
     )
 
 
 def run_streaming(
     cache: Any,
     exec_fn: Callable[..., Any],
+    *,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    extract_items_from_map: ExtractItemsFromMapFn | None = None,
+    context: RunnerContext | None = None,
 ) -> Diagnostics:
     """Run memoized execution without returning outputs.
 
     The cache must already represent the desired axis subset.
     """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
-    cache.write_metadata()
+    write_metadata_fn = (
+        write_metadata if write_metadata is not None else cache.write_metadata
+    )
+    write_metadata_fn()
     chunk_keys = cache.resolved_chunk_keys()
     return run_chunks_streaming(
         chunk_keys,
         exec_fn_bound,
         cache=cache,
+        collate_fn=collate_fn,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        collect_chunk_data=collect_chunk_data,
+        extract_items_from_map=extract_items_from_map,
+        context=context,
     )
 
 
@@ -109,15 +242,42 @@ def run_chunks(
     exec_fn: Callable[..., Any],
     *,
     cache: CacheProtocol,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    extract_items_from_map: ExtractItemsFromMapFn | None = None,
+    context: RunnerContext | None = None,
 ) -> Tuple[Any, Diagnostics]:
     """Run a list of chunk keys and return merged output."""
-    context = cache
-    collect_chunk_data = cache.collect_chunk_data
-    extract_items_from_map = cache.extract_items_from_map
-    requested_items_by_chunk = cache.requested_items_by_chunk()
-    collate_fn: MergeFn = (
-        context.merge_fn if context.merge_fn is not None else lambda chunk: chunk
+    deps = _resolve_runner_deps(
+        cache=cache,
+        context=context,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        collect_chunk_data=collect_chunk_data,
+        extract_items_from_map=extract_items_from_map,
     )
+    context = deps.context
+    collect_chunk_data = deps.collect_chunk_data
+    extract_items_from_map = deps.extract_items_from_map
+    requested_items_map = cache.requested_items_by_chunk()
+    collate_fn_resolved: MergeFn
+    if collate_fn is not None:
+        collate_fn_resolved = collate_fn
+    elif context.merge_fn is not None:
+        collate_fn_resolved = context.merge_fn
+    else:
+        collate_fn_resolved = lambda chunk: chunk
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
     total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
@@ -130,15 +290,15 @@ def run_chunks(
 
     def process_chunk(chunk_key: ChunkKey) -> tuple[Any, bool, bool]:
         chunk_hash_value, path = resolve_chunk_path(
-            cache.chunk_hash,
-            cache.resolve_cache_path,
+            deps.chunk_hash,
+            deps.resolve_cache_path,
             chunk_key,
         )
-        payload = cache.load_payload(path)
+        payload = deps.load_payload(path)
         existing_payload = payload
         requested_items = (
-            requested_items_by_chunk.get(chunk_key)
-            if requested_items_by_chunk is not None
+            requested_items_map.get(chunk_key)
+            if requested_items_map is not None
             else None
         )
         if payload is not None:
@@ -146,7 +306,7 @@ def run_chunks(
                 payload,
                 chunk_key,
                 requested_items,
-                collate_fn,
+                collate_fn_resolved,
             )
             if cached_output is not None:
                 _log_chunk(
@@ -162,10 +322,10 @@ def run_chunks(
             exec_fn,
             chunk_hash_value,
             diagnostics,
-            resolve_cache_path=cache.resolve_cache_path,
-            write_chunk_payload=cache.write_chunk_payload,
-            update_chunk_index=cache.update_chunk_index,
-            build_item_maps_from_chunk_output=cache.build_item_maps_from_chunk_output,
+            resolve_cache_path=deps.resolve_cache_path,
+            write_chunk_payload=deps.write_chunk_payload,
+            update_chunk_index=deps.update_chunk_index,
+            build_item_maps_from_chunk_output=deps.build_item_maps_from_chunk_output,
             existing_payload=existing_payload,
         )
 
@@ -178,7 +338,9 @@ def run_chunks(
             chunk_key,
             requested_items,
         )
-        result = collate_fn([extracted]) if extracted is not None else chunk_output
+        result = (
+            collate_fn_resolved([extracted]) if extracted is not None else chunk_output
+        )
         return result, False, False
 
     outputs: list[Any] = []
@@ -190,7 +352,12 @@ def run_chunks(
         outputs.append(output)
         report_progress(processed, processed == total_chunks)
 
-    merged = _merge_outputs(context, outputs, diagnostics)
+    merged = _merge_outputs(
+        context,
+        outputs,
+        diagnostics,
+        collate_fn=collate_fn_resolved,
+    )
     print_chunk_summary(diagnostics, context.verbose)
     return merged, diagnostics
 
@@ -200,11 +367,34 @@ def run_chunks_streaming(
     exec_fn: Callable[..., Any],
     *,
     cache: CacheProtocol,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    extract_items_from_map: ExtractItemsFromMapFn | None = None,
+    context: RunnerContext | None = None,
 ) -> Diagnostics:
     """Run chunks and flush payloads to disk only."""
-    context = cache
-    requested_items_by_chunk = cache.requested_items_by_chunk()
-    build_item_maps_from_chunk_output = cache.build_item_maps_from_chunk_output
+    deps = _resolve_runner_deps(
+        cache=cache,
+        context=context,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        collect_chunk_data=collect_chunk_data,
+        extract_items_from_map=extract_items_from_map,
+    )
+    context = deps.context
+    requested_items_map = cache.requested_items_by_chunk()
+    build_item_maps_from_chunk_output = deps.build_item_maps_from_chunk_output
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
     total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
@@ -218,21 +408,21 @@ def run_chunks_streaming(
     for processed, chunk_key in enumerate(chunk_keys, start=1):
         update_processed(chunk_key_size(chunk_key))
         chunk_hash_value, path = resolve_chunk_path(
-            cache.chunk_hash,
-            cache.resolve_cache_path,
+            deps.chunk_hash,
+            deps.resolve_cache_path,
             chunk_key,
         )
-        payload = cache.load_payload(path)
+        payload = deps.load_payload(path)
         if payload is not None:
-            if requested_items_by_chunk is None:
+            if requested_items_map is None:
                 diagnostics.cached_chunks += 1
                 _log_chunk(context, "load", chunk_key, None)
                 report_progress(processed, processed == total_chunks)
                 continue
             item_map = _payload_item_map(
                 build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
-                resolve_cache_path=cache.resolve_cache_path,
-                write_chunk_payload=cache.write_chunk_payload,
+                resolve_cache_path=deps.resolve_cache_path,
+                write_chunk_payload=deps.write_chunk_payload,
                 chunk_key=chunk_key,
                 payload=payload,
                 chunk_hash=chunk_hash_value,
@@ -240,7 +430,7 @@ def run_chunks_streaming(
             )
             if item_map is not None:
                 diagnostics.cached_chunks += 1
-                requested_items = requested_items_by_chunk.get(chunk_key)
+                requested_items = requested_items_map.get(chunk_key)
                 _log_chunk(
                     context,
                     "load",
@@ -255,16 +445,16 @@ def run_chunks_streaming(
             exec_fn,
             chunk_hash_value,
             diagnostics,
-            resolve_cache_path=cache.resolve_cache_path,
-            write_chunk_payload=cache.write_chunk_payload,
-            update_chunk_index=cache.update_chunk_index,
-            build_item_maps_from_chunk_output=cache.build_item_maps_from_chunk_output,
+            resolve_cache_path=deps.resolve_cache_path,
+            write_chunk_payload=deps.write_chunk_payload,
+            update_chunk_index=deps.update_chunk_index,
+            build_item_maps_from_chunk_output=deps.build_item_maps_from_chunk_output,
             existing_payload=None,
         )
 
         requested_items = (
-            requested_items_by_chunk.get(chunk_key)
-            if requested_items_by_chunk is not None
+            requested_items_map.get(chunk_key)
+            if requested_items_map is not None
             else None
         )
         _log_chunk(

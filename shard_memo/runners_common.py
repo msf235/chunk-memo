@@ -149,9 +149,14 @@ def _require_axis_info(
 
 
 def _merge_outputs(
-    context: RunnerContext, outputs: list[Any], diagnostics: Diagnostics
+    context: RunnerContext,
+    outputs: list[Any],
+    diagnostics: Diagnostics,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
 ) -> Any:
     diagnostics.merges += 1
+    if collate_fn is not None:
+        return collate_fn(outputs)
     if context.merge_fn is not None:
         return context.merge_fn(outputs)
     return outputs
