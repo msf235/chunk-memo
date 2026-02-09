@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Sequence, Tuple
 
-from ._format import chunk_key_size, prepare_progress, print_chunk_summary
+from ._format import chunk_key_size, print_chunk_summary
 from .runner_protocol import (
     BuildItemMapsFromChunkOutputFn,
     CacheProtocol,
-    ChunkHashFn,
-    LoadPayloadFn,
     ResolveCachePathFn,
-    RunnerContext,
     UpdateChunkIndexFn,
     WriteChunkPayloadFn,
 )
@@ -22,38 +19,12 @@ from .runners_common import (
     _merge_outputs,
     _payload_item_map,
     _stream_item_count,
+    prepare_progress_callbacks,
+    resolve_chunk_path,
 )
 from .runners_parallel import memo_parallel_run, memo_parallel_run_streaming
 
 MergeFn = Callable[[list[Any]], Any]
-
-
-def _load_chunk_payload(
-    chunk_hash: ChunkHashFn,
-    resolve_cache_path: ResolveCachePathFn,
-    load_payload: LoadPayloadFn,
-    chunk_key: ChunkKey,
-) -> tuple[str, dict[str, Any] | None]:
-    chunk_hash_value = chunk_hash(chunk_key)
-    path = resolve_cache_path(chunk_key, chunk_hash_value)
-    payload = load_payload(path)
-    return chunk_hash_value, payload
-
-
-def prepare_chunk_run(
-    context: RunnerContext, chunk_keys: Sequence[ChunkKey]
-) -> tuple[Diagnostics, Callable[[int, bool], None], Callable[[int], None], int]:
-    """Prepare progress tracking for a chunk run."""
-    diagnostics = Diagnostics(total_chunks=len(chunk_keys))
-    total_chunks = len(chunk_keys)
-    total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
-    report_progress, update_processed = prepare_progress(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=context.verbose,
-        label="planning",
-    )
-    return diagnostics, report_progress, update_processed, total_chunks
 
 
 def run(
@@ -153,17 +124,23 @@ def run_chunks(
     collate_fn: MergeFn = (
         context.merge_fn if context.merge_fn is not None else lambda chunk: chunk
     )
-    diagnostics, report_progress, update_processed, total_chunks = prepare_chunk_run(
-        context, chunk_keys
+    diagnostics = Diagnostics(total_chunks=len(chunk_keys))
+    total_chunks = len(chunk_keys)
+    total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+    report_progress, update_processed = prepare_progress_callbacks(
+        total_chunks=total_chunks,
+        total_items=total_items,
+        verbose=context.verbose,
+        label="planning",
     )
 
     def process_chunk(chunk_key: ChunkKey) -> tuple[Any, bool, bool]:
-        chunk_hash_value, payload = _load_chunk_payload(
+        chunk_hash_value, path = resolve_chunk_path(
             cache.chunk_hash,
             cache.resolve_cache_path,
-            cache.load_payload,
             chunk_key,
         )
+        payload = cache.load_payload(path)
         existing_payload = payload
         requested_items = (
             requested_items_by_chunk.get(chunk_key)
@@ -234,18 +211,24 @@ def run_chunks_streaming(
     context = cache
     requested_items_by_chunk = cache.requested_items_by_chunk()
     build_item_maps_from_chunk_output = cache.build_item_maps_from_chunk_output
-    diagnostics, report_progress, update_processed, total_chunks = prepare_chunk_run(
-        context, chunk_keys
+    diagnostics = Diagnostics(total_chunks=len(chunk_keys))
+    total_chunks = len(chunk_keys)
+    total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
+    report_progress, update_processed = prepare_progress_callbacks(
+        total_chunks=total_chunks,
+        total_items=total_items,
+        verbose=context.verbose,
+        label="planning",
     )
 
     for processed, chunk_key in enumerate(chunk_keys, start=1):
         update_processed(chunk_key_size(chunk_key))
-        chunk_hash_value, payload = _load_chunk_payload(
+        chunk_hash_value, path = resolve_chunk_path(
             cache.chunk_hash,
             cache.resolve_cache_path,
-            cache.load_payload,
             chunk_key,
         )
+        payload = cache.load_payload(path)
         if payload is not None:
             if requested_items_by_chunk is None:
                 diagnostics.cached_chunks += 1

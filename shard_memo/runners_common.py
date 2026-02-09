@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from typing import Any, Callable, Mapping, Tuple, cast
 
-from ._format import print_detail
+from ._format import prepare_progress, print_detail
 from .runner_protocol import (
     BuildItemMapsFromChunkOutputFn,
     CacheStatus,
+    ChunkHashFn,
     ResolveCachePathFn,
     RunnerContext,
     UpdateChunkIndexFn,
@@ -76,6 +78,16 @@ def _payload_item_map(
     return item_map
 
 
+def resolve_chunk_path(
+    chunk_hash: ChunkHashFn,
+    resolve_cache_path: ResolveCachePathFn,
+    chunk_key: ChunkKey,
+) -> tuple[str, Path]:
+    chunk_hash_value = chunk_hash(chunk_key)
+    path = resolve_cache_path(chunk_key, chunk_hash_value)
+    return chunk_hash_value, path
+
+
 def _save_chunk_payload(
     *,
     resolve_cache_path: ResolveCachePathFn,
@@ -143,3 +155,18 @@ def _merge_outputs(
     if context.merge_fn is not None:
         return context.merge_fn(outputs)
     return outputs
+
+
+def prepare_progress_callbacks(
+    *,
+    total_chunks: int,
+    total_items: int,
+    verbose: int,
+    label: str,
+) -> tuple[Callable[[int, bool], None], Callable[[int], None]]:
+    return prepare_progress(
+        total_chunks=total_chunks,
+        total_items=total_items,
+        verbose=verbose,
+        label=label,
+    )

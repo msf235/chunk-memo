@@ -12,7 +12,6 @@ from ._format import (
     build_plan_lines,
     chunk_key_size,
     format_rate_eta,
-    prepare_progress,
     print_chunk_summary,
     print_progress,
 )
@@ -42,6 +41,8 @@ from .runners_common import (
     _require_axis_info,
     _require_params,
     _save_chunk_payload,
+    prepare_progress_callbacks,
+    resolve_chunk_path,
 )
 
 EXEC_REPORT_INTERVAL_SECONDS = 2.0
@@ -353,8 +354,11 @@ def _scan_cached_chunk_items(
             continue
         update_processed(len(chunk_items))
         full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
-        chunk_hash_value = chunk_hash(chunk_key)
-        path = resolve_cache_path(chunk_key, chunk_hash_value)
+        chunk_hash_value, path = resolve_chunk_path(
+            chunk_hash,
+            resolve_cache_path,
+            chunk_key,
+        )
         if not chunk_exists(chunk_hash_value, path):
             tracker.register(chunk_key, list(chunk_items))
             continue
@@ -685,7 +689,7 @@ def memo_parallel_run(
     if not item_list or axis_extractor is None:
         return [], diagnostics
     total_items = len(item_list)
-    report_progress_main, update_processed = prepare_progress(
+    report_progress_main, update_processed = prepare_progress_callbacks(
         total_chunks=total_chunks,
         total_items=total_items,
         verbose=context.verbose,
@@ -883,7 +887,7 @@ def memo_parallel_run_streaming(
     if not item_list or axis_extractor is None:
         return diagnostics
     total_items = len(item_list)
-    report_progress_streaming, update_processed = prepare_progress(
+    report_progress_streaming, update_processed = prepare_progress_callbacks(
         total_chunks=total_chunks,
         total_items=total_items,
         verbose=context.verbose,

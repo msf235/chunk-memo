@@ -168,6 +168,19 @@ diagnostics = run_streaming(memo, exec_fn)
 
 Executes missing chunks and flushes them to disk without returning outputs.
 
+### run_chunks / run_chunks_streaming (low-level)
+
+These are low-level helpers that expect a cache object and a list of chunk keys.
+The cache should already represent the desired axis subset (use `memo.slice(...)`
+first if needed).
+
+```python
+chunk_keys = memo.resolved_chunk_keys()
+output, diagnostics = run_chunks(chunk_keys, exec_fn, cache=memo)
+
+diagnostics = run_chunks_streaming(chunk_keys, exec_fn, cache=memo)
+```
+
 ### run_wrap (memoized wrapper)
 
 ```python
