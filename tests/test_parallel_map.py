@@ -53,8 +53,8 @@ def test_memo_parallel_run_returns_requested_points():
         outputs, diag = memo_parallel_run(
             [item_from_index(item, axis_values) for item in items],
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )

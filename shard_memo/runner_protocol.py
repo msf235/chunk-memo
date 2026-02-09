@@ -56,17 +56,41 @@ ItemHashFn = Callable[[ChunkKey, Tuple[Any, ...]], str]
 class CacheProtocol(RunnerContext, Protocol):
     """Protocol for cache objects used by runners."""
 
-    write_metadata: WriteMetadataFn
-    chunk_hash: ChunkHashFn
-    resolve_cache_path: ResolveCachePathFn
-    load_payload: LoadPayloadFn
-    write_chunk_payload: WriteChunkPayloadFn
-    update_chunk_index: UpdateChunkIndexFn
-    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn
-    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn
-    reconstruct_output_from_items: ReconstructOutputFromItemsFn
-    collect_chunk_data: CollectChunkDataFn
-    extract_items_from_map: ExtractItemsFromMapFn
-    item_hash: ItemHashFn
-    load_chunk_index: LoadChunkIndexFn
-    requested_items_by_chunk: Callable[[], Mapping[ChunkKey, list[Tuple[Any, ...]]]]
+    def cache_status(
+        self,
+        *,
+        axis_indices: Mapping[str, Any] | None = None,
+        **axes: Any,
+    ) -> CacheStatus: ...
+
+    def write_metadata(self) -> Path: ...
+
+    def chunk_hash(self, chunk_key: ChunkKey) -> str: ...
+
+    def resolve_cache_path(self, chunk_key: ChunkKey, chunk_hash: str) -> Path: ...
+
+    def load_payload(self, path: Path) -> dict[str, Any] | None: ...
+
+    def write_chunk_payload(self, *args: Any, **kwargs: Any) -> Path: ...
+
+    def update_chunk_index(self, chunk_hash: str, chunk_key: ChunkKey) -> None: ...
+
+    def build_item_maps_from_axis_values(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def build_item_maps_from_chunk_output(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def reconstruct_output_from_items(
+        self, chunk_key: ChunkKey, items: Mapping[str, Any]
+    ) -> list[Any] | None: ...
+
+    def collect_chunk_data(self, *args: Any, **kwargs: Any) -> Any | None: ...
+
+    def extract_items_from_map(self, *args: Any, **kwargs: Any) -> list[Any] | None: ...
+
+    def item_hash(self, chunk_key: ChunkKey, axis_values: Tuple[Any, ...]) -> str: ...
+
+    def load_chunk_index(self) -> dict[str, Any] | None: ...
+
+    def requested_items_by_chunk(
+        self,
+    ) -> Mapping[ChunkKey, list[Tuple[Any, ...]]] | None: ...

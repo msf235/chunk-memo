@@ -61,7 +61,7 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
         memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn, params),
-            cache_status=status,
+            cache=memo,
             map_fn=executor.map,
             map_fn_kwargs={"chunksize": exec_chunk_size},
             **parallel_kwargs,
@@ -74,7 +74,7 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
 
 
 def main():
-    n_points = 10000
+    n_points = 2000
     sleep_s = 0.001
 
     print("Benchmark: n_points=10000, sleep=0.005s (varying exec_chunk_size)")

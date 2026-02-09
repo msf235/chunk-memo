@@ -360,7 +360,7 @@ import functools
 
 from shard_memo import memo_parallel_run, memo_parallel_run_streaming
 
-status = exec_point.cache_status(
+parallel_cache = memo.slice(
     params,
     axis_indices={"strat": range(0, 1), "s": slice(0, 3)},
     extra=2,
@@ -369,21 +369,19 @@ status = exec_point.cache_status(
 parallel_output, parallel_diag = memo_parallel_run(
     items,
     exec_fn=functools.partial(exec_fn, params),
-    cache_status=status,
-    cache=memo,
+    cache=parallel_cache,
 )
 
 stream_diag = memo_parallel_run_streaming(
     items,
     exec_fn=functools.partial(exec_fn, params),
-    cache_status=status,
-    cache=memo,
+    cache=parallel_cache,
 )
 ```
 
 Parallel runner notes:
-- `memo_parallel_run` expects a `cache_status`-shaped dict.
-- You can pass `cache=` to supply default runner dependencies; explicit kwargs override cache methods.
+- `memo_parallel_run` expects a cache already sliced to the desired axis subset.
+- You can pass explicit kwargs to override cache methods.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
 - `memo_parallel_run_streaming` only writes cache payloads, it does not return outputs.
@@ -400,8 +398,7 @@ memo_parallel_run(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
-    cache_status: Mapping[str, Any],
-    cache: CacheProtocol | None = None,
+    cache: CacheProtocol,
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
     resolve_cache_path: Callable[[ChunkKey, str], Path] | None = None,
@@ -427,8 +424,7 @@ memo_parallel_run_streaming(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
-    cache_status: Mapping[str, Any],
-    cache: CacheProtocol | None = None,
+    cache: CacheProtocol,
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
     resolve_cache_path: Callable[[ChunkKey, str], Path] | None = None,

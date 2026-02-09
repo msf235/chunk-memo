@@ -613,8 +613,7 @@ def memo_parallel_run(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
-    cache_status: CacheStatus,
-    cache: CacheProtocol | None = None,
+    cache: CacheProtocol,
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
     resolve_cache_path: ResolveCachePathFn | None = None,
@@ -633,8 +632,9 @@ def memo_parallel_run(
 ) -> tuple[Any, Diagnostics]:
     """Execute items in parallel, reusing cached chunk data.
 
-    cache_status must be provided by the caller.
+    cache must already represent the desired axis subset.
     """
+    cache_status = cache.cache_status()
     deps = _resolve_runner_deps(
         cache=cache,
         context=context,
@@ -798,8 +798,7 @@ def memo_parallel_run_streaming(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
-    cache_status: CacheStatus,
-    cache: CacheProtocol | None = None,
+    cache: CacheProtocol,
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
     resolve_cache_path: ResolveCachePathFn | None = None,
@@ -818,8 +817,9 @@ def memo_parallel_run_streaming(
 ) -> Diagnostics:
     """Parallel streaming run that flushes chunk payloads as ready.
 
-    cache_status must be provided by the caller.
+    cache must already represent the desired axis subset.
     """
+    cache_status = cache.cache_status()
     deps = _resolve_runner_deps(
         cache=cache,
         context=context,

@@ -65,7 +65,6 @@ def main():
     print("Missing indices:", status["missing_chunk_indices"])
 
     items = [("aaa", 1), ("bb", 4), ("aaa", 2)]
-    status_parallel = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
     parallel_kwargs = {
         "write_metadata": memo.write_metadata,
         "chunk_hash": memo.chunk_hash,
@@ -83,7 +82,7 @@ def main():
     bridge_output, bridge_diag = memo_parallel_run(
         items,
         exec_fn=functools.partial(exec_fn, params),
-        cache_status=status_parallel,
+        cache=memo,
         **parallel_kwargs,
         map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         map_fn_kwargs={"chunksize": 1},
@@ -97,7 +96,7 @@ def main():
         pooled_output, pooled_diag = memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn, params),
-            cache_status=status_parallel,
+            cache=memo,
             **parallel_kwargs,
             map_fn=executor.map,
             map_fn_kwargs={"chunksize": 1},

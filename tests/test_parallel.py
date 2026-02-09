@@ -68,8 +68,8 @@ def test_memo_parallel_run_missing_only():
         outputs, diag = memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
@@ -105,8 +105,8 @@ def test_memo_parallel_run_with_memoized_cache_status():
         outputs, diag = memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
@@ -143,8 +143,8 @@ def test_memo_parallel_run_cache_reuse():
         memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
@@ -153,8 +153,8 @@ def test_memo_parallel_run_cache_reuse():
         outputs, diag = memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
@@ -189,8 +189,8 @@ def test_parallel_run_populates_memo_cache():
         memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=status,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
@@ -227,8 +227,8 @@ def test_parallel_run_streaming_populates_cache():
             diag = memo_parallel_run_streaming(
                 items,
                 exec_fn=functools.partial(exec_fn_grid, params),
+                cache=memo,
                 **_parallel_streaming_kwargs(memo),
-                cache_status=status,
                 map_fn=executor.map,
                 map_fn_kwargs={"chunksize": 1},
             )

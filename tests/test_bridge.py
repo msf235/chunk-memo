@@ -55,13 +55,11 @@ def test_memo_parallel_run_caches_missing_points():
             {"strat": "b", "s": 4},
             {"strat": "a", "s": 2},
         ]
-        cache_status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-
         output, diag = memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=cache_status,
             collate_fn=collate_fn,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
@@ -89,13 +87,11 @@ def test_memo_parallel_run_reuses_partial_chunks():
             {"strat": "a", "s": 4},
             {"strat": "b", "s": 2},
         ]
-        cache_status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-
         output, diag = memo_parallel_run(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
+            cache=memo,
             **_parallel_kwargs(memo),
-            cache_status=cache_status,
             collate_fn=collate_fn,
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
