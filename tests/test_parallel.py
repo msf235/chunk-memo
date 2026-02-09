@@ -2,7 +2,7 @@ import tempfile
 import functools
 from concurrent.futures import ProcessPoolExecutor
 
-from shard_memo import ChunkCache, memo_parallel_run, memo_parallel_run_streaming
+from shard_memo import ChunkCache, run_parallel, run_parallel_streaming
 from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, item_dicts, observed_items
@@ -48,11 +48,12 @@ def _set_params(memo, params):
 
 
 def memo_run(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
-    return _memo_run(memo, exec_fn, **kwargs)
+    axis_indices = kwargs.pop("axis_indices", None)
+    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
+    return _memo_run(sliced, exec_fn)
 
 
-def test_memo_parallel_run_missing_only():
+def test_run_parallel_missing_only():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -65,7 +66,7 @@ def test_memo_parallel_run_missing_only():
 
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-        outputs, diag = memo_parallel_run(
+        outputs, diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
@@ -88,7 +89,7 @@ def test_memo_parallel_run_missing_only():
         }
 
 
-def test_memo_parallel_run_with_memoized_cache_status():
+def test_run_parallel_with_memoized_cache_status():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -102,7 +103,7 @@ def test_memo_parallel_run_with_memoized_cache_status():
 
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-        outputs, diag = memo_parallel_run(
+        outputs, diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
@@ -127,7 +128,7 @@ def test_memo_parallel_run_with_memoized_cache_status():
         }
 
 
-def test_memo_parallel_run_cache_reuse():
+def test_run_parallel_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -140,7 +141,7 @@ def test_memo_parallel_run_cache_reuse():
 
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-        memo_parallel_run(
+        run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
@@ -150,7 +151,7 @@ def test_memo_parallel_run_cache_reuse():
         )
 
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-        outputs, diag = memo_parallel_run(
+        outputs, diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
@@ -173,7 +174,7 @@ def test_memo_parallel_run_cache_reuse():
         }
 
 
-def test_parallel_run_populates_memo_cache():
+def test_run_parallel_populates_memo_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -186,7 +187,7 @@ def test_parallel_run_populates_memo_cache():
 
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-        memo_parallel_run(
+        run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
@@ -210,7 +211,7 @@ def test_parallel_run_populates_memo_cache():
         }
 
 
-def test_parallel_run_streaming_populates_cache():
+def test_run_parallel_streaming_populates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -224,7 +225,7 @@ def test_parallel_run_streaming_populates_cache():
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
         with ProcessPoolExecutor(max_workers=2) as executor:
-            diag = memo_parallel_run_streaming(
+            diag = run_parallel_streaming(
                 items,
                 exec_fn=functools.partial(exec_fn_grid, params),
                 cache=memo,

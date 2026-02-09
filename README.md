@@ -144,11 +144,13 @@ Axis values must be hashable and unique within each axis. Duplicates will collap
 memo.set_params(params)
 output, diagnostics = run(memo, exec_fn)
 # Or run a subset
-# output, diagnostics = run(memo, exec_fn, strat=["a"], s=[1, 2, 3])
-# output, diagnostics = run(memo, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# sliced = memo.slice(params, strat=["a"], s=[1, 2, 3])
+# output, diagnostics = run(sliced, exec_fn)
+# sliced = memo.slice(params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# output, diagnostics = run(sliced, exec_fn)
 ```
 
-Selection is always derived via `memo.slice(...)` under the hood.
+Selection is handled via `memo.slice(...)` before calling the runners.
 
 ### Cache vs runners
 
@@ -161,9 +163,11 @@ Runs missing chunks, caches them, and returns merged output with diagnostics.
 ```python
 memo.set_params(params)
 diagnostics = run_streaming(memo, exec_fn)
-# Or run a subset
-# diagnostics = run_streaming(memo, exec_fn, strat=["a"], s=[1, 2, 3])
-# diagnostics = run_streaming(memo, exec_fn, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# Or run a subset via slicing
+# sliced = memo.slice(params, strat=["a"], s=[1, 2, 3])
+# diagnostics = run_streaming(sliced, exec_fn)
+# sliced = memo.slice(params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+# diagnostics = run_streaming(sliced, exec_fn)
 ```
 
 Executes missing chunks and flushes them to disk without returning outputs.
@@ -371,7 +375,7 @@ Use cases:
 ```python
 import functools
 
-from shard_memo import memo_parallel_run, memo_parallel_run_streaming
+from shard_memo import run_parallel, run_parallel_streaming
 
 parallel_cache = memo.slice(
     params,
@@ -379,13 +383,13 @@ parallel_cache = memo.slice(
     extra=2,
 )
 
-parallel_output, parallel_diag = memo_parallel_run(
+parallel_output, parallel_diag = run_parallel(
     items,
     exec_fn=functools.partial(exec_fn, params),
     cache=parallel_cache,
 )
 
-stream_diag = memo_parallel_run_streaming(
+stream_diag = run_parallel_streaming(
     items,
     exec_fn=functools.partial(exec_fn, params),
     cache=parallel_cache,
@@ -393,21 +397,21 @@ stream_diag = memo_parallel_run_streaming(
 ```
 
 Parallel runner notes:
-- `memo_parallel_run` expects a cache already sliced to the desired axis subset.
+- `run_parallel` expects a cache already sliced to the desired axis subset.
 - You can pass explicit kwargs to override cache methods.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
-- `memo_parallel_run_streaming` only writes cache payloads, it does not return outputs.
+- `run_parallel_streaming` only writes cache payloads, it does not return outputs.
 
-Item formats for `memo_parallel_run` and `memo_parallel_run_streaming`:
+Item formats for `run_parallel` and `run_parallel_streaming`:
 - Mapping items: each item is a dict with keys for every axis name (in any order).
 - Positional items: each item is a tuple/list ordered by `axis_order`.
 - Single-axis shorthand: if there is exactly one axis, a scalar item is allowed.
 
-### memo_parallel_run
+### run_parallel
 
 ```python
-memo_parallel_run(
+run_parallel(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -430,10 +434,10 @@ memo_parallel_run(
 ) -> tuple[Any, Diagnostics]
 ```
 
-### memo_parallel_run_streaming
+### run_parallel_streaming
 
 ```python
-memo_parallel_run_streaming(
+run_parallel_streaming(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],

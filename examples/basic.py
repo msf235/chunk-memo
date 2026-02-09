@@ -2,7 +2,7 @@ from pathlib import Path
 
 import functools
 
-from shard_memo import ChunkCache, ChunkMemo, memo_parallel_run, run
+from shard_memo import ChunkCache, ChunkMemo, run, run_parallel
 
 
 def exec_fn(params, strat, s):
@@ -79,7 +79,7 @@ def main():
         "item_hash": memo.item_hash,
         "context": memo,
     }
-    bridge_output, bridge_diag = memo_parallel_run(
+    bridge_output, bridge_diag = run_parallel(
         items,
         exec_fn=functools.partial(exec_fn, params),
         cache=memo,
@@ -93,7 +93,7 @@ def main():
     from concurrent.futures import ProcessPoolExecutor
 
     with ProcessPoolExecutor(max_workers=4) as executor:
-        pooled_output, pooled_diag = memo_parallel_run(
+        pooled_output, pooled_diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn, params),
             cache=memo,

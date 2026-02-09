@@ -12,6 +12,7 @@ from .runner_protocol import (
     UpdateChunkIndexFn,
     WriteChunkPayloadFn,
 )
+from .runners_parallel import run_parallel, run_parallel_streaming
 from .runners_common import (
     ChunkKey,
     Diagnostics,
@@ -22,7 +23,6 @@ from .runners_common import (
     prepare_progress_callbacks,
     resolve_chunk_path,
 )
-from .runners_parallel import memo_parallel_run, memo_parallel_run_streaming
 
 MergeFn = Callable[[list[Any]], Any]
 
@@ -30,14 +30,11 @@ MergeFn = Callable[[list[Any]], Any]
 def run(
     cache: Any,
     exec_fn: Callable[..., Any],
-    *,
-    axis_indices: Mapping[str, Any] | None = None,
-    **axes: Any,
 ) -> Tuple[Any, Diagnostics]:
-    """Run memoized execution with output via the cache runner."""
-    if axis_indices is not None or axes:
-        sliced = cache.slice(cache.params, axis_indices=axis_indices, **axes)
-        return run(sliced, exec_fn)
+    """Run memoized execution with output via the cache runner.
+
+    The cache must already represent the desired axis subset.
+    """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     cache.write_metadata()
     chunk_keys = cache.resolved_chunk_keys()
@@ -51,14 +48,11 @@ def run(
 def run_streaming(
     cache: Any,
     exec_fn: Callable[..., Any],
-    *,
-    axis_indices: Mapping[str, Any] | None = None,
-    **axes: Any,
 ) -> Diagnostics:
-    """Run memoized execution without returning outputs."""
-    if axis_indices is not None or axes:
-        sliced = cache.slice(cache.params, axis_indices=axis_indices, **axes)
-        return run_streaming(sliced, exec_fn)
+    """Run memoized execution without returning outputs.
+
+    The cache must already represent the desired axis subset.
+    """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     cache.write_metadata()
     chunk_keys = cache.resolved_chunk_keys()

@@ -76,21 +76,14 @@ class ChunkMemo:
                 )
 
                 exec_fn = functools.partial(func, **exec_extras)
-                if streaming:
-                    self.cache.set_params(merged_params)
-                    return run_streaming(
-                        self.cache,
-                        exec_fn,
-                        axis_indices=axis_indices,
-                        **axis_inputs,
-                    )
-                self.cache.set_params(merged_params)
-                return run(
-                    self.cache,
-                    exec_fn,
+                sliced = self.cache.slice(
+                    merged_params,
                     axis_indices=axis_indices,
                     **axis_inputs,
                 )
+                if streaming:
+                    return run_streaming(sliced, exec_fn)
+                return run(sliced, exec_fn)
 
             def cache_status(
                 params: dict[str, Any] | None = None,

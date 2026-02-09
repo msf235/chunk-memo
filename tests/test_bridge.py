@@ -2,7 +2,7 @@ import itertools
 import functools
 import tempfile
 
-from shard_memo import ChunkCache, memo_parallel_run
+from shard_memo import ChunkCache, run_parallel
 from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs
@@ -35,11 +35,12 @@ def _set_params(memo, params):
 
 
 def memo_run(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
-    return _memo_run(memo, exec_fn, **kwargs)
+    axis_indices = kwargs.pop("axis_indices", None)
+    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
+    return _memo_run(sliced, exec_fn)
 
 
-def test_memo_parallel_run_caches_missing_points():
+def test_run_parallel_caches_missing_points():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
@@ -55,7 +56,7 @@ def test_memo_parallel_run_caches_missing_points():
             {"strat": "b", "s": 4},
             {"strat": "a", "s": 2},
         ]
-        output, diag = memo_parallel_run(
+        output, diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
@@ -69,7 +70,7 @@ def test_memo_parallel_run_caches_missing_points():
         assert output
 
 
-def test_memo_parallel_run_reuses_partial_chunks():
+def test_run_parallel_reuses_partial_chunks():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
@@ -87,7 +88,7 @@ def test_memo_parallel_run_reuses_partial_chunks():
             {"strat": "a", "s": 4},
             {"strat": "b", "s": 2},
         ]
-        output, diag = memo_parallel_run(
+        output, diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,

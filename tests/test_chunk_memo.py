@@ -34,13 +34,15 @@ def _set_params(memo, params):
 
 
 def memo_run(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
-    return _memo_run(memo, exec_fn, **kwargs)
+    axis_indices = kwargs.pop("axis_indices", None)
+    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
+    return _memo_run(sliced, exec_fn)
 
 
 def memo_run_streaming(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
-    return _memo_run_streaming(memo, exec_fn, **kwargs)
+    axis_indices = kwargs.pop("axis_indices", None)
+    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
+    return _memo_run_streaming(sliced, exec_fn)
 
 
 def exec_point_extra_default(params, strat, s, extra=1):

@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from shard_memo import ChunkCache, memo_parallel_run, run
+from shard_memo import ChunkCache, run, run_parallel
 
 
 def exec_fn(params, s):
@@ -32,9 +32,10 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     memo.set_params(params)
     if scenario == "half":
         s_vals = axis_values["s"][: n_points // 2]
-        run(memo, exec_fn, s=s_vals)
+        sliced = memo.slice(params, s=s_vals)
+        run(sliced, exec_fn)
     elif scenario == "warm":
-        run(memo, exec_fn)
+        run(memo.slice(params), exec_fn)
 
     start_case = time.perf_counter()
     status = memo.cache_status(s=axis_values["s"])
@@ -58,7 +59,7 @@ def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
         "context": memo,
     }
     with ProcessPoolExecutor(max_workers=8) as executor:
-        memo_parallel_run(
+        run_parallel(
             items,
             exec_fn=functools.partial(exec_fn, params),
             cache=memo,

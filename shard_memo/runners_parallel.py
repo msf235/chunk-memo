@@ -613,7 +613,7 @@ def _extract_axis_values(
     return [axis_extractor(item) for item in items]
 
 
-def memo_parallel_run(
+def run_parallel(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],
@@ -798,7 +798,7 @@ def memo_parallel_run(
     return merged, diagnostics
 
 
-def memo_parallel_run_streaming(
+def run_parallel_streaming(
     items: Iterable[Any],
     *,
     exec_fn: Callable[..., Any],

@@ -5,9 +5,9 @@ from .memo import ChunkMemo
 from .runner_protocol import CacheStatus, RunnerContext
 from .runners import (
     Diagnostics,
-    memo_parallel_run,
-    memo_parallel_run_streaming,
     run,
+    run_parallel,
+    run_parallel_streaming,
     run_streaming,
 )
 
@@ -25,9 +25,9 @@ __all__ = [
     "Diagnostics",
     "__version__",
     "auto_load",
-    "memo_parallel_run",
-    "memo_parallel_run_streaming",
     "run",
+    "run_parallel",
+    "run_parallel_streaming",
     "run_streaming",
     "RunnerContext",
     "CacheStatus",

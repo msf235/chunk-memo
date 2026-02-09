@@ -279,6 +279,8 @@ class ChunkCache:
         sliced._selected_items_by_chunk = selected_items
         if normalized_chunk_keys is not None:
             sliced._normalized_chunk_keys = normalized_chunk_keys
+        if sliced.exclusive:
+            sliced._check_exclusive()
         return sliced
 
     def bind_exec_fn(self, exec_fn: Callable[..., Any]) -> Callable[..., Any]:

@@ -2,7 +2,7 @@ import tempfile
 
 import functools
 
-from shard_memo import ChunkCache, memo_parallel_run
+from shard_memo import ChunkCache, run_parallel
 from shard_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs, item_from_index
@@ -31,11 +31,12 @@ def _set_params(memo, params):
 
 
 def memo_run(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
-    return _memo_run(memo, exec_fn, **kwargs)
+    axis_indices = kwargs.pop("axis_indices", None)
+    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
+    return _memo_run(sliced, exec_fn)
 
 
-def test_memo_parallel_run_returns_requested_points():
+def test_run_parallel_returns_requested_points():
     params = {"alpha": 0.4}
     axis_values = {"strat": ["a", "b"], "s": [1, 2, 3]}
     items = [(0, 0), (1, 2), (0, 1), (1, 0)]
@@ -50,7 +51,7 @@ def test_memo_parallel_run_returns_requested_points():
         memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
 
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
-        outputs, diag = memo_parallel_run(
+        outputs, diag = run_parallel(
             [item_from_index(item, axis_values) for item in items],
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
