@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from typing import Any, Callable, Mapping, Tuple, cast
+from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
 from ._format import prepare_progress, print_detail
 from .runner_protocol import (
+    BuildItemMapsFromAxisValuesFn,
     BuildItemMapsFromChunkOutputFn,
+    CacheProtocol,
     CacheStatus,
     ChunkHashFn,
+    CollectChunkDataFn,
+    ExtractItemsFromMapFn,
+    ItemHashFn,
+    LoadChunkIndexFn,
+    LoadPayloadFn,
+    ReconstructOutputFromItemsFn,
     ResolveCachePathFn,
     RunnerContext,
     UpdateChunkIndexFn,
     WriteChunkPayloadFn,
+    WriteMetadataFn,
 )
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
@@ -29,6 +38,103 @@ class Diagnostics:
     max_stream_items: int = 0
     stream_flushes: int = 0
     max_parallel_items: int = 0
+
+
+@dataclasses.dataclass
+class RunnerDeps:
+    write_metadata: WriteMetadataFn | None = None
+    chunk_hash: ChunkHashFn | None = None
+    resolve_cache_path: ResolveCachePathFn | None = None
+    load_payload: LoadPayloadFn | None = None
+    write_chunk_payload: WriteChunkPayloadFn | None = None
+    update_chunk_index: UpdateChunkIndexFn | None = None
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None
+    collect_chunk_data: CollectChunkDataFn | None = None
+    item_hash: ItemHashFn | None = None
+    load_chunk_index: LoadChunkIndexFn | None = None
+    extract_items_from_map: ExtractItemsFromMapFn | None = None
+    context: RunnerContext | None = None
+
+
+def resolve_runner_deps(
+    *,
+    cache: CacheProtocol | None,
+    context: RunnerContext | None = None,
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    item_hash: ItemHashFn | None = None,
+    load_chunk_index: LoadChunkIndexFn | None = None,
+    extract_items_from_map: ExtractItemsFromMapFn | None = None,
+    require: Sequence[str] | None = None,
+) -> RunnerDeps:
+    missing: list[str] = []
+    require_set = set(require or ())
+
+    def resolve(name: str, value: Any) -> Any:
+        if value is not None:
+            return value
+        if cache is None:
+            return None
+        if not hasattr(cache, name):
+            return None
+        return getattr(cache, name)
+
+    context_resolved = context if context is not None else cache
+    if context_resolved is None and "context" in require_set:
+        missing.append("context")
+
+    def resolve_required(name: str, value: Any) -> Any:
+        resolved = resolve(name, value)
+        if resolved is None and name in require_set:
+            missing.append(name)
+        return resolved
+
+    deps = RunnerDeps(
+        write_metadata=resolve_required("write_metadata", write_metadata),
+        chunk_hash=resolve_required("chunk_hash", chunk_hash),
+        resolve_cache_path=resolve_required("resolve_cache_path", resolve_cache_path),
+        load_payload=resolve_required("load_payload", load_payload),
+        write_chunk_payload=resolve_required(
+            "write_chunk_payload", write_chunk_payload
+        ),
+        update_chunk_index=resolve_required("update_chunk_index", update_chunk_index),
+        build_item_maps_from_axis_values=resolve_required(
+            "build_item_maps_from_axis_values", build_item_maps_from_axis_values
+        ),
+        build_item_maps_from_chunk_output=resolve_required(
+            "build_item_maps_from_chunk_output", build_item_maps_from_chunk_output
+        ),
+        reconstruct_output_from_items=resolve_required(
+            "reconstruct_output_from_items", reconstruct_output_from_items
+        ),
+        collect_chunk_data=resolve_required("collect_chunk_data", collect_chunk_data),
+        item_hash=resolve_required("item_hash", item_hash),
+        load_chunk_index=resolve_required("load_chunk_index", load_chunk_index),
+        extract_items_from_map=resolve_required(
+            "extract_items_from_map", extract_items_from_map
+        ),
+        context=context_resolved,
+    )
+
+    if missing:
+        missing = list(dict.fromkeys(missing))
+        raise ValueError(
+            "Missing runner dependencies: "
+            + ", ".join(missing)
+            + ". Provide them explicitly or pass cache=..."
+        )
+
+    return deps
 
 
 def _stream_item_count(output: Any) -> int:
