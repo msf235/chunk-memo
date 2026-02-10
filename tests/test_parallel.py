@@ -614,6 +614,48 @@ def test_run_parallel_reuses_superset_cache_for_subset_axes():
         assert observed == expected
 
 
+def test_run_parallel_extend_cache_for_new_axis_values():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        axis_values = {
+            "strat": ["a"],
+            "s": [1, 2],
+        }
+        memo = ChunkCache(
+            cache_root=temp_dir,
+            cache_chunk_spec={"strat": 1, "s": 2},
+            axis_values=axis_values,
+            params=params,
+        )
+        memo.set_params(params)
+
+        items = [
+            {"strat": "a", "s": 1},
+            {"strat": "a", "s": 2},
+            {"strat": "a", "s": 3},
+        ]
+
+        def exec_seed_point(strat, s):
+            return strat, s
+
+        outputs, diag = run_parallel(
+            items,
+            exec_fn=exec_seed_point,
+            map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            map_fn_kwargs={"chunksize": 1},
+            cache=memo,
+            collate_fn=None,
+            extend_cache=True,
+        )
+
+        assert diag.executed_chunks == 2
+        axis_values_after = memo.cache_status().get("axis_values", {})
+        assert axis_values_after.get("s") == [1, 2, 3]
+        if outputs and isinstance(outputs[0], list):
+            outputs = [item for chunk in outputs for item in chunk]
+        assert set(outputs) == {("a", 1), ("a", 2), ("a", 3)}
+
+
 def test_run_parallel_streaming_partial_chunks_load_as_partial():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}

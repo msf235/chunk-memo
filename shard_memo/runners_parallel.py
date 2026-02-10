@@ -528,6 +528,27 @@ def _extract_axis_values(
     return [axis_extractor(item) for item in items]
 
 
+def _collect_missing_axis_values(
+    *,
+    items: Sequence[Any],
+    axis_order: Sequence[str],
+    axis_values: Mapping[str, Sequence[Any]] | None,
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+) -> dict[str, list[Any]]:
+    if axis_values is None:
+        return {}
+    existing_sets = {axis: set(axis_values.get(axis, [])) for axis in axis_order}
+    missing: dict[str, list[Any]] = {}
+    for item in items:
+        axis_vals = axis_extractor(item)
+        for axis, value in zip(axis_order, axis_vals):
+            if value in existing_sets[axis]:
+                continue
+            missing.setdefault(axis, []).append(value)
+            existing_sets[axis].add(value)
+    return missing
+
+
 def _cumulative_chunk_counts(
     chunk_order: Sequence[ChunkKey],
     items_by_chunk: Mapping[ChunkKey, Sequence[Any]],
@@ -553,6 +574,7 @@ def run_parallel(
     collate_fn: Callable[[list[Any]], Any] | None = None,
     flush_on_chunk: bool = False,
     return_output: bool = True,
+    extend_cache: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
@@ -577,6 +599,8 @@ def run_parallel(
     flush_on_chunk writes chunk payloads as soon as a chunk completes.
     If return_output is False, chunk payloads are flushed incrementally and
     the output is returned as None.
+    extend_cache updates the cache axis_values in-place if items introduce
+    new axis values.
     """
     cache_status = cache.cache_status()
     if not return_output:
@@ -612,6 +636,20 @@ def run_parallel(
         ],
     )
     context = cast(RunnerContext, deps.context)
+    item_list = items if isinstance(items, list) else list(items)
+    axis_extractor = _build_item_axis_extractor(cache_status, item_list, exec_fn)
+    if extend_cache and axis_extractor is not None:
+        axis_order, _ = _require_axis_info(cache_status)
+        missing_axis_values = _collect_missing_axis_values(
+            items=item_list,
+            axis_order=axis_order,
+            axis_values=cache_status.get("axis_values"),
+            axis_extractor=axis_extractor,
+        )
+        if missing_axis_values:
+            cache.extend_axis_values(missing_axis_values)
+            cache_status = cache.cache_status()
+
     setup = _prepare_parallel_setup(
         cast(RunnerContext, deps.context),
         cast(WriteMetadataFn, deps.write_metadata),
@@ -629,15 +667,17 @@ def run_parallel(
     outputs: list[Any] | None = [] if return_output else None
     exec_outputs: list[Any] = []
     total_chunks = diagnostics.total_chunks
-
-    item_list, axis_extractor, cached_chunk_items, missing_chunk_items = (
-        _prepare_parallel_items(
-            cache_status,
-            items,
-            exec_fn=exec_fn,
-            cached_chunks=cached_chunks,
-            missing_chunks=missing_chunks,
-        )
+    (
+        item_list,
+        axis_extractor,
+        cached_chunk_items,
+        missing_chunk_items,
+    ) = _prepare_parallel_items(
+        cache_status,
+        item_list,
+        exec_fn=exec_fn,
+        cached_chunks=cached_chunks,
+        missing_chunks=missing_chunks,
     )
     if not item_list or axis_extractor is None:
         return [], diagnostics
@@ -893,6 +933,7 @@ def run_parallel_streaming(
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[list[Any]], Any] | None = None,
+    extend_cache: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
@@ -923,6 +964,7 @@ def run_parallel_streaming(
         collate_fn=collate_fn,
         flush_on_chunk=True,
         return_output=False,
+        extend_cache=extend_cache,
         write_metadata=write_metadata,
         chunk_hash=chunk_hash,
         resolve_cache_path=resolve_cache_path,

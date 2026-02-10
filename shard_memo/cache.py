@@ -638,6 +638,48 @@ class ChunkCache:
             raise ValueError("axis_values must be set before getting axis values")
         return list(self._axis_values[axis])
 
+    def extend_axis_values(
+        self,
+        axis_values: Mapping[str, Sequence[Any]],
+        *,
+        write_metadata: bool = True,
+    ) -> None:
+        """Extend axis_values in-place with new values.
+
+        Values already present are ignored; new values are appended in order.
+        """
+        if self._axis_values is None or self._axis_index_map is None:
+            raise ValueError("axis_values must be set before extending")
+        axis_order = self._resolve_axis_order(self._axis_values)
+        missing_axes = [axis for axis in axis_values if axis not in self._axis_values]
+        if missing_axes:
+            raise KeyError(f"Unknown axis(es) in extension: {missing_axes}")
+
+        updated = False
+        for axis in axis_order:
+            if axis not in axis_values:
+                continue
+            current_values = self._axis_values[axis]
+            current_set = set(current_values)
+            new_values: list[Any] = []
+            for value in axis_values[axis]:
+                if value in current_set:
+                    continue
+                current_set.add(value)
+                new_values.append(value)
+            if not new_values:
+                continue
+            updated = True
+            current_values.extend(new_values)
+            self._axis_index_map[axis] = {
+                value: index for index, value in enumerate(current_values)
+            }
+
+        if updated:
+            self._axis_values_serializable = self._make_axis_values_serializable()
+            if write_metadata:
+                self.write_metadata()
+
     def _normalize_axes(
         self,
         axes: Mapping[str, Any] | None,
@@ -1197,6 +1239,25 @@ class ChunkCache:
         cache_root = Path(cache_root)
         axis_values_map = axis_values or {}
 
+        def summarize_axis_values(value: Any) -> str:
+            if not isinstance(value, Mapping):
+                return repr(value)
+            summarized: dict[str, Any] = {}
+            for key, axis_vals in value.items():
+                if isinstance(axis_vals, (list, tuple)):
+                    if len(axis_vals) <= 6:
+                        summarized[key] = list(axis_vals)
+                    else:
+                        summarized[key] = (
+                            list(axis_vals[:3]) + ["..."] + list(axis_vals[-2:])
+                        )
+                else:
+                    summarized[key] = axis_vals
+            rendered = repr(summarized)
+            if len(rendered) > 200:
+                return rendered[:197] + "..."
+            return rendered
+
         # resolve memo hash / cache selection
         normalized_params = cls._normalized_hash_params_for_axis_values(params, {})
         compatible_caches = cls.find_compatible_caches(
@@ -1210,10 +1271,14 @@ class ChunkCache:
         if len(compatible_caches) == 1:
             cache_hash = compatible_caches[0]["cache_hash"]
         elif len(compatible_caches) > 1:
-            matches = [
-                f"{c['cache_hash']} (axis_values={c.get('metadata', {}).get('axis_values')})"
-                for c in compatible_caches
-            ]
+            matches = []
+            for cache in compatible_caches:
+                axis_values_summary = summarize_axis_values(
+                    cache.get("metadata", {}).get("axis_values")
+                )
+                matches.append(
+                    f"{cache['cache_hash']} (axis_values={axis_values_summary})"
+                )
             raise ValueError(
                 f"Ambiguous: {len(compatible_caches)} caches match the given params. "
                 f"Use axis_values parameter to disambiguate, or use one of "

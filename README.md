@@ -406,6 +406,8 @@ Parallel runner notes:
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
 - `run_parallel_streaming` is equivalent to `run_parallel(..., flush_on_chunk=True, return_output=False)`.
+- Use `extend_cache=True` to grow a cache's axis_values in-place when items
+  include values outside the current cache.
 
 Item formats for `run_parallel` and `run_parallel_streaming`:
 - Mapping items: each item is a dict with keys for every axis name (in any order).
@@ -425,6 +427,7 @@ run_parallel(
     collate_fn: Callable[[List[Any]], Any] | None = None,
     flush_on_chunk: bool = False,
     return_output: bool = True,
+    extend_cache: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
@@ -453,6 +456,7 @@ run_parallel_streaming(
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[List[Any]], Any] | None = None,
+    extend_cache: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
