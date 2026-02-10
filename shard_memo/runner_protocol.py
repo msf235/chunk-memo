@@ -49,7 +49,8 @@ BuildItemMapsFromChunkOutputFn = Callable[
 ]
 ExtractItemsFromMapFn = Callable[..., list[Any] | None]
 ReconstructOutputFromItemsFn = Callable[[ChunkKey, Mapping[str, Any]], list[Any] | None]
-CollectChunkDataFn = Callable[..., Any | None]
+ReconstructPartialOutputFromItemsFn = Callable[[ChunkKey, Mapping[str, Any]], list[Any]]
+CollectChunkDataFn = Callable[..., tuple[Any | None, bool]]
 ItemHashFn = Callable[[ChunkKey, Tuple[Any, ...]], str]
 
 
@@ -83,7 +84,13 @@ class CacheProtocol(RunnerContext, Protocol):
         self, chunk_key: ChunkKey, items: Mapping[str, Any]
     ) -> list[Any] | None: ...
 
-    def collect_chunk_data(self, *args: Any, **kwargs: Any) -> Any | None: ...
+    def reconstruct_partial_output_from_items(
+        self, chunk_key: ChunkKey, items: Mapping[str, Any]
+    ) -> list[Any]: ...
+
+    def collect_chunk_data(
+        self, *args: Any, **kwargs: Any
+    ) -> tuple[Any | None, bool]: ...
 
     def extract_items_from_map(self, *args: Any, **kwargs: Any) -> list[Any] | None: ...
 

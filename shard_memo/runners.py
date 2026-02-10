@@ -55,6 +55,8 @@ def run(
 
     The cache must already represent the desired axis subset.
     collate_fn overrides cache.collate_fn for this run.
+    Partial chunks return whatever cached output is available and increment
+    diagnostics.partial_chunks.
     """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     write_metadata_fn = (
@@ -100,6 +102,7 @@ def run_streaming(
 
     The cache must already represent the desired axis subset.
     collate_fn is accepted for API parity but has no effect without outputs.
+    Partial chunks still count as cached and increment diagnostics.partial_chunks.
     """
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     write_metadata_fn = (
@@ -185,6 +188,8 @@ def run_chunks(
     """Run a list of chunk keys and return merged output.
 
     collate_fn overrides cache.collate_fn for this run.
+    Partial chunks return whatever cached output is available and increment
+    diagnostics.partial_chunks.
     """
     deps = resolve_runner_deps(
         cache=cache,
@@ -244,7 +249,7 @@ def run_chunks(
             else None
         )
         if payload is not None:
-            cached_output = collect_chunk_data(
+            cached_output, is_partial = collect_chunk_data(
                 payload,
                 chunk_key,
                 requested_items,
@@ -257,7 +262,7 @@ def run_chunks(
                     chunk_key,
                     None if requested_items is None else len(requested_items),
                 )
-                return cached_output, True, False
+                return cached_output, True, is_partial
 
         chunk_output, item_map = execute_and_save_chunk(
             chunk_key,
@@ -290,9 +295,11 @@ def run_chunks(
     outputs: list[Any] = []
     for processed, chunk_key in enumerate(chunk_keys, start=1):
         update_processed(chunk_key_size(chunk_key))
-        output, cached, _ = process_chunk(chunk_key)
+        output, cached, is_partial = process_chunk(chunk_key)
         if cached:
             diagnostics.cached_chunks += 1
+        if is_partial:
+            diagnostics.partial_chunks += 1
         outputs.append(output)
         report_progress(processed, processed == total_chunks)
 
@@ -326,6 +333,7 @@ def run_chunks_streaming(
     """Run chunks and flush payloads to disk only.
 
     collate_fn is accepted for API parity but has no effect without outputs.
+    Partial chunks still count as cached and increment diagnostics.partial_chunks.
     """
     deps = resolve_runner_deps(
         cache=cache,
@@ -375,6 +383,13 @@ def run_chunks_streaming(
         payload = cast(LoadPayloadFn, deps.load_payload)(path)
         if payload is not None:
             if requested_items_map is None:
+                items_payload = payload.get("items")
+                if payload.get("output") is None and items_payload is not None:
+                    if (
+                        cache.reconstruct_output_from_items(chunk_key, items_payload)
+                        is None
+                    ):
+                        diagnostics.partial_chunks += 1
                 diagnostics.cached_chunks += 1
                 _log_chunk(context, "load", chunk_key, None)
                 report_progress(processed, processed == total_chunks)
@@ -391,6 +406,12 @@ def run_chunks_streaming(
             if item_map is not None:
                 diagnostics.cached_chunks += 1
                 requested_items = requested_items_map.get(chunk_key)
+                if requested_items is not None:
+                    for values in requested_items:
+                        item_key = cache.item_hash(chunk_key, values)
+                        if item_key not in item_map:
+                            diagnostics.partial_chunks += 1
+                            break
                 _log_chunk(
                     context,
                     "load",

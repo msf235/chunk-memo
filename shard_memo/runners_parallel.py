@@ -4,6 +4,7 @@ import dataclasses
 import functools
 import inspect
 import time
+from bisect import bisect_right
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
@@ -25,6 +26,7 @@ from .runner_protocol import (
     ItemHashFn,
     LoadChunkIndexFn,
     LoadPayloadFn,
+    ReconstructPartialOutputFromItemsFn,
     ReconstructOutputFromItemsFn,
     ResolveCachePathFn,
     RunnerContext,
@@ -214,6 +216,7 @@ def _scan_cached_chunk_items(
     resolve_cache_path: ResolveCachePathFn,
     load_payload: LoadPayloadFn,
     reconstruct_output_from_items: ReconstructOutputFromItemsFn,
+    reconstruct_partial_output_from_items: ReconstructPartialOutputFromItemsFn,
     build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn,
     write_chunk_payload: WriteChunkPayloadFn,
     item_hash: ItemHashFn,
@@ -262,15 +265,26 @@ def _scan_cached_chunk_items(
             _log_chunk(context, "load", chunk_key, None)
             if outputs is not None and collate_fn is not None:
                 chunk_output = payload.get("output")
+                partial = False
                 if chunk_output is None:
                     items_payload = payload.get("items")
                     if items_payload is not None and isinstance(items_payload, Mapping):
                         chunk_output = reconstruct_output_from_items(
                             chunk_key, items_payload
                         )
+                        if chunk_output is None:
+                            chunk_output = reconstruct_partial_output_from_items(
+                                chunk_key, items_payload
+                            )
+                            partial = True
                 if chunk_output is None:
-                    raise ValueError("Cache payload missing required data")
+                    cached_payloads[chunk_key] = payload
+                    tracker.register(chunk_key, list(chunk_items))
+                    report_progress(processed, processed == total_chunks)
+                    continue
                 outputs.append(chunk_output)
+                if partial:
+                    diagnostics.partial_chunks += 1
             report_progress(processed, processed == total_chunks)
             continue
         item_map = _payload_item_map(
@@ -285,23 +299,21 @@ def _scan_cached_chunk_items(
             tracker.register(chunk_key, list(chunk_items))
             continue
         item_outputs: list[Any] = []
-        missing = False
+        partial = False
         for item in chunk_items:
             axis_values = axis_extractor(item)
             item_key = item_hash(chunk_key, axis_values)
             if item_key not in item_map:
-                cached_payloads[chunk_key] = payload
-                tracker.register(chunk_key, list(chunk_items))
-                missing = True
-                item_outputs = []
-                break
+                partial = True
+                continue
             if outputs is not None and collate_fn is not None:
                 item_outputs.append(item_map[item_key])
-        if not missing:
-            diagnostics.cached_chunks += 1
-            _log_chunk(context, "load", chunk_key, len(chunk_items))
-            if outputs is not None and collate_fn is not None and item_outputs:
-                outputs.append(collate_fn(item_outputs))
+        diagnostics.cached_chunks += 1
+        _log_chunk(context, "load", chunk_key, len(chunk_items))
+        if outputs is not None and collate_fn is not None and item_outputs:
+            outputs.append(collate_fn(item_outputs))
+        if partial:
+            diagnostics.partial_chunks += 1
         report_progress(processed, processed == total_chunks)
 
 
@@ -312,6 +324,9 @@ def _exec_iter_with_progress(
     cached_items_total: int,
     total_items_all: int,
     total_missing: int,
+    cached_chunks: int,
+    total_chunks: int,
+    completed_chunk_counts: Sequence[int] | None,
 ) -> Iterable[tuple[int, Any]]:
     exec_start = time.monotonic()
     last_report = exec_start
@@ -328,6 +343,13 @@ def _exec_iter_with_progress(
                 rate_processed=index,
                 rate_total=total_missing,
             )
+            completed_chunks = (
+                bisect_right(completed_chunk_counts, index)
+                if completed_chunk_counts is not None
+                else 0
+            )
+            live_cached = cached_chunks + completed_chunks
+            message = f"{message} cached_chunks={live_cached}/{total_chunks}"
             print_progress(message, final=False)
             last_report = now
         yield index, result
@@ -341,6 +363,13 @@ def _exec_iter_with_progress(
             rate_processed=total_missing,
             rate_total=total_missing,
         )
+        completed_chunks = (
+            bisect_right(completed_chunk_counts, total_missing)
+            if completed_chunk_counts is not None
+            else 0
+        )
+        live_cached = cached_chunks + completed_chunks
+        message = f"{message} cached_chunks={live_cached}/{total_chunks}"
         print_progress(message, final=True)
 
 
@@ -499,6 +528,21 @@ def _extract_axis_values(
     return [axis_extractor(item) for item in items]
 
 
+def _cumulative_chunk_counts(
+    chunk_order: Sequence[ChunkKey],
+    items_by_chunk: Mapping[ChunkKey, Sequence[Any]],
+) -> list[int]:
+    counts: list[int] = []
+    running = 0
+    for chunk_key in chunk_order:
+        chunk_size = len(items_by_chunk.get(chunk_key, []))
+        if chunk_size <= 0:
+            continue
+        running += chunk_size
+        counts.append(running)
+    return counts
+
+
 def run_parallel(
     items: Iterable[Any],
     *,
@@ -507,6 +551,8 @@ def run_parallel(
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[list[Any]], Any] | None = None,
+    flush_on_chunk: bool = False,
+    return_output: bool = True,
     # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
@@ -514,6 +560,7 @@ def run_parallel(
     load_payload: LoadPayloadFn | None = None,
     write_chunk_payload: WriteChunkPayloadFn | None = None,
     update_chunk_index: UpdateChunkIndexFn | None = None,
+    load_chunk_index: LoadChunkIndexFn | None = None,
     build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
     build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
     reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
@@ -525,8 +572,15 @@ def run_parallel(
 
     cache must already represent the desired axis subset.
     collate_fn overrides cache.collate_fn for this run.
+    Partial chunks return whatever cached output is available and increment
+    diagnostics.partial_chunks.
+    flush_on_chunk writes chunk payloads as soon as a chunk completes.
+    If return_output is False, chunk payloads are flushed incrementally and
+    the output is returned as None.
     """
     cache_status = cache.cache_status()
+    if not return_output:
+        flush_on_chunk = True
     deps = resolve_runner_deps(
         cache=cache,
         context=context,
@@ -536,12 +590,12 @@ def run_parallel(
         load_payload=load_payload,
         write_chunk_payload=write_chunk_payload,
         update_chunk_index=update_chunk_index,
+        load_chunk_index=load_chunk_index,
         build_item_maps_from_axis_values=build_item_maps_from_axis_values,
         build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
         reconstruct_output_from_items=reconstruct_output_from_items,
         collect_chunk_data=collect_chunk_data,
         item_hash=item_hash,
-        load_chunk_index=None,
         require=[
             "context",
             "write_metadata",
@@ -553,6 +607,7 @@ def run_parallel(
             "build_item_maps_from_axis_values",
             "build_item_maps_from_chunk_output",
             "reconstruct_output_from_items",
+            "reconstruct_partial_output_from_items",
             "item_hash",
         ],
     )
@@ -571,8 +626,7 @@ def run_parallel(
     collate_fn_resolved = setup.collate_fn
     map_fn_resolved = setup.map_fn
     map_fn_kwargs_resolved = setup.map_fn_kwargs
-
-    outputs: list[Any] = []
+    outputs: list[Any] | None = [] if return_output else None
     exec_outputs: list[Any] = []
     total_chunks = diagnostics.total_chunks
 
@@ -588,15 +642,36 @@ def run_parallel(
     if not item_list or axis_extractor is None:
         return [], diagnostics
     total_items = len(item_list)
-    report_progress_main, update_processed = prepare_progress_callbacks(
+    report_progress_base, update_processed = prepare_progress_callbacks(
         total_chunks=total_chunks,
         total_items=total_items,
         verbose=context.verbose,
         label="planning",
     )
 
-    tracker = _MissingTracker.create(track_item_keys=False)
+    final_emitted = False
+
+    def report_progress_main(processed: int, final: bool = False) -> None:
+        nonlocal final_emitted
+        if processed >= total_chunks:
+            if final_emitted:
+                return
+            final_emitted = True
+            report_progress_base(total_chunks, True)
+            return
+        if final:
+            return
+        report_progress_base(processed, False)
+
+    tracker = _MissingTracker.create(track_item_keys=True)
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
+
+    use_index = False
+    chunk_index: dict[str, Any] = {}
+    load_chunk_index_fn = cast(LoadChunkIndexFn | None, deps.load_chunk_index)
+    if load_chunk_index_fn is not None:
+        chunk_index = load_chunk_index_fn() or {}
+        use_index = bool(chunk_index)
 
     _scan_cached_chunk_items(
         context,
@@ -604,6 +679,10 @@ def run_parallel(
         cast(ResolveCachePathFn, deps.resolve_cache_path),
         cast(LoadPayloadFn, deps.load_payload),
         cast(ReconstructOutputFromItemsFn, deps.reconstruct_output_from_items),
+        cast(
+            ReconstructPartialOutputFromItemsFn,
+            deps.reconstruct_partial_output_from_items,
+        ),
         cast(BuildItemMapsFromChunkOutputFn, deps.build_item_maps_from_chunk_output),
         cast(WriteChunkPayloadFn, deps.write_chunk_payload),
         cast(ItemHashFn, deps.item_hash),
@@ -616,8 +695,10 @@ def run_parallel(
         tracker=tracker,
         diagnostics=diagnostics,
         cached_payloads=cached_payloads,
-        chunk_exists=lambda _chunk_hash, path: path.exists(),
-        load_full_chunk_payload=True,
+        chunk_exists=lambda _chunk_hash, path: (
+            _chunk_hash in chunk_index if use_index else path.exists()
+        ),
+        load_full_chunk_payload=return_output,
         collate_fn=collate_fn_resolved,
         outputs=outputs,
     )
@@ -643,244 +724,32 @@ def run_parallel(
             missing_items,
             **map_fn_kwargs_resolved,
         )
-        exec_outputs = []
         total_items_all = len(item_list)
         cached_items_total = total_items_all - len(missing_items)
-        for _, result in _exec_iter_with_progress(
-            context,
-            exec_iter,
-            cached_items_total=cached_items_total,
-            total_items_all=total_items_all,
-            total_missing=len(missing_items),
-        ):
-            exec_outputs.append(result)
-
-        cursor = 0
-        for chunk_key in tracker.missing_chunk_order:
-            chunk_items = tracker.missing_items_by_chunk.get(chunk_key, [])
-            chunk_size = len(chunk_items)
-            if chunk_size == 0:
-                continue
-            chunk_outputs = exec_outputs[cursor : cursor + chunk_size]
-            chunk_output = collate_fn_resolved(chunk_outputs)
-            axis_values = _extract_axis_values(chunk_items, axis_extractor)
-            item_map, item_axis_vals = cast(
-                BuildItemMapsFromAxisValuesFn, deps.build_item_maps_from_axis_values
-            )(
-                chunk_key,
-                axis_values,
-                chunk_outputs,
-            )
-            chunk_hash_value = cast(ChunkHashFn, deps.chunk_hash)(chunk_key)
-            _save_chunk_payload(
-                resolve_cache_path=cast(ResolveCachePathFn, deps.resolve_cache_path),
-                write_chunk_payload=cast(WriteChunkPayloadFn, deps.write_chunk_payload),
-                update_chunk_index=cast(UpdateChunkIndexFn, deps.update_chunk_index),
-                chunk_key=chunk_key,
-                chunk_output=chunk_output,
-                item_map=item_map,
-                cached_payloads=cached_payloads,
-                chunk_hash=chunk_hash_value,
-                missing_chunks=missing_chunks,
-                spec_fn=lambda: item_axis_vals,
-            )
-            _log_chunk(context, "run", chunk_key, chunk_size)
-            outputs.append(chunk_output)
-            cursor += chunk_size
-            report_progress_main(
-                base_index + len(missing_chunks),
-                (base_index + len(missing_chunks)) == total_chunks,
-            )
-    merged = _merge_outputs(
-        context,
-        outputs,
-        diagnostics,
-        collate_fn=collate_fn_resolved,
-    )
-    if not merged and item_list:
-        merged = exec_outputs if missing_items else []
-    print_chunk_summary(diagnostics, context.verbose)
-    report_progress_main(total_chunks, True)
-    return merged, diagnostics
-
-
-def run_parallel_streaming(
-    items: Iterable[Any],
-    *,
-    exec_fn: Callable[..., Any],
-    cache: CacheProtocol,
-    map_fn: Callable[..., Iterable[Any]] | None = None,
-    map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[list[Any]], Any] | None = None,
-    # Manual cache methods (optional overrides)
-    write_metadata: WriteMetadataFn | None = None,
-    chunk_hash: ChunkHashFn | None = None,
-    resolve_cache_path: ResolveCachePathFn | None = None,
-    load_payload: LoadPayloadFn | None = None,
-    write_chunk_payload: WriteChunkPayloadFn | None = None,
-    update_chunk_index: UpdateChunkIndexFn | None = None,
-    load_chunk_index: LoadChunkIndexFn | None = None,
-    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
-    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
-    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
-    item_hash: ItemHashFn | None = None,
-    context: RunnerContext | None = None,
-) -> Diagnostics:
-    """Parallel streaming run that flushes chunk payloads as ready.
-
-    cache must already represent the desired axis subset.
-    collate_fn is accepted for API parity but has no effect without outputs.
-    """
-    cache_status = cache.cache_status()
-    deps = resolve_runner_deps(
-        cache=cache,
-        context=context,
-        write_metadata=write_metadata,
-        chunk_hash=chunk_hash,
-        resolve_cache_path=resolve_cache_path,
-        load_payload=load_payload,
-        write_chunk_payload=write_chunk_payload,
-        update_chunk_index=update_chunk_index,
-        build_item_maps_from_axis_values=build_item_maps_from_axis_values,
-        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
-        reconstruct_output_from_items=reconstruct_output_from_items,
-        collect_chunk_data=None,
-        item_hash=item_hash,
-        load_chunk_index=load_chunk_index,
-        require=[
-            "context",
-            "write_metadata",
-            "chunk_hash",
-            "resolve_cache_path",
-            "load_payload",
-            "write_chunk_payload",
-            "update_chunk_index",
-            "build_item_maps_from_axis_values",
-            "build_item_maps_from_chunk_output",
-            "reconstruct_output_from_items",
-            "item_hash",
-            "load_chunk_index",
-        ],
-    )
-    context = cast(RunnerContext, deps.context)
-    profile_start = time.monotonic() if context.profile else None
-    params_dict = _require_params(cache_status)
-    cast(WriteMetadataFn, deps.write_metadata)()
-    if context.profile and context.verbose >= 1 and profile_start is not None:
-        print(f"[ShardMemo] profile metadata_s={time.monotonic() - profile_start:0.3f}")
-
-    setup = _prepare_parallel_setup(
-        cast(RunnerContext, deps.context),
-        cast(WriteMetadataFn, deps.write_metadata),
-        cache_status,
-        map_fn=map_fn,
-        map_fn_kwargs=map_fn_kwargs,
-        collate_fn=collate_fn,
-        params_dict=params_dict,
-        write_metadata=False,
-    )
-    cached_chunks = setup.cached_chunks
-    missing_chunks = setup.missing_chunks
-    diagnostics = setup.diagnostics
-    collate_fn_resolved = setup.collate_fn
-    map_fn_resolved = setup.map_fn
-    map_fn_kwargs_resolved = setup.map_fn_kwargs
-    total_chunks = diagnostics.total_chunks
-
-    load_chunk_index = cast(LoadChunkIndexFn, deps.load_chunk_index)
-    chunk_index = load_chunk_index() or {}
-    use_index = bool(chunk_index)
-    if context.profile and context.verbose >= 1 and profile_start is not None:
-        print(
-            f"[ShardMemo] profile cache_status_s={time.monotonic() - profile_start:0.3f}"
+        completed_chunk_counts = _cumulative_chunk_counts(
+            tracker.missing_chunk_order,
+            tracker.missing_items_by_chunk,
         )
+        missing_item_keys = tracker.missing_item_keys or []
+        queued_chunks: dict[ChunkKey, list[Any]] = {}
+        queued_outputs: dict[ChunkKey, list[Any]] = {}
 
-    item_list, axis_extractor, cached_chunk_items, missing_chunk_items = (
-        _prepare_parallel_items(
-            cache_status,
-            items,
-            exec_fn=exec_fn,
-            cached_chunks=cached_chunks,
-            missing_chunks=missing_chunks,
-        )
-    )
-    if not item_list or axis_extractor is None:
-        return diagnostics
-    total_items = len(item_list)
-    report_progress_streaming, update_processed = prepare_progress_callbacks(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=context.verbose,
-        label="planning",
-    )
-    if context.profile and context.verbose >= 1 and profile_start is not None:
-        print(
-            f"[ShardMemo] profile item_plan_s={time.monotonic() - profile_start:0.3f}"
-        )
-
-    tracker = _MissingTracker.create(track_item_keys=True)
-    cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
-    queued_chunks: dict[ChunkKey, list[Any]] = {}
-    queued_outputs: dict[ChunkKey, list[Any]] = {}
-
-    _scan_cached_chunk_items(
-        context,
-        cast(ChunkHashFn, deps.chunk_hash),
-        cast(ResolveCachePathFn, deps.resolve_cache_path),
-        cast(LoadPayloadFn, deps.load_payload),
-        cast(ReconstructOutputFromItemsFn, deps.reconstruct_output_from_items),
-        cast(BuildItemMapsFromChunkOutputFn, deps.build_item_maps_from_chunk_output),
-        cast(WriteChunkPayloadFn, deps.write_chunk_payload),
-        cast(ItemHashFn, deps.item_hash),
-        cached_chunks,
-        cached_chunk_items,
-        axis_extractor=axis_extractor,
-        report_progress=report_progress_streaming,
-        update_processed=update_processed,
-        total_chunks=total_chunks,
-        tracker=tracker,
-        diagnostics=diagnostics,
-        cached_payloads=cached_payloads,
-        chunk_exists=lambda _chunk_hash, path: (
-            _chunk_hash in chunk_index if use_index else path.exists()
-        ),
-        load_full_chunk_payload=False,
-    )
-
-    base_index = len(cached_chunks)
-    _register_missing_chunk_items(
-        missing_chunks,
-        missing_chunk_items,
-        tracker,
-        update_processed,
-        report_progress_streaming,
-        base_index=base_index,
-        total_chunks=total_chunks,
-    )
-
-    missing_items = _finalize_missing_items(tracker, missing_chunks, item_list)
-    missing_item_keys = tracker.missing_item_keys or []
-
-    if missing_items:
-        diagnostics.executed_chunks = len(tracker.missing_chunk_order)
-        exec_fn = functools.partial(_exec_with_item, exec_fn)
-        exec_iter = map_fn_resolved(
-            exec_fn,
-            missing_items,
-            **map_fn_kwargs_resolved,
-        )
-        total_items_all = len(item_list)
-        cached_items_total = total_items_all - len(missing_items)
         for item_idx, result in _exec_iter_with_progress(
             context,
             exec_iter,
             cached_items_total=cached_items_total,
             total_items_all=total_items_all,
             total_missing=len(missing_items),
+            cached_chunks=diagnostics.cached_chunks,
+            total_chunks=total_chunks,
+            completed_chunk_counts=completed_chunk_counts,
         ):
             chunk_key = missing_item_keys[item_idx - 1]
             queued_chunks.setdefault(chunk_key, []).append(missing_items[item_idx - 1])
             queued_outputs.setdefault(chunk_key, []).append(result)
+            if not flush_on_chunk:
+                exec_outputs.append(result)
+                continue
             if len(queued_outputs[chunk_key]) < chunk_key_size(chunk_key):
                 continue
             chunk_items = queued_chunks.pop(chunk_key, [])
@@ -908,14 +777,18 @@ def run_parallel_streaming(
                 spec_fn=lambda: item_axis_vals,
             )
             _log_chunk(context, "run", chunk_key, len(chunk_items))
+            if outputs is not None:
+                outputs.append(chunk_output)
             diagnostics.max_parallel_items = max(
                 diagnostics.max_parallel_items, len(chunk_items)
             )
             diagnostics.stream_flushes += 1
 
-        if queued_outputs:
+        if flush_on_chunk and queued_outputs:
             for chunk_key, chunk_outputs in queued_outputs.items():
                 chunk_items = queued_chunks.get(chunk_key, [])
+                if not chunk_items:
+                    continue
                 chunk_output = collate_fn_resolved(chunk_outputs)
                 axis_values = _extract_axis_values(chunk_items, axis_extractor)
                 item_map, item_axis_vals = cast(
@@ -945,11 +818,122 @@ def run_parallel_streaming(
                     spec_fn=lambda: item_axis_vals,
                 )
                 _log_chunk(context, "run", chunk_key, len(chunk_items))
+                if outputs is not None:
+                    outputs.append(chunk_output)
                 diagnostics.max_parallel_items = max(
                     diagnostics.max_parallel_items, len(chunk_items)
                 )
                 diagnostics.stream_flushes += 1
+                if len(chunk_items) < chunk_key_size(chunk_key):
+                    diagnostics.partial_chunks += 1
 
+        if not flush_on_chunk:
+            cursor = 0
+            processed_missing_chunks = 0
+            for chunk_key in tracker.missing_chunk_order:
+                chunk_items = tracker.missing_items_by_chunk.get(chunk_key, [])
+                chunk_size = len(chunk_items)
+                if chunk_size == 0:
+                    continue
+                chunk_outputs = exec_outputs[cursor : cursor + chunk_size]
+                chunk_output = collate_fn_resolved(chunk_outputs)
+                axis_values = _extract_axis_values(chunk_items, axis_extractor)
+                item_map, item_axis_vals = cast(
+                    BuildItemMapsFromAxisValuesFn, deps.build_item_maps_from_axis_values
+                )(
+                    chunk_key,
+                    axis_values,
+                    chunk_outputs,
+                )
+                chunk_hash_value = cast(ChunkHashFn, deps.chunk_hash)(chunk_key)
+                _save_chunk_payload(
+                    resolve_cache_path=cast(
+                        ResolveCachePathFn, deps.resolve_cache_path
+                    ),
+                    write_chunk_payload=cast(
+                        WriteChunkPayloadFn, deps.write_chunk_payload
+                    ),
+                    update_chunk_index=cast(
+                        UpdateChunkIndexFn, deps.update_chunk_index
+                    ),
+                    chunk_key=chunk_key,
+                    chunk_output=chunk_output,
+                    item_map=item_map,
+                    cached_payloads=cached_payloads,
+                    chunk_hash=chunk_hash_value,
+                    missing_chunks=missing_chunks,
+                    spec_fn=lambda: item_axis_vals,
+                )
+                _log_chunk(context, "run", chunk_key, chunk_size)
+                if outputs is not None:
+                    outputs.append(chunk_output)
+                cursor += chunk_size
+                processed_missing_chunks += 1
+                report_progress_main(base_index + processed_missing_chunks, False)
+
+    merged: Any = None
+    if outputs is not None:
+        merged = _merge_outputs(
+            context,
+            outputs,
+            diagnostics,
+            collate_fn=collate_fn_resolved,
+        )
+        if not merged and item_list:
+            merged = exec_outputs if missing_items else []
     print_chunk_summary(diagnostics, context.verbose)
-    report_progress_streaming(total_chunks, True)
+    return merged, diagnostics
+
+
+def run_parallel_streaming(
+    items: Iterable[Any],
+    *,
+    exec_fn: Callable[..., Any],
+    cache: CacheProtocol,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    # Manual cache methods (optional overrides)
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    load_chunk_index: LoadChunkIndexFn | None = None,
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
+    item_hash: ItemHashFn | None = None,
+    context: RunnerContext | None = None,
+) -> Diagnostics:
+    """Parallel streaming run that flushes chunk payloads as ready.
+
+    cache must already represent the desired axis subset.
+    collate_fn is accepted for API parity but has no effect without outputs.
+    Partial chunks still count as cached and increment diagnostics.partial_chunks.
+    This is equivalent to run_parallel(..., flush_on_chunk=True, return_output=False).
+    """
+    _, diagnostics = run_parallel(
+        items,
+        exec_fn=exec_fn,
+        cache=cache,
+        map_fn=map_fn,
+        map_fn_kwargs=map_fn_kwargs,
+        collate_fn=collate_fn,
+        flush_on_chunk=True,
+        return_output=False,
+        write_metadata=write_metadata,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        load_chunk_index=load_chunk_index,
+        build_item_maps_from_axis_values=build_item_maps_from_axis_values,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        reconstruct_output_from_items=reconstruct_output_from_items,
+        item_hash=item_hash,
+        context=context,
+    )
     return diagnostics

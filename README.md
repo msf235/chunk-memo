@@ -405,7 +405,7 @@ Parallel runner notes:
 - You can pass explicit kwargs to override cache methods.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
-- `run_parallel_streaming` only writes cache payloads, it does not return outputs.
+- `run_parallel_streaming` is equivalent to `run_parallel(..., flush_on_chunk=True, return_output=False)`.
 
 Item formats for `run_parallel` and `run_parallel_streaming`:
 - Mapping items: each item is a dict with keys for every axis name (in any order).
@@ -423,6 +423,8 @@ run_parallel(
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[List[Any]], Any] | None = None,
+    flush_on_chunk: bool = False,
+    return_output: bool = True,
     # Manual cache methods (optional overrides)
     write_metadata: Callable[[], Path] | None = None,
     chunk_hash: Callable[[ChunkKey], str] | None = None,
@@ -430,6 +432,7 @@ run_parallel(
     load_payload: Callable[[Path], dict[str, Any] | None] | None = None,
     write_chunk_payload: Callable[..., Path] | None = None,
     update_chunk_index: Callable[[str, ChunkKey], None] | None = None,
+    load_chunk_index: Callable[[], dict[str, Any] | None] | None = None,
     build_item_maps_from_axis_values: Callable[..., Any] | None = None,
     build_item_maps_from_chunk_output: Callable[..., Any] | None = None,
     reconstruct_output_from_items: Callable[..., Any] | None = None,
@@ -479,6 +482,8 @@ run_parallel_streaming(
   chunk when you request fewer axis values.
 - Changing split values creates new chunks automatically.
 - Adding values to a list reuses existing chunks and computes only new ones.
+- Partial chunk payloads are allowed. Runners return whatever cached outputs
+  are available and increment `diagnostics.partial_chunks`.
 
 ## Defaults and ordering
 

@@ -840,6 +840,19 @@ class ChunkCache:
             outputs.append(items[item_key])
         return outputs
 
+    def reconstruct_partial_output_from_items(
+        self,
+        chunk_key: ChunkKey,
+        items: Mapping[str, Any],
+    ) -> list[Any]:
+        axis_values = list(self.iter_chunk_axis_values(chunk_key))
+        outputs: list[Any] = []
+        for values in axis_values:
+            item_key = self.item_hash(chunk_key, values)
+            if item_key in items:
+                outputs.append(items[item_key])
+        return outputs
+
     def extract_items_from_map(
         self,
         item_map: Mapping[str, Any] | None,
@@ -883,25 +896,37 @@ class ChunkCache:
         chunk_key: ChunkKey,
         requested_items: list[Tuple[Any, ...]] | None,
         collate_fn: Callable[[list[Any]], Any],
-    ) -> Any | None:
+    ) -> tuple[Any | None, bool]:
         if requested_items is None:
             chunk_output = payload.get("output")
             if chunk_output is None:
                 items = payload.get("items")
                 if items is not None:
                     chunk_output = self.reconstruct_output_from_items(chunk_key, items)
+                    if chunk_output is None:
+                        return (
+                            self.reconstruct_partial_output_from_items(
+                                chunk_key, items
+                            ),
+                            True,
+                        )
             if chunk_output is None:
-                raise ValueError("Cache payload missing required data")
-            return chunk_output
+                return None, False
+            return chunk_output, False
         item_map = payload.get("items")
-        cached_outputs = self.extract_items_from_map(
-            item_map,
-            chunk_key,
-            requested_items,
-        )
-        if cached_outputs is None:
-            return None
-        return collate_fn([cached_outputs])
+        if item_map is None:
+            return None, False
+        cached_outputs: list[Any] = []
+        missing = False
+        for values in requested_items:
+            item_key = self.item_hash(chunk_key, values)
+            if item_key not in item_map:
+                missing = True
+                continue
+            cached_outputs.append(item_map[item_key])
+        if not cached_outputs:
+            return None, False
+        return collate_fn([cached_outputs]), missing
 
     def _materialize_axis_values(self, axis_values_obj: Any) -> list[Any]:
         if isinstance(axis_values_obj, ABCSequence) and not isinstance(

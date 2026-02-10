@@ -247,6 +247,36 @@ def test_run_axis_indices_range_slice():
         assert diag2.executed_chunks == 0
 
 
+def test_run_restart_uses_cached_chunks_after_interrupt():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
+        memo = ChunkCache(
+            cache_root=temp_dir,
+            cache_chunk_spec={"strat": 1, "s": 2},
+            axis_values=axis_values,
+            collate_fn=collate_fn,
+        )
+        call_count = 0
+
+        def exec_interrupt(params, strat, s):
+            nonlocal call_count
+            if call_count >= 1:
+                raise RuntimeError("interrupted")
+            call_count += 1
+            return exec_fn_grid(params, strat, s)
+
+        with pytest.raises(RuntimeError, match="interrupted"):
+            memo_run(memo, params, exec_interrupt)
+
+        output, diag = memo_run(memo, params, exec_fn_grid)
+        assert diag.total_chunks == 2
+        assert diag.cached_chunks == 1
+        assert diag.executed_chunks == 1
+        observed = {(item["strat"], item["s"]) for item in output}
+        assert observed == {("a", 1), ("a", 2), ("a", 3), ("a", 4)}
+
+
 def test_cache_chunk_enumerator_order():
     cache_chunk_spec = {"strat": 1, "s": 2}
 

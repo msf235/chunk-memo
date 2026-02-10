@@ -17,6 +17,7 @@ from .runner_protocol import (
     LoadChunkIndexFn,
     LoadPayloadFn,
     ReconstructOutputFromItemsFn,
+    ReconstructPartialOutputFromItemsFn,
     ResolveCachePathFn,
     RunnerContext,
     UpdateChunkIndexFn,
@@ -34,6 +35,7 @@ class Diagnostics:
     total_chunks: int = 0
     cached_chunks: int = 0
     executed_chunks: int = 0
+    partial_chunks: int = 0
     merges: int = 0
     max_stream_items: int = 0
     stream_flushes: int = 0
@@ -51,6 +53,9 @@ class RunnerDeps:
     build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None
     build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None
     reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None
+    reconstruct_partial_output_from_items: (
+        ReconstructPartialOutputFromItemsFn | None
+    ) = None
     collect_chunk_data: CollectChunkDataFn | None = None
     item_hash: ItemHashFn | None = None
     load_chunk_index: LoadChunkIndexFn | None = None
@@ -71,6 +76,8 @@ def resolve_runner_deps(
     build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
     build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
     reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
+    reconstruct_partial_output_from_items: ReconstructPartialOutputFromItemsFn
+    | None = None,
     collect_chunk_data: CollectChunkDataFn | None = None,
     item_hash: ItemHashFn | None = None,
     load_chunk_index: LoadChunkIndexFn | None = None,
@@ -116,6 +123,10 @@ def resolve_runner_deps(
         ),
         reconstruct_output_from_items=resolve_required(
             "reconstruct_output_from_items", reconstruct_output_from_items
+        ),
+        reconstruct_partial_output_from_items=resolve_required(
+            "reconstruct_partial_output_from_items",
+            reconstruct_partial_output_from_items,
         ),
         collect_chunk_data=resolve_required("collect_chunk_data", collect_chunk_data),
         item_hash=resolve_required("item_hash", item_hash),

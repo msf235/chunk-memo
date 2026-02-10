@@ -167,9 +167,11 @@ def print_chunk_summary(
     verbose: int,
 ) -> None:
     if verbose >= 2:
+        partial_chunks = getattr(diagnostics, "partial_chunks", 0)
+        partial_suffix = f" partial={partial_chunks}" if partial_chunks else ""
         print_detail(
             "[ChunkCache] summary "
             f"cached={diagnostics.cached_chunks} "
             f"executed={diagnostics.executed_chunks} "
-            f"total={diagnostics.total_chunks}"
+            f"total={diagnostics.total_chunks}" + partial_suffix
         )
