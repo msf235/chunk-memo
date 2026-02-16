@@ -34,7 +34,7 @@ def _set_params(memo, params):
     memo.write_metadata()
 
 
-def memo_run(memo, params, exec_fn, **kwargs):
+def slice_and_run(memo, params, exec_fn, **kwargs):
     axis_indices = kwargs.pop("axis_indices", None)
     sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
     return _memo_run(sliced, exec_fn)
@@ -81,7 +81,7 @@ def test_run_parallel_reuses_partial_chunks():
         )
         params = {"alpha": 0.4}
         _set_params(memo, params)
-        memo_run(memo, params, exec_fn_grid)
+        slice_and_run(memo, params, exec_fn_grid)
 
         items = [
             {"strat": "a", "s": 1},

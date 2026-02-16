@@ -7,7 +7,6 @@ from .runners import (
     Diagnostics,
     run,
     run_parallel,
-    run_parallel_streaming,
     run_streaming,
 )
 
@@ -27,7 +26,6 @@ __all__ = [
     "auto_load",
     "run",
     "run_parallel",
-    "run_parallel_streaming",
     "run_streaming",
     "RunnerContext",
     "CacheStatus",

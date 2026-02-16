@@ -5,7 +5,7 @@ import itertools
 import pytest  # type: ignore[import-not-found]
 from concurrent.futures import ProcessPoolExecutor
 
-from shard_memo import ChunkCache, run_parallel, run_parallel_streaming
+from shard_memo import ChunkCache, run_parallel
 from shard_memo.runners import run as _memo_run
 from shard_memo.runners import run_streaming as _memo_run_streaming
 
@@ -30,35 +30,18 @@ def _parallel_kwargs(memo):
     }
 
 
-def _parallel_streaming_kwargs(memo):
-    return {
-        "write_metadata": memo.write_metadata,
-        "chunk_hash": memo.chunk_hash,
-        "resolve_cache_path": memo.resolve_cache_path,
-        "load_payload": memo.load_payload,
-        "write_chunk_payload": memo.write_chunk_payload,
-        "update_chunk_index": memo.update_chunk_index,
-        "load_chunk_index": memo.load_chunk_index,
-        "build_item_maps_from_axis_values": memo.build_item_maps_from_axis_values,
-        "build_item_maps_from_chunk_output": memo.build_item_maps_from_chunk_output,
-        "reconstruct_output_from_items": memo.reconstruct_output_from_items,
-        "item_hash": memo.item_hash,
-        "context": memo,
-    }
-
-
 def _set_params(memo, params):
     memo.set_params(params)
     memo.write_metadata()
 
 
-def memo_run(memo, params, exec_fn, **kwargs):
+def slice_and_run(memo, params, exec_fn, **kwargs):
     axis_indices = kwargs.pop("axis_indices", None)
     sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
     return _memo_run(sliced, exec_fn)
 
 
-def memo_run_streaming(memo, params, exec_fn, **kwargs):
+def slice_and_run_streaming(memo, params, exec_fn, **kwargs):
     axis_indices = kwargs.pop("axis_indices", None)
     sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
     return _memo_run_streaming(sliced, exec_fn)
@@ -110,7 +93,7 @@ def test_run_parallel_with_memoized_cache_status():
             axis_values=axis_values,
         )
         _set_params(memo, params)
-        memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3, 4])
+        slice_and_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3, 4])
 
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
@@ -207,7 +190,7 @@ def test_run_parallel_populates_memo_cache():
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
         )
 
-        output, diag = memo_run(memo, params, exec_fn_grid)
+        output, diag = slice_and_run(memo, params, exec_fn_grid)
         assert diag.executed_chunks == 0
         assert diag.cached_chunks == diag.total_chunks
         assert observed_items(output) == {
@@ -222,7 +205,7 @@ def test_run_parallel_populates_memo_cache():
         }
 
 
-def test_run_parallel_streaming_populates_cache():
+def test_run_parallel_flush_on_chunk_populates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -236,17 +219,19 @@ def test_run_parallel_streaming_populates_cache():
         items = item_dicts(axis_values)
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
         with ProcessPoolExecutor(max_workers=2) as executor:
-            diag = run_parallel_streaming(
+            _, diag = run_parallel(
                 items,
                 exec_fn=functools.partial(exec_fn_grid, params),
                 cache=memo,
-                **_parallel_streaming_kwargs(memo),
+                **_parallel_kwargs(memo),
                 map_fn=executor.map,
                 map_fn_kwargs={"chunksize": 1},
+                flush_on_chunk=True,
+                return_output=False,
             )
 
         assert diag.executed_chunks == len(status["missing_chunks"])
-        output, diag2 = memo_run(memo, params, exec_fn_grid)
+        output, diag2 = slice_and_run(memo, params, exec_fn_grid)
         assert diag2.executed_chunks == 0
         assert diag2.cached_chunks == diag2.total_chunks
         assert observed_items(output) == {
@@ -285,7 +270,7 @@ def test_run_parallel_populates_cache_for_run_and_streaming():
         def exec_fail(*_args, **_kwargs):
             raise AssertionError("exec_fn should not run when cache is full")
 
-        output, diag = memo_run(memo, params, exec_fail)
+        output, diag = slice_and_run(memo, params, exec_fail)
         assert diag.executed_chunks == 0
         assert diag.cached_chunks == diag.total_chunks
         assert observed_items(output) == {
@@ -299,12 +284,12 @@ def test_run_parallel_populates_cache_for_run_and_streaming():
             ("b", 4),
         }
 
-        diag_stream = memo_run_streaming(memo, params, exec_fail)
+        diag_stream = slice_and_run_streaming(memo, params, exec_fail)
         assert diag_stream.executed_chunks == 0
         assert diag_stream.cached_chunks == diag_stream.total_chunks
 
 
-def test_run_parallel_streaming_populates_cache_for_run_and_streaming():
+def test_run_parallel_flush_on_chunk_populates_cache_for_run_and_streaming():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
@@ -316,19 +301,21 @@ def test_run_parallel_streaming_populates_cache_for_run_and_streaming():
         _set_params(memo, params)
 
         items = item_dicts(axis_values)
-        run_parallel_streaming(
+        run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
-            **_parallel_streaming_kwargs(memo),
+            **_parallel_kwargs(memo),
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            flush_on_chunk=True,
+            return_output=False,
         )
 
         def exec_fail(*_args, **_kwargs):
             raise AssertionError("exec_fn should not run when cache is full")
 
-        output, diag = memo_run(memo, params, exec_fail)
+        output, diag = slice_and_run(memo, params, exec_fail)
         assert diag.executed_chunks == 0
         assert diag.cached_chunks == diag.total_chunks
         assert observed_items(output) == {
@@ -342,7 +329,7 @@ def test_run_parallel_streaming_populates_cache_for_run_and_streaming():
             ("b", 4),
         }
 
-        diag_stream = memo_run_streaming(memo, params, exec_fail)
+        diag_stream = slice_and_run_streaming(memo, params, exec_fail)
         assert diag_stream.executed_chunks == 0
         assert diag_stream.cached_chunks == diag_stream.total_chunks
 
@@ -392,7 +379,7 @@ def test_run_parallel_resume_after_interrupt():
         assert observed_items(output) == {("a", 1), ("a", 2), ("a", 3), ("a", 4)}
 
 
-def test_run_parallel_streaming_resume_after_interrupt():
+def test_run_parallel_flush_on_chunk_resume_after_interrupt():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
@@ -414,25 +401,26 @@ def test_run_parallel_streaming_resume_after_interrupt():
                 raise RuntimeError("interrupted")
 
         with pytest.raises(RuntimeError, match="interrupted"):
-            run_parallel_streaming(
+            run_parallel(
                 items,
                 exec_fn=functools.partial(exec_fn_grid, params),
                 cache=memo,
-                **{
-                    **_parallel_streaming_kwargs(memo),
-                    "update_chunk_index": update_chunk_index,
-                },
+                **{**_parallel_kwargs(memo), "update_chunk_index": update_chunk_index},
                 map_fn_kwargs={"chunksize": 1},
                 map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+                flush_on_chunk=True,
+                return_output=False,
             )
 
-        diag = run_parallel_streaming(
+        _, diag = run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
-            **_parallel_streaming_kwargs(memo),
+            **_parallel_kwargs(memo),
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            flush_on_chunk=True,
+            return_output=False,
         )
 
         assert diag.cached_chunks == 1
@@ -656,7 +644,7 @@ def test_run_parallel_extend_cache_for_new_axis_values():
         assert set(outputs) == {("a", 1), ("a", 2), ("a", 3)}
 
 
-def test_run_parallel_streaming_partial_chunks_load_as_partial():
+def test_run_parallel_flush_on_chunk_partial_chunks_load_as_partial():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
@@ -669,19 +657,21 @@ def test_run_parallel_streaming_partial_chunks_load_as_partial():
         _set_params(memo, params)
 
         items = [{"strat": "a", "s": 1}, {"strat": "a", "s": 3}]
-        run_parallel_streaming(
+        run_parallel(
             items,
             exec_fn=functools.partial(exec_fn_grid, params),
             cache=memo,
-            **_parallel_streaming_kwargs(memo),
+            **_parallel_kwargs(memo),
             map_fn_kwargs={"chunksize": 1},
             map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            flush_on_chunk=True,
+            return_output=False,
         )
 
         def exec_fail(*_args, **_kwargs):
             raise AssertionError("exec_fn should not run for partial cache hits")
 
-        output, diag = memo_run(memo, params, exec_fail)
+        output, diag = slice_and_run(memo, params, exec_fail)
         assert diag.executed_chunks == 0
         assert diag.cached_chunks == diag.total_chunks
         assert diag.partial_chunks == diag.total_chunks

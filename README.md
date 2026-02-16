@@ -379,7 +379,7 @@ Use cases:
 ```python
 import functools
 
-from shard_memo import run_parallel, run_parallel_streaming
+from shard_memo import run_parallel
 
 parallel_cache = memo.slice(
     params,
@@ -392,12 +392,6 @@ parallel_output, parallel_diag = run_parallel(
     exec_fn=functools.partial(exec_fn, params),
     cache=parallel_cache,
 )
-
-stream_diag = run_parallel_streaming(
-    items,
-    exec_fn=functools.partial(exec_fn, params),
-    cache=parallel_cache,
-)
 ```
 
 Parallel runner notes:
@@ -405,11 +399,12 @@ Parallel runner notes:
 - You can pass explicit kwargs to override cache methods.
 - Missing items are executed via `map_fn` (defaults to a `ProcessPoolExecutor`).
 - Cached chunks are loaded locally, with partial reuse when `items` is a subset.
-- `run_parallel_streaming` is equivalent to `run_parallel(..., flush_on_chunk=True, return_output=False)`.
+- Use `flush_on_chunk=True` and `return_output=False` to stream payloads to disk
+  without retaining outputs in memory.
 - Use `extend_cache=True` to grow a cache's axis_values in-place when items
   include values outside the current cache.
 
-Item formats for `run_parallel` and `run_parallel_streaming`:
+Item formats for `run_parallel`:
 - Mapping items: each item is a dict with keys for every axis name (in any order).
 - Positional items: each item is a tuple/list ordered by `axis_order`.
 - Single-axis shorthand: if there is exactly one axis, a scalar item is allowed.
@@ -445,33 +440,6 @@ run_parallel(
 ) -> tuple[Any, Diagnostics]
 ```
 
-### run_parallel_streaming
-
-```python
-run_parallel_streaming(
-    items: Iterable[Any],
-    *,
-    exec_fn: Callable[..., Any],
-    cache: CacheProtocol,
-    map_fn: Callable[..., Iterable[Any]] | None = None,
-    map_fn_kwargs: Mapping[str, Any] | None = None,
-    collate_fn: Callable[[List[Any]], Any] | None = None,
-    extend_cache: bool = False,
-    # Manual cache methods (optional overrides)
-    write_metadata: Callable[[], Path] | None = None,
-    chunk_hash: Callable[[ChunkKey], str] | None = None,
-    resolve_cache_path: Callable[[ChunkKey, str], Path] | None = None,
-    load_payload: Callable[[Path], dict[str, Any] | None] | None = None,
-    write_chunk_payload: Callable[..., Path] | None = None,
-    update_chunk_index: Callable[[str, ChunkKey], None] | None = None,
-    load_chunk_index: Callable[[], dict[str, Any] | None] | None = None,
-    build_item_maps_from_axis_values: Callable[..., Any] | None = None,
-    build_item_maps_from_chunk_output: Callable[..., Any] | None = None,
-    reconstruct_output_from_items: Callable[..., Any] | None = None,
-    item_hash: Callable[[ChunkKey, Tuple[Any, ...]], str] | None = None,
-    context: RunnerContext | None = None,
-) -> Diagnostics
-```
 
 
 ## Caching behavior

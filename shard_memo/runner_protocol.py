@@ -61,6 +61,8 @@ class CacheProtocol(RunnerContext, Protocol):
         self,
         *,
         axis_indices: Mapping[str, Any] | None = None,
+        axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+        extend_cache: bool = False,
         **axes: Any,
     ) -> CacheStatus: ...
 

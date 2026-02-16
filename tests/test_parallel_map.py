@@ -30,7 +30,7 @@ def _set_params(memo, params):
     memo.write_metadata()
 
 
-def memo_run(memo, params, exec_fn, **kwargs):
+def slice_and_run(memo, params, exec_fn, **kwargs):
     axis_indices = kwargs.pop("axis_indices", None)
     sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
     return _memo_run(sliced, exec_fn)
@@ -48,7 +48,7 @@ def test_run_parallel_returns_requested_points():
             axis_values=axis_values,
         )
         _set_params(memo, params)
-        memo_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
+        slice_and_run(memo, params, exec_fn=exec_fn_grid, strat=["a"], s=[1, 2, 3])
 
         status = memo.cache_status(strat=axis_values["strat"], s=axis_values["s"])
         outputs, diag = run_parallel(

@@ -18,7 +18,7 @@ from .runner_protocol import (
     ExtractItemsFromMapFn,
     LoadPayloadFn,
 )
-from .runners_parallel import run_parallel, run_parallel_streaming
+from .runners_parallel import run_parallel
 from .runners_common import (
     ChunkKey,
     Diagnostics,

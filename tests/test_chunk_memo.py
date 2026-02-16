@@ -5,6 +5,8 @@ import time
 import pytest  # type: ignore[import-not-found]
 
 from shard_memo import ChunkCache, ChunkMemo
+from shard_memo.runners import run as _slice_and_run
+from shard_memo.runners import run_streaming as _slice_and_run_streaming
 
 from .utils import exec_fn_grid
 
@@ -33,16 +35,16 @@ def _set_params(memo, params):
     memo.write_metadata()
 
 
-def memo_run(memo, params, exec_fn, **kwargs):
+def slice_and_run(memo, params, exec_fn, **kwargs):
     axis_indices = kwargs.pop("axis_indices", None)
     sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
-    return _memo_run(sliced, exec_fn)
+    return _slice_and_run(sliced, exec_fn)
 
 
-def memo_run_streaming(memo, params, exec_fn, **kwargs):
+def slice_and_run_streaming(memo, params, exec_fn, **kwargs):
     axis_indices = kwargs.pop("axis_indices", None)
     sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
-    return _memo_run_streaming(sliced, exec_fn)
+    return _slice_and_run_streaming(sliced, exec_fn)
 
 
 def exec_point_extra_default(params, strat, s, extra=1):
@@ -87,11 +89,11 @@ def test_basic_cache_reuse():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        output, diag = memo_run(memo, params, exec_fn_sleep)
+        output, diag = slice_and_run(memo, params, exec_fn_sleep)
         assert output
         assert diag.executed_chunks == 1
 
-        output2, diag2 = memo_run(memo, params, exec_fn_sleep)
+        output2, diag2 = slice_and_run(memo, params, exec_fn_sleep)
         assert output2 == output
         assert diag2.cached_chunks == diag2.total_chunks
         assert diag2.executed_chunks == 0
@@ -102,12 +104,12 @@ def test_incremental_split_extension():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag = memo_run(memo, params, exec_fn_grid)
+        _, diag = slice_and_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 1
 
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag2 = memo_run(memo, params, exec_fn_grid)
+        _, diag2 = slice_and_run(memo, params, exec_fn_grid)
         assert diag2.total_chunks == 2
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 2
@@ -117,10 +119,10 @@ def test_param_change_invalidates_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag = memo_run(memo, {"alpha": 0.4}, exec_fn_grid)
+        _, diag = slice_and_run(memo, {"alpha": 0.4}, exec_fn_grid)
         assert diag.executed_chunks == 1
 
-        _, diag2 = memo_run(memo, {"alpha": 0.5}, exec_fn_grid)
+        _, diag2 = slice_and_run(memo, {"alpha": 0.5}, exec_fn_grid)
         assert diag2.cached_chunks == 0
         assert diag2.executed_chunks == 1
 
@@ -130,7 +132,7 @@ def test_chunk_count_grid():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a", "b", "c"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, axis_values=axis_values)
-        _, diag = memo_run(memo, params, exec_fn_grid)
+        _, diag = slice_and_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 6
         assert diag.executed_chunks == 6
 
@@ -140,7 +142,7 @@ def test_collate_fn_optional_returns_nested():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = run_memo(temp_dir, merge=False, axis_values=axis_values)
-        output, diag = memo_run(memo, params, exec_fn_grid)
+        output, diag = slice_and_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 2
         assert isinstance(output, list)
         assert isinstance(output[0], list)
@@ -228,7 +230,7 @@ def test_run_axis_indices_range_slice():
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
 
-        output, diag = memo_run(
+        output, diag = slice_and_run(
             memo,
             params,
             exec_fn_grid,
@@ -238,7 +240,7 @@ def test_run_axis_indices_range_slice():
         observed = {(item["strat"], item["s"]) for item in output}
         assert observed == {("a", 2), ("a", 3)}
 
-        diag2 = memo_run_streaming(
+        diag2 = slice_and_run_streaming(
             memo,
             params,
             exec_fn_grid,
@@ -267,14 +269,35 @@ def test_run_restart_uses_cached_chunks_after_interrupt():
             return exec_fn_grid(params, strat, s)
 
         with pytest.raises(RuntimeError, match="interrupted"):
-            memo_run(memo, params, exec_interrupt)
+            slice_and_run(memo, params, exec_interrupt)
 
-        output, diag = memo_run(memo, params, exec_fn_grid)
+        output, diag = slice_and_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 2
         assert diag.cached_chunks == 1
         assert diag.executed_chunks == 1
         observed = {(item["strat"], item["s"]) for item in output}
         assert observed == {("a", 1), ("a", 2), ("a", 3), ("a", 4)}
+
+
+def test_cache_status_axis_indices_extend_cache():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ChunkCache(
+            cache_root=temp_dir,
+            cache_chunk_spec={"strat": 1, "s": 2},
+            axis_values={"strat": ["a"], "s": [1, 2]},
+            params=params,
+        )
+        memo.set_params(params)
+
+        axis_values_override = {"strat": ["a", "b"], "s": [1, 2]}
+        axis_indices = {"strat": range(2), "s": range(2)}
+        status = memo.cache_status(
+            axis_indices=axis_indices,
+            axis_values_override=axis_values_override,
+            extend_cache=True,
+        )
+        assert status["axis_values"]["strat"] == ["a", "b"]
 
 
 def test_cache_chunk_enumerator_order():
@@ -316,7 +339,7 @@ def test_cache_chunk_enumerator_order():
             cache_chunk_enumerator=cache_chunk_enumerator,
         )
         params = {"alpha": 0.4}
-        output, diag = memo_run(memo, params, exec_fn_marker)
+        output, diag = slice_and_run(memo, params, exec_fn_marker)
         assert diag.executed_chunks == 4
         expected = []
         for chunk_key in cache_chunk_enumerator(axis_values):
@@ -333,23 +356,23 @@ def test_timing_cache_speedup():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, axis_values=axis_values)
         start = time.perf_counter()
-        memo_run(memo, params, exec_fn_sleep)
+        slice_and_run(memo, params, exec_fn_sleep)
         cold_time = time.perf_counter() - start
         print(f"cold_cache_s: {cold_time:0.4f}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, axis_values=axis_values)
-        memo_run(memo, params, exec_fn=exec_fn_sleep, strat=["a"], s=[1, 2, 3, 4])
+        slice_and_run(memo, params, exec_fn=exec_fn_sleep, strat=["a"], s=[1, 2, 3, 4])
         start = time.perf_counter()
-        memo_run(memo, params, exec_fn_sleep)
+        slice_and_run(memo, params, exec_fn_sleep)
         half_time = time.perf_counter() - start
         print(f"half_cache_s: {half_time:0.4f}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = run_memo(temp_dir, axis_values=axis_values)
-        memo_run(memo, params, exec_fn_sleep)
+        slice_and_run(memo, params, exec_fn_sleep)
         start = time.perf_counter()
-        memo_run(memo, params, exec_fn_sleep)
+        slice_and_run(memo, params, exec_fn_sleep)
         warm_time = time.perf_counter() - start
         print(f"warm_cache_s: {warm_time:0.4f}")
 
@@ -366,7 +389,7 @@ def test_streaming_diagnostics_bound_memory():
         )
 
         params = {"alpha": 0.4}
-        diag = memo_run_streaming(memo, params, exec_fn_grid)
+        diag = slice_and_run_streaming(memo, params, exec_fn_grid)
 
         assert diag.executed_chunks == 3
         assert diag.max_stream_items == 2
@@ -383,7 +406,7 @@ def test_discover_caches_finds_caches():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        _, diag = memo_run(memo, params, exec_fn_grid)
+        _, diag = slice_and_run(memo, params, exec_fn_grid)
 
         caches = ChunkCache.discover_caches(temp_dir)
         assert len(caches) == 1
@@ -396,7 +419,7 @@ def test_find_compatible_caches_by_params():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        _, diag = memo_run(memo, params, exec_fn_grid)
+        _, diag = slice_and_run(memo, params, exec_fn_grid)
 
         compatible = ChunkCache.find_compatible_caches(temp_dir, params=params)
         assert len(compatible) == 1
@@ -412,7 +435,7 @@ def test_find_compatible_caches_by_axis_values():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        _, diag = memo_run(memo, params, exec_fn_grid)
+        _, diag = slice_and_run(memo, params, exec_fn_grid)
 
         compatible = ChunkCache.find_compatible_caches(
             temp_dir, axis_values=axis_values
@@ -430,7 +453,7 @@ def test_find_compatible_caches_wildcard():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        _, diag = memo_run(memo, params, exec_fn_grid)
+        _, diag = slice_and_run(memo, params, exec_fn_grid)
 
         compatible = ChunkCache.find_compatible_caches(temp_dir)
         assert len(compatible) == 1
@@ -441,11 +464,11 @@ def test_load_from_cache():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        output1, diag1 = memo_run(memo, params, exec_fn_grid)
+        output1, diag1 = slice_and_run(memo, params, exec_fn_grid)
 
         cache_hash = memo.cache_hash()
         memo2 = ChunkCache.load_from_cache(temp_dir, cache_hash, collate_fn=collate_fn)
-        output2, diag2 = memo_run(memo2, params, exec_fn_grid)
+        output2, diag2 = slice_and_run(memo2, params, exec_fn_grid)
 
         assert output1 == output2
         assert diag2.cached_chunks == diag2.total_chunks
@@ -466,7 +489,7 @@ def test_singleton_cache_basic():
             cache_chunk_spec={},
             axis_values={},
         )
-        output, diag = memo_run(memo, params, exec_fn_singleton)
+        output, diag = slice_and_run(memo, params, exec_fn_singleton)
 
         assert output == [{"value": 0.8}]
         assert diag.total_chunks == 1
@@ -481,9 +504,9 @@ def test_singleton_cache_reuse():
             cache_chunk_spec={},
             axis_values={},
         )
-        output1, diag1 = memo_run(memo, params, exec_fn_singleton)
+        output1, diag1 = slice_and_run(memo, params, exec_fn_singleton)
 
-        output2, diag2 = memo_run(memo, params, exec_fn_singleton)
+        output2, diag2 = slice_and_run(memo, params, exec_fn_singleton)
 
         assert output1 == output2
         assert diag2.cached_chunks == diag2.total_chunks
@@ -497,10 +520,10 @@ def test_singleton_cache_param_change():
             cache_chunk_spec={},
             axis_values={},
         )
-        output1, diag1 = memo_run(memo, {"alpha": 0.4}, exec_fn_singleton)
+        output1, diag1 = slice_and_run(memo, {"alpha": 0.4}, exec_fn_singleton)
         assert diag1.executed_chunks == 1
 
-        output2, diag2 = memo_run(memo, {"alpha": 0.5}, exec_fn_singleton)
+        output2, diag2 = slice_and_run(memo, {"alpha": 0.5}, exec_fn_singleton)
         assert diag2.executed_chunks == 1
         assert output1 != output2
 
@@ -515,10 +538,10 @@ def test_singleton_cache_no_axes_allowed():
         )
 
         with pytest.raises(ValueError, match="Cannot pass axis arguments"):
-            memo_run(memo, params, exec_fn_singleton, strat=["a"])
+            slice_and_run(memo, params, exec_fn_singleton, strat=["a"])
 
         with pytest.raises(ValueError, match="Cannot pass axis arguments"):
-            memo_run_streaming(
+            slice_and_run_streaming(
                 memo,
                 params,
                 exec_fn_singleton,
@@ -534,10 +557,10 @@ def test_singleton_cache_streaming():
             cache_chunk_spec={},
             axis_values={},
         )
-        diag1 = memo_run_streaming(memo, params, exec_fn_singleton)
+        diag1 = slice_and_run_streaming(memo, params, exec_fn_singleton)
         assert diag1.executed_chunks == 1
 
-        diag2 = memo_run_streaming(memo, params, exec_fn_singleton)
+        diag2 = slice_and_run_streaming(memo, params, exec_fn_singleton)
         assert diag2.cached_chunks == diag2.total_chunks
         assert diag2.executed_chunks == 0
 
@@ -551,7 +574,7 @@ def test_singleton_via_regular_constructor():
             axis_values={},
             collate_fn=None,
         )
-        output, diag = memo_run(memo, params, exec_fn_singleton)
+        output, diag = slice_and_run(memo, params, exec_fn_singleton)
 
         assert output == [{"value": 0.8}]
         assert diag.total_chunks == 1
@@ -563,7 +586,7 @@ def test_exclusive_mode_exact_match():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        memo_run(memo, params, exec_fn_grid)
+        slice_and_run(memo, params, exec_fn_grid)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
@@ -575,7 +598,7 @@ def test_exclusive_mode_exact_match():
         with pytest.raises(
             ValueError, match="Cache with same params and axis_values already exists"
         ):
-            memo_run(memo2, params, exec_fn_grid)
+            slice_and_run(memo2, params, exec_fn_grid)
 
 
 def test_exclusive_mode_rejects_different_chunking():
@@ -583,7 +606,7 @@ def test_exclusive_mode_rejects_different_chunking():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         memo = run_memo(temp_dir, axis_values=axis_values)
         params = {"alpha": 0.4}
-        memo_run(memo, params, exec_fn_grid)
+        slice_and_run(memo, params, exec_fn_grid)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
@@ -595,7 +618,7 @@ def test_exclusive_mode_rejects_different_chunking():
         with pytest.raises(
             ValueError, match="Cache with same params and axis_values already exists"
         ):
-            memo_run(memo2, params, exec_fn_grid)
+            slice_and_run(memo2, params, exec_fn_grid)
 
 
 @pytest.mark.skip("pre-existing test issue, requires refactoring")
@@ -608,7 +631,7 @@ def test_warn_on_overlap():
             collate_fn=collate_fn,
         )
         params = {"alpha": 0.4}
-        memo_run(memo1, params, exec_fn_grid)
+        slice_and_run(memo1, params, exec_fn_grid)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
@@ -618,7 +641,7 @@ def test_warn_on_overlap():
             warn_on_overlap=True,
         )
         with pytest.warns(UserWarning, match="Cache overlap detected"):
-            output, diag = memo_run(memo2, params, exec_fn_grid)
+            output, diag = slice_and_run(memo2, params, exec_fn_grid)
             assert diag.executed_chunks == 2
 
 
@@ -626,7 +649,7 @@ def test_auto_load_no_existing_creates_new():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache.auto_load(temp_dir, params)
-        output, diag = memo_run(memo, params, exec_fn_singleton)
+        output, diag = slice_and_run(memo, params, exec_fn_singleton)
 
         assert output == [{"value": 0.8}]
         assert diag.executed_chunks == 1
@@ -640,10 +663,10 @@ def test_auto_load_finds_singleton():
             cache_chunk_spec={},
             axis_values={},
         )
-        output1, diag1 = memo_run(memo1, params, exec_fn_singleton)
+        output1, diag1 = slice_and_run(memo1, params, exec_fn_singleton)
 
         memo2 = ChunkCache.auto_load(temp_dir, params)
-        output2, diag2 = memo_run(memo2, params, exec_fn_singleton)
+        output2, diag2 = slice_and_run(memo2, params, exec_fn_singleton)
 
         assert output1 == output2
         assert diag2.cached_chunks == 1
@@ -656,12 +679,12 @@ def test_auto_load_with_axis_values_exact():
         chunk_spec = {"strat": 1, "s": 3}
         memo1 = run_memo(temp_dir, axis_values=axis_values, chunk_spec=chunk_spec)
         params = {"alpha": 0.4}
-        output1, diag1 = memo_run(memo1, params, exec_fn_grid)
+        output1, diag1 = slice_and_run(memo1, params, exec_fn_grid)
 
         memo2 = ChunkCache.auto_load(
             temp_dir, params, axis_values=axis_values, collate_fn=collate_fn
         )
-        output2, diag2 = memo_run(memo2, params, exec_fn_grid)
+        output2, diag2 = slice_and_run(memo2, params, exec_fn_grid)
 
         assert output1 == output2
         assert diag2.cached_chunks == 1
@@ -676,7 +699,7 @@ def test_auto_load_ambiguous_no_axis_values():
             cache_chunk_spec={},
             axis_values={},
         )
-        memo_run(memo1, params, exec_fn_singleton)
+        slice_and_run(memo1, params, exec_fn_singleton)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
@@ -684,7 +707,7 @@ def test_auto_load_ambiguous_no_axis_values():
             axis_values={"strat": ["a", "b"], "s": [1, 2]},
             collate_fn=collate_fn,
         )
-        memo_run(memo2, params, exec_fn_grid)
+        slice_and_run(memo2, params, exec_fn_grid)
 
         with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
             ChunkCache.auto_load(temp_dir, params)
@@ -697,7 +720,7 @@ def test_auto_load_ambiguous_with_axis_values():
         memo1 = run_memo(
             temp_dir, axis_values=axis_values, chunk_spec={"strat": 1, "s": 3}
         )
-        memo_run(memo1, params, exec_fn_grid)
+        slice_and_run(memo1, params, exec_fn_grid)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
@@ -705,7 +728,7 @@ def test_auto_load_ambiguous_with_axis_values():
             axis_values=axis_values,
             collate_fn=collate_fn,
         )
-        memo_run(memo2, params, exec_fn_grid)
+        slice_and_run(memo2, params, exec_fn_grid)
 
         with pytest.raises(ValueError, match="Ambiguous: 2 caches match"):
             ChunkCache.auto_load(temp_dir, params, axis_values=axis_values)
@@ -722,7 +745,7 @@ def test_auto_load_with_cache_chunk_spec():
             cache_chunk_spec={"strat": 1, "s": 2},
             collate_fn=collate_fn,
         )
-        output, diag = memo_run(memo, params, exec_fn_grid)
+        output, diag = slice_and_run(memo, params, exec_fn_grid)
 
         assert output
         assert diag.total_chunks == 2
@@ -734,7 +757,7 @@ def test_auto_load_default_chunk_spec():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
         memo = ChunkCache.auto_load(temp_dir, params, axis_values=axis_values)
-        output, diag = memo_run(memo, params, exec_fn_grid)
+        output, diag = slice_and_run(memo, params, exec_fn_grid)
 
         assert output
         assert diag.total_chunks == 1
@@ -750,7 +773,7 @@ def test_allow_superset_finds_superset_cache():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        output1, diag1 = memo_run(memo_superset, params_superset, exec_fn_grid)
+        output1, diag1 = slice_and_run(memo_superset, params_superset, exec_fn_grid)
         assert diag1.total_chunks == 2
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
@@ -763,7 +786,7 @@ def test_allow_superset_finds_superset_cache():
             allow_superset=True,
             collate_fn=collate_fn,
         )
-        output2, diag2 = memo_run(memo_subset, params_subset, exec_fn_grid)
+        output2, diag2 = slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
         assert output2
         assert diag2.cached_chunks == 2
@@ -780,7 +803,7 @@ def test_allow_superset_false_requires_exact_match():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
@@ -792,7 +815,7 @@ def test_allow_superset_false_requires_exact_match():
             allow_superset=False,
             collate_fn=collate_fn,
         )
-        _, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
+        _, diag = slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
         assert diag.executed_chunks == 1
         assert diag.cached_chunks == 0
@@ -810,7 +833,7 @@ def test_allow_superset_multiple_supersets_raises_error():
             axis_values=axis_values1,
             collate_fn=collate_fn,
         )
-        memo_run(memo1, params_superset, exec_fn_grid)
+        slice_and_run(memo1, params_superset, exec_fn_grid)
 
         memo2 = ChunkCache(
             cache_root=temp_dir,
@@ -818,7 +841,7 @@ def test_allow_superset_multiple_supersets_raises_error():
             axis_values=axis_values2,
             collate_fn=collate_fn,
         )
-        memo_run(memo2, params_superset, exec_fn_grid)
+        slice_and_run(memo2, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
@@ -843,7 +866,7 @@ def test_exclusive_prevents_subset_cache_creation():
             collate_fn=collate_fn,
             exclusive=True,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
@@ -859,7 +882,7 @@ def test_exclusive_prevents_subset_cache_creation():
                 exclusive=True,
                 collate_fn=collate_fn,
             )
-            memo_run(memo_subset, params_subset, exec_fn_grid)
+            slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
 
 def test_exclusive_prevents_subset_when_superset_exists():
@@ -874,7 +897,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
             collate_fn=collate_fn,
             exclusive=True,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4}
@@ -890,7 +913,7 @@ def test_exclusive_prevents_subset_when_superset_exists():
                 exclusive=True,
                 collate_fn=collate_fn,
             )
-            memo_run(memo, params_subset, exec_fn_grid)
+            slice_and_run(memo, params_subset, exec_fn_grid)
 
 
 def test_find_compatible_caches_with_allow_superset():
@@ -903,7 +926,7 @@ def test_find_compatible_caches_with_allow_superset():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
@@ -936,7 +959,7 @@ def test_allow_superset_no_superset_creates_new():
             axis_values=axis_values_subset,
             collate_fn=collate_fn,
         )
-        output1, diag1 = memo_run(memo_subset, params_subset, exec_fn_grid)
+        output1, diag1 = slice_and_run(memo_subset, params_subset, exec_fn_grid)
         assert diag1.executed_chunks == 1
 
         axis_values_different = {"strat": ["b"], "s": [1, 2, 3]}
@@ -949,7 +972,7 @@ def test_allow_superset_no_superset_creates_new():
             allow_superset=True,
             collate_fn=collate_fn,
         )
-        output2, diag2 = memo_run(memo_different, params_different, exec_fn_grid)
+        output2, diag2 = slice_and_run(memo_different, params_different, exec_fn_grid)
 
         assert output2
         assert diag2.executed_chunks == 1
@@ -966,7 +989,7 @@ def test_allow_superset_mixed_params_and_axes():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"s": [1, 2, 3]}
         params_subset = {"alpha": 0.4, "strat": "a"}
@@ -978,7 +1001,7 @@ def test_allow_superset_mixed_params_and_axes():
             allow_superset=True,
             collate_fn=collate_fn,
         )
-        output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
+        output, diag = slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
         assert output
         assert diag.cached_chunks > 0
@@ -995,7 +1018,7 @@ def test_allow_superset_partial_subset_match():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1]}
         params_subset = {"alpha": 0.4}
@@ -1007,7 +1030,7 @@ def test_allow_superset_partial_subset_match():
             allow_superset=True,
             collate_fn=collate_fn,
         )
-        output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
+        output, diag = slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
         assert output
         assert diag.cached_chunks > 0
@@ -1025,7 +1048,7 @@ def test_exclusive_prevents_redundant_subset():
             collate_fn=collate_fn,
             exclusive=True,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.4}
@@ -1042,7 +1065,7 @@ def test_exclusive_prevents_redundant_subset():
             ValueError,
             match="Cannot create subset cache: a superset cache already exists",
         ):
-            memo_run(memo_test, params_subset, exec_fn_grid)
+            slice_and_run(memo_test, params_subset, exec_fn_grid)
 
 
 def test_allow_superset_with_different_params():
@@ -1055,7 +1078,7 @@ def test_allow_superset_with_different_params():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         params_subset = {"alpha": 0.5, "strat": "a"}
@@ -1067,7 +1090,7 @@ def test_allow_superset_with_different_params():
             allow_superset=True,
             collate_fn=collate_fn,
         )
-        output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
+        output, diag = slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
         assert output
         assert diag.cached_chunks == 0
@@ -1084,7 +1107,7 @@ def test_allow_superset_multiple_axes_subset():
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
-        memo_run(memo_superset, params_superset, exec_fn_grid)
+        slice_and_run(memo_superset, params_superset, exec_fn_grid)
 
         axis_values_subset = {"strat": ["a"], "s": [1]}
         params_subset = {"alpha": 0.4}
@@ -1096,7 +1119,7 @@ def test_allow_superset_multiple_axes_subset():
             allow_superset=True,
             collate_fn=collate_fn,
         )
-        output, diag = memo_run(memo_subset, params_subset, exec_fn_grid)
+        output, diag = slice_and_run(memo_subset, params_subset, exec_fn_grid)
 
         assert output
         assert diag.cached_chunks > 0

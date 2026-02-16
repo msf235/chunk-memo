@@ -168,6 +168,8 @@ class ChunkCache:
         self,
         *,
         axis_indices: Mapping[str, Any] | None = None,
+        axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+        extend_cache: bool = False,
         **axes: Any,
     ) -> CacheStatus:
         """Return cached vs missing chunk info for a subset of axes.
@@ -175,13 +177,21 @@ class ChunkCache:
         axis_indices selects axes by index (int, slice, range, or list/tuple of
         those), based on the canonical split spec order. Chunk indices are
         returned as lists of ints.
+        axis_values_override provides explicit axis values for axis_indices
+        expansion; when extend_cache=True those values are appended in-place.
         """
         profile_start = time.monotonic() if self.profile else None
         if self._axis_values is None:
             raise ValueError("axis_values must be set before checking cache status")
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
-        axis_values = self._normalize_axes(axes, axis_indices=axis_indices)
+        if axis_values_override is not None and extend_cache:
+            self.extend_axis_values(axis_values_override)
+        axis_values = self._normalize_axes(
+            axes,
+            axis_indices=axis_indices,
+            axis_values_override=axis_values_override,
+        )
         axis_order = self._resolve_axis_order(dict(axis_values))
         axis_chunk_maps = self._axis_chunk_maps(axis_values, axis_order)
         if axis_indices is None and not axes:
@@ -647,6 +657,7 @@ class ChunkCache:
         """Extend axis_values in-place with new values.
 
         Values already present are ignored; new values are appended in order.
+        When write_metadata=True, metadata.json is updated immediately.
         """
         if self._axis_values is None or self._axis_index_map is None:
             raise ValueError("axis_values must be set before extending")
@@ -685,11 +696,15 @@ class ChunkCache:
         axes: Mapping[str, Any] | None,
         *,
         axis_indices: Mapping[str, Any] | None = None,
+        axis_values_override: Mapping[str, Sequence[Any]] | None = None,
     ) -> dict[str, list[Any]]:
         if axis_indices is not None:
             if axes:
                 raise ValueError("axis_indices cannot be combined with axis values")
-            return self._normalize_axis_indices(axis_indices)
+            return self._normalize_axis_indices(
+                axis_indices,
+                axis_values_override=axis_values_override,
+            )
         return self._normalize_axis_values(axes or {})
 
     def _normalize_axis_values(self, axes: Mapping[str, Any]) -> dict[str, list[Any]]:
@@ -715,7 +730,10 @@ class ChunkCache:
         return axis_values
 
     def _normalize_axis_indices(
-        self, axis_indices: Mapping[str, Any]
+        self,
+        axis_indices: Mapping[str, Any],
+        *,
+        axis_values_override: Mapping[str, Sequence[Any]] | None = None,
     ) -> dict[str, list[Any]]:
         """Normalize axis_indices into axis values using canonical split order."""
         if self._axis_values is None:
@@ -726,7 +744,10 @@ class ChunkCache:
                 axis_values[axis] = self._get_all_axis_values(axis)
                 continue
             values = axis_indices[axis]
-            axis_values_obj = self._axis_values[axis]
+            if axis_values_override is not None and axis in axis_values_override:
+                axis_values_obj = axis_values_override[axis]
+            else:
+                axis_values_obj = self._axis_values[axis]
             indices = self._expand_axis_indices(values, axis, len(axis_values_obj))
             axis_values[axis] = [axis_values_obj[index] for index in indices]
         return axis_values
