@@ -3,7 +3,7 @@
 ## Purpose - This file guides agentic coding assistants working in this
 repository. - Keep changes minimal, focused, and aligned with existing style.
 
-## Repository Overview - Project: shard-memo (Python >= 3.10). - Core package:
+## Repository Overview - Project: chunk-memo (Python >= 3.10). - Core package:
 `chunk_memo/`. - Tests: `tests/`. - Examples: `examples/`. - Benchmarks:
 `benchmarks/`.
 
@@ -47,9 +47,9 @@ collections (`list`, `dict`, `tuple`) with generics. - Use `Any` only when
 necessary; narrow when possible. - When a callable signature is important,
 specify it with `Callable`.
 
-### Naming - Functions/variables: `snake_case`. - Classes: `PascalCase`. -
-Constants: `UPPER_SNAKE_CASE`. - Use descriptive names (e.g., `cache_chunk_spec`,
-`exec_chunk_size`).
+### Naming - Functions/variables: `snake_case`. - Classes: `PascalCase`.
+- Constants: `UPPER_SNAKE_CASE`. - Use descriptive names (e.g.,
+`cache_chunk_spec`, `exec_chunk_size`).
 
 ### Public APIs - The public API is exported from `chunk_memo/__init__.py`. -
 Keep backwards compatibility in public names and signatures. - Update README

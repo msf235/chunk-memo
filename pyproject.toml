@@ -28,7 +28,7 @@ test = ["pytest", "flaky>=3.8.1"]
 bench = ["joblib>=1.5.3"]
 
 [project.urls]
-Repository = "https://github.com/msf235/shard-memo"
+Repository = "https://github.com/msf235/chunk-memo"
 
 [tool.pytest.ini_options]
 markers = ["flaky: rerun flaky tests"]

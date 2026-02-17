@@ -22,30 +22,30 @@ DATA_ITEM = "a" * 10000
 OUTPUT_ROOT = Path("output")
 
 
-def reset_shards(chunk_size):
+def reset_chunks(chunk_size):
     OUTPUT_ROOT.mkdir(exist_ok=True)
-    filepath = OUTPUT_ROOT / f"shard_{chunk_size}"
+    filepath = OUTPUT_ROOT / f"chunk_{chunk_size}"
     if filepath.exists():
-        for shard_file in filepath.glob("*.pkl"):
-            shard_file.unlink()
+        for chunk_file in filepath.glob("*.pkl"):
+            chunk_file.unlink()
     filepath.mkdir(exist_ok=True)
     n_chunks = N // chunk_size
 
     start = time.perf_counter()
     for chunk_idx in range(n_chunks):
-        filename = f"shard_{chunk_idx}.pkl"
+        filename = f"chunk_{chunk_idx}.pkl"
         with open(filepath / filename, "wb") as handle:
             pkl.dump([DATA_ITEM] * chunk_size, handle)
     save_time = time.perf_counter() - start
     return filepath, n_chunks, save_time
 
 
-def reset_nested_shards(chunk_size, *, bucket_size=1000):
+def reset_nested_chunks(chunk_size, *, bucket_size=1000):
     OUTPUT_ROOT.mkdir(exist_ok=True)
-    root = OUTPUT_ROOT / f"shard_nested_{chunk_size}"
+    root = OUTPUT_ROOT / f"chunk_nested_{chunk_size}"
     if root.exists():
-        for shard_file in root.rglob("*.pkl"):
-            shard_file.unlink()
+        for chunk_file in root.rglob("*.pkl"):
+            chunk_file.unlink()
     root.mkdir(exist_ok=True)
     n_chunks = N // chunk_size
 
@@ -54,19 +54,19 @@ def reset_nested_shards(chunk_size, *, bucket_size=1000):
         bucket = f"bucket_{chunk_idx // bucket_size:04d}"
         bucket_path = root / bucket
         bucket_path.mkdir(exist_ok=True)
-        filename = f"shard_{chunk_idx}.pkl"
+        filename = f"chunk_{chunk_idx}.pkl"
         with open(bucket_path / filename, "wb") as handle:
             pkl.dump([DATA_ITEM] * chunk_size, handle)
     save_time = time.perf_counter() - start
     return root, n_chunks, save_time
 
 
-def reset_nested_single_item_shards(*, bucket_size=1000):
+def reset_nested_single_item_chunks(*, bucket_size=1000):
     OUTPUT_ROOT.mkdir(exist_ok=True)
-    root = OUTPUT_ROOT / "shard_nested_single"
+    root = OUTPUT_ROOT / "chunk_nested_single"
     if root.exists():
-        for shard_file in root.rglob("*.pkl"):
-            shard_file.unlink()
+        for chunk_file in root.rglob("*.pkl"):
+            chunk_file.unlink()
     root.mkdir(exist_ok=True)
 
     start = time.perf_counter()
@@ -74,60 +74,60 @@ def reset_nested_single_item_shards(*, bucket_size=1000):
         bucket = f"bucket_{chunk_idx // bucket_size:04d}"
         bucket_path = root / bucket
         bucket_path.mkdir(exist_ok=True)
-        filename = f"shard_{chunk_idx}.pkl"
+        filename = f"chunk_{chunk_idx}.pkl"
         with open(bucket_path / filename, "wb") as handle:
             pkl.dump(DATA_ITEM, handle)
     save_time = time.perf_counter() - start
     return root, save_time
 
 
-def load_shards(filepath, shard_indices):
+def load_chunks(filepath, chunk_indices):
     data_chunks = []
-    for chunk_idx in shard_indices:
-        filename = f"shard_{chunk_idx}.pkl"
+    for chunk_idx in chunk_indices:
+        filename = f"chunk_{chunk_idx}.pkl"
         with open(filepath / filename, "rb") as handle:
             data_chunk = pkl.load(handle)
             data_chunks.append(data_chunk)
     return data_chunks
 
 
-def load_nested_shards(filepath, shard_indices, *, bucket_size=1000):
+def load_nested_chunks(filepath, chunk_indices, *, bucket_size=1000):
     data_chunks = []
-    for chunk_idx in shard_indices:
+    for chunk_idx in chunk_indices:
         bucket = f"bucket_{chunk_idx // bucket_size:04d}"
-        filename = f"shard_{chunk_idx}.pkl"
+        filename = f"chunk_{chunk_idx}.pkl"
         with open(filepath / bucket / filename, "rb") as handle:
             data_chunk = pkl.load(handle)
             data_chunks.append(data_chunk)
     return data_chunks
 
 
-def load_nested_single_item_shards(filepath, shard_indices, *, bucket_size=1000):
+def load_nested_single_item_chunks(filepath, chunk_indices, *, bucket_size=1000):
     data_chunks = []
-    for chunk_idx in shard_indices:
+    for chunk_idx in chunk_indices:
         bucket = f"bucket_{chunk_idx // bucket_size:04d}"
-        filename = f"shard_{chunk_idx}.pkl"
+        filename = f"chunk_{chunk_idx}.pkl"
         with open(filepath / bucket / filename, "rb") as handle:
             data_chunk = pkl.load(handle)
             data_chunks.append(data_chunk)
     return data_chunks
 
 
-def timed_load(filepath, shard_indices):
+def timed_load(filepath, chunk_indices):
     start = time.perf_counter()
-    load_shards(filepath, shard_indices)
+    load_chunks(filepath, chunk_indices)
     return time.perf_counter() - start
 
 
-def timed_nested_load(filepath, shard_indices, *, bucket_size=1000):
+def timed_nested_load(filepath, chunk_indices, *, bucket_size=1000):
     start = time.perf_counter()
-    load_nested_shards(filepath, shard_indices, bucket_size=bucket_size)
+    load_nested_chunks(filepath, chunk_indices, bucket_size=bucket_size)
     return time.perf_counter() - start
 
 
-def timed_nested_single_item_load(filepath, shard_indices, *, bucket_size=1000):
+def timed_nested_single_item_load(filepath, chunk_indices, *, bucket_size=1000):
     start = time.perf_counter()
-    load_nested_single_item_shards(filepath, shard_indices, bucket_size=bucket_size)
+    load_nested_single_item_chunks(filepath, chunk_indices, bucket_size=bucket_size)
     return time.perf_counter() - start
 
 
@@ -137,7 +137,7 @@ def run_joblib_benchmark():
 
     params = {"scale": 2}
     OUTPUT_ROOT.mkdir(exist_ok=True)
-    memory = Memory(location=str(OUTPUT_ROOT / "joblib_shard_cache"), verbose=0)
+    memory = Memory(location=str(OUTPUT_ROOT / "joblib_chunk_cache"), verbose=0)
 
     @memory.cache
     def joblib_exec(params, point):
@@ -170,7 +170,7 @@ def run_klepto_benchmark():
         return None
 
     OUTPUT_ROOT.mkdir(exist_ok=True)
-    archive = dir_archive(str(OUTPUT_ROOT / "klepto_shard_cache"), serialized=True)
+    archive = dir_archive(str(OUTPUT_ROOT / "klepto_chunk_cache"), serialized=True)
     cache = inf_cache(cache=archive, keymap=keymaps.picklemap(flat=True))
 
     @cache
@@ -204,12 +204,12 @@ def run_klepto_benchmark():
 
 
 def main():
-    print("Shard load benchmark")
+    print("Chunk load benchmark")
     print(f"N={N}")
     print("chunk_size  save_s   read_all_s  read_slice_s")
 
     for chunk_size in chunk_sizes:
-        filepath, n_chunks, save_time = reset_shards(chunk_size)
+        filepath, n_chunks, save_time = reset_chunks(chunk_size)
         all_indices = list(range(n_chunks))
         slice_count = max(1, n_chunks // 10)
         slice_indices = list(range(slice_count))
@@ -220,11 +220,11 @@ def main():
             f"{chunk_size:10d}  {save_time:6.4f}  {read_all_time:10.4f}  {read_slice_time:11.4f}"
         )
 
-    print("\nNested shard layout (same shard payloads)")
+    print("\nNested chunk layout (same chunk payloads)")
     print("chunk_size  save_s   read_all_s  read_slice_s")
 
     for chunk_size in chunk_sizes:
-        filepath, n_chunks, save_time = reset_nested_shards(chunk_size)
+        filepath, n_chunks, save_time = reset_nested_chunks(chunk_size)
         all_indices = list(range(n_chunks))
         slice_count = max(1, n_chunks // 10)
         slice_indices = list(range(slice_count))
@@ -235,10 +235,10 @@ def main():
             f"{chunk_size:10d}  {save_time:6.4f}  {read_all_time:10.4f}  {read_slice_time:11.4f}"
         )
 
-    print("\nNested shard layout (1 item per file)")
+    print("\nNested chunk layout (1 item per file)")
     print("bucketed  save_s   read_all_s  read_slice_s")
 
-    filepath, save_time = reset_nested_single_item_shards()
+    filepath, save_time = reset_nested_single_item_chunks()
     all_indices = list(range(N))
     slice_count = max(1, N // 10)
     slice_indices = list(range(slice_count))

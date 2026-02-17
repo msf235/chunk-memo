@@ -106,7 +106,7 @@ class ChunkCache:
 
         Example:
             >>> cache = ChunkCache(
-            ...     cache_root="/tmp/shard-memo",
+            ...     cache_root="/tmp/chunk-memo",
             ...     cache_chunk_spec={"strat": 1, "s": 3},
             ...     axis_values={"strat": ["a"], "s": [1, 2, 3]},
             ... )

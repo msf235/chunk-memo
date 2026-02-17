@@ -76,8 +76,9 @@ def resolve_runner_deps(
     build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
     build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
     reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
-    reconstruct_partial_output_from_items: ReconstructPartialOutputFromItemsFn
-    | None = None,
+    reconstruct_partial_output_from_items: (
+        ReconstructPartialOutputFromItemsFn | None
+    ) = None,
     collect_chunk_data: CollectChunkDataFn | None = None,
     item_hash: ItemHashFn | None = None,
     load_chunk_index: LoadChunkIndexFn | None = None,
@@ -163,7 +164,7 @@ def _log_chunk(
 ) -> None:
     if context.verbose >= 2:
         print_detail(
-            f"[ShardMemo] {action} chunk={chunk_key} items={_format_item_count(item_count)}"
+            f"[ChunkMemo] {action} chunk={chunk_key} items={_format_item_count(item_count)}"
         )
 
 

@@ -14,7 +14,7 @@ auto_load = ChunkCache.auto_load
 
 
 try:
-    __version__ = version("shard-memo")
+    __version__ = version("chunk-memo")
 except PackageNotFoundError:
     __version__ = "unknown"
 
