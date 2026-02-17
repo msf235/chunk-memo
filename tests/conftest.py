@@ -1,7 +1,7 @@
 import sys
 import time
 
-from shard_memo import ChunkCache as _ChunkCache
+from chunk_memo import ChunkCache as _ChunkCache
 
 
 class _TimestampedWriter:

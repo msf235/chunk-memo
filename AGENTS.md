@@ -4,7 +4,7 @@
 repository. - Keep changes minimal, focused, and aligned with existing style.
 
 ## Repository Overview - Project: shard-memo (Python >= 3.10). - Core package:
-`shard_memo/`. - Tests: `tests/`. - Examples: `examples/`. - Benchmarks:
+`chunk_memo/`. - Tests: `tests/`. - Examples: `examples/`. - Benchmarks:
 `benchmarks/`.
 
 ## Build / Lint / Test Commands
@@ -51,7 +51,7 @@ specify it with `Callable`.
 Constants: `UPPER_SNAKE_CASE`. - Use descriptive names (e.g., `cache_chunk_spec`,
 `exec_chunk_size`).
 
-### Public APIs - The public API is exported from `shard_memo/__init__.py`. -
+### Public APIs - The public API is exported from `chunk_memo/__init__.py`. -
 Keep backwards compatibility in public names and signatures. - Update README
 examples if public API changes.
 
@@ -82,7 +82,7 @@ changes. - Keep docstrings concise and focused on usage.
 
 ## File-Specific Guidance
 
-### `shard_memo/core.py` - Core logic and API entry points. - Preserve method
+### `chunk_memo/core.py` - Core logic and API entry points. - Preserve method
 signatures on `ChunkCache` unless necessary. - Maintain deterministic ordering
 and chunk behavior.
 

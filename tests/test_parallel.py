@@ -5,9 +5,9 @@ import itertools
 import pytest  # type: ignore[import-not-found]
 from concurrent.futures import ProcessPoolExecutor
 
-from shard_memo import ChunkCache, run_parallel
-from shard_memo.runners import run as _memo_run
-from shard_memo.runners import run_streaming as _memo_run_streaming
+from chunk_memo import ChunkCache, run_parallel
+from chunk_memo.runners import run as _memo_run
+from chunk_memo.runners import run_streaming as _memo_run_streaming
 
 from .utils import exec_fn_grid, item_dicts, observed_items
 

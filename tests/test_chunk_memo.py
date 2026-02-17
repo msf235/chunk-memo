@@ -4,9 +4,9 @@ import time
 
 import pytest  # type: ignore[import-not-found]
 
-from shard_memo import ChunkCache, ChunkMemo
-from shard_memo.runners import run as _slice_and_run
-from shard_memo.runners import run_streaming as _slice_and_run_streaming
+from chunk_memo import ChunkCache, ChunkMemo
+from chunk_memo.runners import run as _slice_and_run
+from chunk_memo.runners import run_streaming as _slice_and_run_streaming
 
 from .utils import exec_fn_grid
 
@@ -1126,5 +1126,5 @@ def test_allow_superset_multiple_axes_subset():
         assert diag.executed_chunks == 0
 
 
-from shard_memo.runners import run as _memo_run
-from shard_memo.runners import run_streaming as _memo_run_streaming
+from chunk_memo.runners import run as _memo_run
+from chunk_memo.runners import run_streaming as _memo_run_streaming

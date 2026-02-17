@@ -8,7 +8,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     Memory = None
 
-from shard_memo import ChunkCache, run
+from chunk_memo import ChunkCache, run
 
 
 def exec_fn(params, s):

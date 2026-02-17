@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "shard-memo"
+name = "chunk-memo"
 version = "0.1.0"
-description = "Sharded memoization with chunked caching."
+description = "Memoization with chunked caching and parallelization."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -34,11 +34,11 @@ Repository = "https://github.com/msf235/shard-memo"
 markers = ["flaky: rerun flaky tests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["shard_memo"]
+packages = ["chunk_memo"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "shard_memo/**",
+    "chunk_memo/**",
     "README.md",
     "LICENSE",
     "pyproject.toml",

@@ -2,8 +2,8 @@ import tempfile
 
 import functools
 
-from shard_memo import ChunkCache, run_parallel
-from shard_memo.runners import run as _memo_run
+from chunk_memo import ChunkCache, run_parallel
+from chunk_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs, item_from_index
 

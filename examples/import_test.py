@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from shard_memo import ChunkCache, run
+from chunk_memo import ChunkCache, run
 
 
 def exec_fn(params, strat, s):

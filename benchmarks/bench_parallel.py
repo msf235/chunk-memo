@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from shard_memo import ChunkCache, run, run_parallel
+from chunk_memo import ChunkCache, run, run_parallel
 
 
 def exec_fn(params, s):
@@ -80,7 +80,7 @@ def main():
 
     print("Benchmark: n_points=10000, sleep=0.005s (varying exec_chunk_size)")
     print("max_workers=8, scenarios: cold/half/warm")
-    root = Path("/tmp/shard_memo_bench")
+    root = Path("/tmp/chunk_memo_bench")
     if root.exists():
         for child in root.iterdir():
             if child.is_file():

@@ -151,7 +151,7 @@ class ChunkCache:
         self._set_axis_values(axis_values)
         self._axis_values_serializable = self._make_axis_values_serializable()
         if cache_root_path is None:
-            cache_root_path = Path.cwd() / ".shard_memo"
+            cache_root_path = Path.cwd() / ".chunk_memo"
         self.cache_id = self.cache_hash()
         self._memo_root_override: Path | None = None
         metadata_path = cache_root_path / "metadata.json"
