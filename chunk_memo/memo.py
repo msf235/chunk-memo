@@ -14,7 +14,7 @@ from .runners import Diagnostics, run, run_streaming
 class ChunkMemo(ChunkCache):
     """ChunkCache with decorator helpers."""
 
-    def run_wrap(
+    def cache(
         self, *, params_arg: str = "params"
     ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
         """Decorator for running memoized execution with output.
@@ -25,7 +25,7 @@ class ChunkMemo(ChunkCache):
         """
         return self._build_wrapper(params_arg=params_arg, streaming=False)
 
-    def streaming_wrap(
+    def stream_cache(
         self, *, params_arg: str = "params"
     ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
         """Decorator for streaming memoized execution to disk only.

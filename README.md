@@ -53,7 +53,7 @@ wrapper = ChunkMemo(
     axis_values=axis_values,
 )
 
-@wrapper.run_wrap()
+@wrapper.cache()
 def exec_fn(alpha, strat, s):
     outputs = []
     for strat_value in strat:
