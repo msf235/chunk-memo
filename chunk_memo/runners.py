@@ -25,6 +25,7 @@ from .runners_common import (
     _payload_item_map,
     _stream_item_count,
     resolve_chunk_path,
+    resolve_cache_for_run,
     resolve_runner_deps,
 )
 
@@ -36,6 +37,10 @@ def run(
     exec_fn: Callable[..., Any],
     *,
     collate_fn: Callable[[list[Any]], Any] | None = None,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    extend_cache: bool = False,
+    allow_superset: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
@@ -55,6 +60,13 @@ def run(
     Partial chunks return whatever cached output is available and increment
     diagnostics.partial_chunks.
     """
+    cache = resolve_cache_for_run(
+        cache,
+        params=params,
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+        allow_superset=allow_superset,
+    )
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     write_metadata_fn = (
         write_metadata if write_metadata is not None else cache.write_metadata
@@ -83,6 +95,10 @@ def run_streaming(
     exec_fn: Callable[..., Any],
     *,
     collate_fn: Callable[[list[Any]], Any] | None = None,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    extend_cache: bool = False,
+    allow_superset: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
@@ -101,6 +117,13 @@ def run_streaming(
     collate_fn is accepted for API parity but has no effect without outputs.
     Partial chunks still count as cached and increment diagnostics.partial_chunks.
     """
+    cache = resolve_cache_for_run(
+        cache,
+        params=params,
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+        allow_superset=allow_superset,
+    )
     exec_fn_bound = cache.bind_exec_fn(exec_fn)
     write_metadata_fn = (
         write_metadata if write_metadata is not None else cache.write_metadata

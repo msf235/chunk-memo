@@ -33,11 +33,14 @@ def collate_fn(chunks):
 
 
 def _set_params(memo, params):
+    if hasattr(memo, "cache_for_params"):
+        return memo.cache_for_params(params)
     cache_id = params_to_cache_id(params)
     metadata = dict(memo.metadata)
     metadata["params"] = params
     memo.set_identity(cache_id, metadata=metadata)
     memo.write_metadata()
+    return memo
 
 
 def _cache_identity(params):
@@ -56,16 +59,16 @@ def _bind_exec_fn(exec_fn, params):
 
 
 def slice_and_run(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
+    cache = _set_params(memo, params)
     axis_indices = kwargs.pop("axis_indices", None)
-    sliced = memo.slice(axis_indices=axis_indices, **kwargs)
+    sliced = cache.slice(axis_indices=axis_indices, **kwargs)
     return _slice_and_run(sliced, _bind_exec_fn(exec_fn, params))
 
 
 def slice_and_run_streaming(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
+    cache = _set_params(memo, params)
     axis_indices = kwargs.pop("axis_indices", None)
-    sliced = memo.slice(axis_indices=axis_indices, **kwargs)
+    sliced = cache.slice(axis_indices=axis_indices, **kwargs)
     return _slice_and_run_streaming(sliced, _bind_exec_fn(exec_fn, params))
 
 
@@ -721,13 +724,11 @@ def test_warn_on_overlap():
 def test_auto_load_no_existing_creates_new():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        cache_id = params_to_cache_id(params)
-        memo = ChunkCache.auto_load(
+        memo = ChunkMemo.auto_load(
             temp_dir,
-            cache_id,
+            params,
             axis_values={},
             chunk_spec={},
-            metadata={"params": params},
         )
         output, diag = slice_and_run(memo, params, exec_fn_singleton)
 
@@ -738,7 +739,6 @@ def test_auto_load_no_existing_creates_new():
 def test_auto_load_finds_singleton():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        cache_id = params_to_cache_id(params)
         memo1 = ChunkCache(
             root=temp_dir,
             **_cache_identity(params),
@@ -747,7 +747,7 @@ def test_auto_load_finds_singleton():
         )
         output1, diag1 = slice_and_run(memo1, params, exec_fn_singleton)
 
-        memo2 = ChunkCache.auto_load(temp_dir, cache_id)
+        memo2 = ChunkMemo.auto_load(temp_dir, params)
         output2, diag2 = slice_and_run(memo2, params, exec_fn_singleton)
 
         assert output1 == output2
@@ -763,9 +763,9 @@ def test_auto_load_with_axis_values_exact():
         params = {"alpha": 0.4}
         output1, diag1 = slice_and_run(memo1, params, exec_fn_grid)
 
-        memo2 = ChunkCache.auto_load(
+        memo2 = ChunkMemo.auto_load(
             temp_dir,
-            params_to_cache_id(params),
+            params,
             axis_values=axis_values,
             collate_fn=collate_fn,
         )
@@ -779,7 +779,6 @@ def test_auto_load_with_axis_values_exact():
 def test_auto_load_axis_values_mismatch_raises():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
-        cache_id = params_to_cache_id(params)
         memo = ChunkCache(
             root=temp_dir,
             **_cache_identity(params),
@@ -790,9 +789,9 @@ def test_auto_load_axis_values_mismatch_raises():
         slice_and_run(memo, params, exec_fn_grid)
 
         with pytest.raises(ValueError, match="axis_values differ"):
-            ChunkCache.auto_load(
+            ChunkMemo.auto_load(
                 temp_dir,
-                cache_id,
+                params,
                 axis_values={"strat": ["a"], "s": [1, 2, 3]},
             )
 
@@ -801,13 +800,12 @@ def test_auto_load_with_chunk_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
-        memo = ChunkCache.auto_load(
+        memo = ChunkMemo.auto_load(
             temp_dir,
-            params_to_cache_id(params),
+            params,
             axis_values=axis_values,
             chunk_spec={"strat": 1, "s": 2},
             collate_fn=collate_fn,
-            metadata={"params": params},
         )
         output, diag = slice_and_run(memo, params, exec_fn_grid)
 
@@ -820,11 +818,10 @@ def test_auto_load_default_chunk_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
-        memo = ChunkCache.auto_load(
+        memo = ChunkMemo.auto_load(
             temp_dir,
-            params_to_cache_id(params),
+            params,
             axis_values=axis_values,
-            metadata={"params": params},
         )
         output, diag = slice_and_run(memo, params, exec_fn_grid)
 
@@ -836,7 +833,6 @@ def test_allow_superset_finds_superset_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
-        cache_id = params_to_cache_id(params)
         memo_superset = ChunkCache(
             root=temp_dir,
             **_cache_identity(params),
@@ -848,9 +844,9 @@ def test_allow_superset_finds_superset_cache():
         assert diag1.total_chunks == 2
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
-        memo_subset = ChunkCache.auto_load(
+        memo_subset = ChunkMemo.auto_load(
             temp_dir,
-            cache_id,
+            params,
             axis_values=axis_values_subset,
             allow_superset=True,
             collate_fn=collate_fn,
@@ -866,7 +862,6 @@ def test_allow_superset_false_requires_exact_match():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
-        cache_id = params_to_cache_id(params)
         memo_superset = ChunkCache(
             root=temp_dir,
             **_cache_identity(params),
@@ -878,9 +873,9 @@ def test_allow_superset_false_requires_exact_match():
 
         axis_values_subset = {"strat": ["a"], "s": [1, 2, 3]}
         with pytest.raises(ValueError, match="axis_values differ"):
-            ChunkCache.auto_load(
+            ChunkMemo.auto_load(
                 temp_dir,
-                cache_id,
+                params,
                 axis_values=axis_values_subset,
                 allow_superset=False,
                 collate_fn=collate_fn,

@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple
 
 from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
-from .identity import params_to_cache_id
+from .identity import params_to_cache_id, stable_serialize
 from .runners import Diagnostics, run, run_streaming
+from .runners_common import resolve_cache_for_run
 
 
 class ChunkMemo:
@@ -53,6 +54,167 @@ class ChunkMemo:
         self.warn_on_overlap = warn_on_overlap
         self.precompute_chunk_keys = precompute_chunk_keys
         self._caches: dict[str, ChunkCache] = {}
+
+    @classmethod
+    def auto_load(
+        cls,
+        root: str | Path,
+        params: dict[str, Any],
+        axis_values: dict[str, Any] | None = None,
+        chunk_spec: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        collate_fn: CollateFn | None = None,
+        chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[
+            [str, Tuple[Tuple[str, Tuple[Any, ...]], ...], str], str
+        ]
+        | None = None,
+        path_fn: CachePathFn | None = None,
+        version: str = "v1",
+        axis_order: Sequence[str] | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
+        precompute_chunk_keys: bool = False,
+        allow_superset: bool = False,
+    ) -> "ChunkMemo":
+        if not isinstance(params, dict):
+            raise ValueError("'params' must be a dict")
+        cache_id = params_to_cache_id(params)
+        root_path = Path(root)
+        axis_values_map = axis_values or {}
+
+        def summarize_axis_values(value: Any) -> str:
+            if not isinstance(value, Mapping):
+                return repr(value)
+            summarized: dict[str, Any] = {}
+            for key, axis_vals in value.items():
+                if isinstance(axis_vals, (list, tuple)):
+                    if len(axis_vals) <= 6:
+                        summarized[key] = list(axis_vals)
+                    else:
+                        summarized[key] = (
+                            list(axis_vals[:3]) + ["..."] + list(axis_vals[-2:])
+                        )
+                else:
+                    summarized[key] = axis_vals
+            rendered = repr(summarized)
+            if len(rendered) > 200:
+                return rendered[:197] + "..."
+            return rendered
+
+        cache_path = root_path / cache_id
+        base_metadata = dict(metadata or {})
+        base_metadata.pop("params", None)
+
+        if cache_path.exists():
+            cache = ChunkCache.load_from_cache(
+                root=root_path,
+                cache_id=cache_id,
+                collate_fn=collate_fn,
+                chunk_enumerator=chunk_enumerator,
+                chunk_hash_fn=chunk_hash_fn,
+                path_fn=path_fn,
+                verbose=verbose,
+                profile=profile,
+                exclusive=exclusive,
+                warn_on_overlap=warn_on_overlap,
+            )
+            if not base_metadata:
+                base_metadata = dict(cache.metadata)
+                base_metadata.pop("params", None)
+            if axis_values is not None:
+                meta_axis_values = cache._axis_values_serializable
+                if meta_axis_values is None:
+                    raise ValueError("Cache missing axis_values")
+                if allow_superset:
+                    if not ChunkCache._is_superset_compatible(
+                        {"axis_values": meta_axis_values}, axis_values
+                    ):
+                        raise ValueError(
+                            "Requested axis_values are not a subset of existing cache. "
+                            f"Existing axis_values={summarize_axis_values(meta_axis_values)}, "
+                            f"requested={summarize_axis_values(axis_values)}."
+                        )
+                    cache = cache.slice(**axis_values)
+                elif stable_serialize(meta_axis_values) != stable_serialize(
+                    axis_values
+                ):
+                    raise ValueError(
+                        "Cache with same cache_id exists but axis_values differ. "
+                        f"Existing axis_values={summarize_axis_values(meta_axis_values)}, "
+                        f"requested={summarize_axis_values(axis_values)}."
+                    )
+            merged_metadata = dict(base_metadata)
+            merged_metadata["params"] = params
+            if cache.metadata != merged_metadata:
+                cache.set_identity(cache.cache_id, metadata=merged_metadata)
+            memo = cls(
+                root=root_path,
+                chunk_spec=cache.chunk_spec,
+                axis_values=(
+                    axis_values
+                    if axis_values is not None
+                    else (cache._axis_values_serializable or {})
+                ),
+                metadata=base_metadata,
+                collate_fn=cache.collate_fn,
+                chunk_enumerator=cache.chunk_enumerator,
+                chunk_hash_fn=cache.chunk_hash_fn,
+                path_fn=cache.path_fn,
+                version=cache.version,
+                axis_order=cache.axis_order,
+                verbose=cache.verbose,
+                profile=cache.profile,
+                exclusive=cache.exclusive,
+                warn_on_overlap=cache.warn_on_overlap,
+                precompute_chunk_keys=cache.precompute_chunk_keys,
+            )
+            memo._caches[cache_id] = cache
+            return memo
+
+        if axis_values is None:
+            raise ValueError("axis_values is required when creating a new cache")
+        merged_metadata = dict(base_metadata)
+        merged_metadata["params"] = params
+        cache = ChunkCache(
+            root=root_path,
+            cache_id=cache_id,
+            metadata=merged_metadata,
+            chunk_spec=chunk_spec,
+            axis_values=axis_values_map,
+            collate_fn=collate_fn,
+            chunk_enumerator=chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            path_fn=path_fn,
+            version=version,
+            axis_order=axis_order,
+            verbose=verbose,
+            profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
+            precompute_chunk_keys=precompute_chunk_keys,
+        )
+        memo = cls(
+            root=root_path,
+            chunk_spec=cache.chunk_spec,
+            axis_values=axis_values_map,
+            metadata=base_metadata,
+            collate_fn=collate_fn,
+            chunk_enumerator=chunk_enumerator,
+            chunk_hash_fn=chunk_hash_fn,
+            path_fn=path_fn,
+            version=version,
+            axis_order=axis_order,
+            verbose=verbose,
+            profile=profile,
+            exclusive=exclusive,
+            warn_on_overlap=warn_on_overlap,
+            precompute_chunk_keys=precompute_chunk_keys,
+        )
+        memo._caches[cache_id] = cache
+        return memo
 
     def cache_for_params(self, params: dict[str, Any]) -> ChunkCache:
         if not isinstance(params, dict):
@@ -147,6 +309,7 @@ class ChunkMemo:
                     )
 
                 axis_indices = kwargs.pop("axis_indices", None)
+                extend_cache = kwargs.pop("extend_cache", False)
                 bound = signature.bind_partial(*args, **kwargs)
                 bound.apply_defaults()
                 params_provided = params_arg in bound.arguments
@@ -165,8 +328,13 @@ class ChunkMemo:
                     exec_extras,
                     params_provided=params_provided,
                 )
-
-                cache = self.cache_for_params(merged_params)
+                cache = resolve_cache_for_run(
+                    self,
+                    params=merged_params,
+                    axis_values_override=axis_inputs if extend_cache else None,
+                    extend_cache=extend_cache,
+                    allow_superset=extend_cache,
+                )
 
                 exec_kwargs = dict(exec_extras)
                 if params_arg in signature.parameters:

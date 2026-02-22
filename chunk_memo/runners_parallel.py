@@ -44,6 +44,7 @@ from .runners_common import (
     _require_params,
     _save_chunk_payload,
     prepare_planning_progress,
+    resolve_cache_for_run,
     resolve_runner_deps,
     resolve_chunk_path,
 )
@@ -607,6 +608,9 @@ def run_parallel(
     flush_on_chunk: bool = False,
     return_output: bool = True,
     extend_cache: bool = False,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    allow_superset: bool = False,
     # Manual cache methods (optional overrides)
     write_metadata: WriteMetadataFn | None = None,
     chunk_hash: ChunkHashFn | None = None,
@@ -634,6 +638,13 @@ def run_parallel(
     extend_cache updates the cache axis_values in-place if items introduce
     new axis values.
     """
+    cache = resolve_cache_for_run(
+        cache,
+        params=params,
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+        allow_superset=allow_superset,
+    )
     cache_status = cache.cache_status()
     if not return_output:
         flush_on_chunk = True

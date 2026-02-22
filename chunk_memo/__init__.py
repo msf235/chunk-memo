@@ -11,7 +11,7 @@ from .runners import (
     run_streaming,
 )
 
-auto_load = ChunkCache.auto_load
+auto_load = ChunkMemo.auto_load
 
 
 try:

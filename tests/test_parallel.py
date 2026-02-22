@@ -6,7 +6,7 @@ import tempfile
 import pytest  # type: ignore[import-not-found]
 from concurrent.futures import ProcessPoolExecutor
 
-from chunk_memo import ChunkCache, params_to_cache_id, run_parallel
+from chunk_memo import ChunkCache, ChunkMemo, params_to_cache_id, run_parallel
 from chunk_memo.runners import run as _memo_run
 from chunk_memo.runners import run_streaming as _memo_run_streaming
 
@@ -32,11 +32,14 @@ def _parallel_kwargs(memo):
 
 
 def _set_params(memo, params):
+    if hasattr(memo, "cache_for_params"):
+        return memo.cache_for_params(params)
     cache_id = params_to_cache_id(params)
     metadata = dict(memo.metadata)
     metadata["params"] = params
     memo.set_identity(cache_id, metadata=metadata)
     memo.write_metadata()
+    return memo
 
 
 def _cache_identity(params):
@@ -47,16 +50,16 @@ def _cache_identity(params):
 
 
 def slice_and_run(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
+    cache = _set_params(memo, params)
     axis_indices = kwargs.pop("axis_indices", None)
-    sliced = memo.slice(axis_indices=axis_indices, **kwargs)
+    sliced = cache.slice(axis_indices=axis_indices, **kwargs)
     return _memo_run(sliced, _bind_exec_fn(exec_fn, params))
 
 
 def slice_and_run_streaming(memo, params, exec_fn, **kwargs):
-    _set_params(memo, params)
+    cache = _set_params(memo, params)
     axis_indices = kwargs.pop("axis_indices", None)
-    sliced = memo.slice(axis_indices=axis_indices, **kwargs)
+    sliced = cache.slice(axis_indices=axis_indices, **kwargs)
     return _memo_run_streaming(sliced, _bind_exec_fn(exec_fn, params))
 
 
@@ -580,13 +583,13 @@ def test_run_parallel_reuses_superset_cache_for_subset_axes():
             "strat": ["a", "b"],
             "seed": list(range(20)),
         }
-        memo_subset = ChunkCache.auto_load(
+        memo_subset_manager = ChunkMemo.auto_load(
             root=temp_dir,
-            cache_id=params_to_cache_id(params),
+            params=params,
             axis_values=axis_values_subset,
             allow_superset=True,
-            metadata={"params": params},
         )
+        memo_subset = memo_subset_manager.cache_for_params(params)
 
         items_subset = [
             {

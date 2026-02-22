@@ -178,6 +178,52 @@ def resolve_runner_deps(
     return deps
 
 
+def resolve_cache_for_run(
+    cache: Any,
+    *,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    extend_cache: bool = False,
+    allow_superset: bool = False,
+) -> CacheProtocol:
+    if not hasattr(cache, "cache_for_params"):
+        return cast(CacheProtocol, cache)
+    if params is None:
+        raise ValueError("params is required when using ChunkMemo with runners")
+    axis_values = dict(axis_values_override) if axis_values_override else None
+    axis_values_for_load = None
+    allow_superset_for_load = allow_superset
+    if extend_cache:
+        axis_values_for_load = cache.axis_values
+        allow_superset_for_load = True
+    elif axis_values is not None and allow_superset:
+        axis_values_for_load = axis_values
+    if axis_values_for_load is not None:
+        cache = cache.auto_load(
+            root=cache.root,
+            params=params,
+            axis_values=axis_values_for_load,
+            chunk_spec=cache.chunk_spec,
+            metadata=cache.metadata,
+            collate_fn=cache.collate_fn,
+            chunk_enumerator=cache.chunk_enumerator,
+            chunk_hash_fn=cache.chunk_hash_fn,
+            path_fn=cache.path_fn,
+            version=cache.version,
+            axis_order=cache.axis_order,
+            verbose=cache.verbose,
+            profile=cache.profile,
+            exclusive=cache.exclusive,
+            warn_on_overlap=cache.warn_on_overlap,
+            precompute_chunk_keys=cache.precompute_chunk_keys,
+            allow_superset=allow_superset_for_load,
+        )
+    cache = cache.cache_for_params(params)
+    if extend_cache and axis_values is not None:
+        cache.cache_status(axis_values_override=axis_values, extend_cache=True)
+    return cast(CacheProtocol, cache)
+
+
 def _stream_item_count(output: Any) -> int:
     if isinstance(output, (list, tuple, dict)):
         return len(output)
