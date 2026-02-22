@@ -248,10 +248,12 @@ def _save_chunk_payload(
 
 
 def _require_params(cache_status: CacheStatus) -> dict[str, Any]:
-    params = cache_status.get("params")
-    if not isinstance(params, Mapping):
-        raise ValueError("cache_status must include params")
-    return dict(params)
+    metadata = cache_status.get("metadata")
+    if isinstance(metadata, Mapping):
+        params = metadata.get("params")
+        if isinstance(params, Mapping):
+            return dict(params)
+    return {}
 
 
 def _require_axis_info(

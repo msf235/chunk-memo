@@ -39,32 +39,33 @@ pip install memo-chunk
 ## Quick start
 
 ```python
-from chunk_memo import ChunkCache, run
+from chunk_memo import ChunkCache, ChunkMemo, params_to_cache_id
 
-
-
-
-params = {"alpha": 0.4}
+params = {"alpha": 0.5}
 axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
+cache_id = params_to_cache_id(params)
 
 memo = ChunkCache(
-    cache_root="./memo_cache",
-    cache_chunk_spec={"strat": 1, "s": 3},
+    root="./memo_cache",
+    cache_id=cache_id,
+    metadata={"params": params},
+    chunk_spec={"strat": 1, "s": 3},
     axis_values=axis_values,
-    params=params,
 )
 
-@memo.run_wrap
-def exec_fn(params, strat, s):
+wrapper = ChunkMemo(memo)
+
+@wrapper.run_wrap()
+def exec_fn(alpha, strat, s):
     outputs = []
     for strat_value in strat:
         for s_value in s:
             outputs.append(
-                {"strat": strat_value, "s": s_value, "value": len(strat_value) + s_value}
+                {"alpha": alpha, "strat": strat_value, "s": s_value, "value": len(strat_value) + alpha*s_value}
             )
     return outputs
 
-output, diag = run(memo, exec_fn)
+output, diag = exec_fn(alpha=0.5, strat=["aaa", "bb"], s=[1, 2])
 print(output)
 print(diag)
 ```
@@ -80,19 +81,21 @@ print(diag)
 
 ### ChunkCache
 
-`ChunkCache` owns the cache state and exposes the cache interface, including
-`run_wrap` and `streaming_wrap`.
+`ChunkCache` owns the cache state and exposes the cache interface. Wrap it with
+`ChunkMemo` to get `run_wrap` and `streaming_wrap` decorator helpers.
 
 ```python
 ChunkCache(
     root: str | Path,
+    cache_id: str,
+    metadata: dict[str, Any] | None = None,
     chunk_spec: dict[str, int | dict],
     axis_values: dict[str, Any],
     collate_fn: Callable[[list], Any] | None = None,
-    cache_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
+    chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
     path_fn: Callable[[dict, tuple, str, str], Path | str] | None = None,
-    cache_version: str = "v1",
+    version: str = "v1",
     axis_order: Sequence[str] | None = None,
     verbose: int = 1,
     exclusive: bool = False,
@@ -100,19 +103,23 @@ ChunkCache(
 )
 ```
 
+### ChunkMemo
+
+`ChunkMemo` is a thin wrapper around a `ChunkCache` that provides
+`run_wrap` and `streaming_wrap` decorators.
+
 Notes:
 
 - `chunk_spec`: per-axis chunk sizes, e.g. `{"strat": 1, "s": 3}`.
-- `exec_fn(params, **axes)`: chunk-level function; each axis receives a vector of
-  values for that chunk. Supply it to `run` or use `run_wrap`/`streaming_wrap`.
+- `exec_fn(**axes)`: chunk-level function; each axis receives a vector of
+  values for that chunk. If you need params, use `functools.partial` or the
+  `ChunkMemo` wrappers.
 - `collate_fn` defaults to returning a list of chunk outputs.
 - `axis_values` defines the canonical grid for cache chunking.
-- `exclusive`: if True, error when creating a cache with same `params` and
-  `axis_values` as an existing cache (different `chunk_spec` still
-  conflicts). Also prevents creating subset/superset caches when overlapping
-  data exists.
-- `warn_on_overlap`: if True, warn when caches have same `params` but partially
-  overlapping `axis_values`.
+- `exclusive`: if True, error when creating a cache that conflicts with
+  existing metadata for the same `cache_id`.
+- `warn_on_overlap`: if True, warn when axis values overlap for the same
+  `cache_id`.
 
 ### axis_values: lists and iterables
 
@@ -132,15 +139,18 @@ collapse to a single entry in the internal index map.
 ### run
 
 ```python
-memo.set_params(params)
-output, diagnostics = run(memo, exec_fn)
+import functools
+
+cache_id = params_to_cache_id(params)
+memo.set_identity(cache_id, metadata={"params": params})
+output, diagnostics = run(memo, functools.partial(exec_fn, params))
 
 # Or run a subset
-sliced = memo.slice(params, strat=["a"], s=[1, 2, 3])
-output, diagnostics = run(sliced, exec_fn)
+sliced = memo.slice(strat=["a"], s=[1, 2, 3])
+output, diagnostics = run(sliced, functools.partial(exec_fn, params))
 
-sliced = memo.slice(params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
-output, diagnostics = run(sliced, exec_fn)
+sliced = memo.slice(axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+output, diagnostics = run(sliced, functools.partial(exec_fn, params))
 ```
 
 Selection is handled via `memo.slice(...)` before calling the runners. Pass
@@ -159,14 +169,15 @@ Pass `collate_fn` to override the cache-level `collate_fn` for this run.
 ### run_streaming
 
 ```python
-memo.set_params(params)
+cache_id = params_to_cache_id(params)
+memo.set_identity(cache_id, metadata={"params": params})
 diagnostics = run_streaming(memo, exec_fn)
 
 # Or run a subset via slicing
-sliced = memo.slice(params, strat=["a"], s=[1, 2, 3])
+sliced = memo.slice(strat=["a"], s=[1, 2, 3])
 diagnostics = run_streaming(sliced, exec_fn)
 
-sliced = memo.slice(params, axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+sliced = memo.slice(axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 diagnostics = run_streaming(sliced, exec_fn)
 ```
 
@@ -240,7 +251,7 @@ ranges.
 
 ```python
 status = exec_point.cache_status(
-    params,
+    params={"alpha": 0.4},
     axis_indices={"strat": range(0, 1), "s": slice(0, 3)},
     extra=2,
 )
@@ -261,7 +272,7 @@ caches = ChunkCache.discover_caches(root)
 
 Lists all existing caches in `root`. Returns a list of dictionaries with:
 
-- `cache_hash`: The unique hash of the cache.
+- `cache_id`: The identity string of the cache.
 - `path`: Path to the cache directory.
 - `metadata`: Full metadata dict if available, `None` otherwise.
 
@@ -270,10 +281,10 @@ Lists all existing caches in `root`. Returns a list of dictionaries with:
 ```python
 caches = ChunkCache.find_compatible_caches(
     root,
-    params=params_dict,
+    cache_id=cache_id,
     axis_values=axis_values_dict,
     chunk_spec=chunk_spec_dict,
-    cache_version="v1",
+    version="v1",
     axis_order=None,
     allow_superset=False,
 )
@@ -284,10 +295,7 @@ Find caches compatible with the given criteria. Matching rules:
 - If a criterion is provided, it must match exactly (when `allow_superset=False`).
 - If a criterion is omitted (`None`), it acts as a wildcard.
 - When `allow_superset=True`, finds caches that are supersets of the requested
-  configuration:
-  - All requested axes are present in the cache's axes.
-  - All requested params match either the cache's params or corresponding axis
-    values.
+  axis values.
 
 Returns a list of compatible cache entries (same structure as `discover_caches`).
 
@@ -296,7 +304,7 @@ Returns a list of compatible cache entries (same structure as `discover_caches`)
 ```python
 memo = ChunkCache.load_from_cache(
     root,
-    cache_hash="abc123...",
+    cache_id="abc123...",
     collate_fn=collate_fn,
     verbose=1,
     exclusive=False,
@@ -319,21 +327,22 @@ memo = ChunkCache(
 ```
 
 Create a singleton cache with no axes (empty `axis_values`). Useful for
-memoizing functions that depend only on `params`, not on axis values. Uses
-`chunk_spec={}` and `axis_values={}`.
+memoizing functions that depend only on params metadata, not on axis values.
+Uses `chunk_spec={}` and `axis_values={}`.
 
 #### auto_load (ChunkCache classmethod)
 
 ```python
 memo = ChunkCache.auto_load(
     root,
-    params=params_dict,
+    cache_id=cache_id,
     axis_values=axis_values_dict,
     chunk_spec=chunk_spec_dict,
+    metadata={"params": params_dict},
     collate_fn=collate_fn,
-    cache_chunk_enumerator=cache_chunk_enumerator,
+    chunk_enumerator=chunk_enumerator,
     chunk_hash_fn=chunk_hash_fn,
-    cache_version="v1",
+    version="v1",
     axis_order=axis_order,
     verbose=1,
     profile=False,
@@ -346,12 +355,12 @@ memo = ChunkCache.auto_load(
 Streamlined memoization that finds or creates a cache. Behavior:
 
 - If `axis_values` is provided and `allow_superset=False` (default): finds an
-  exact match (same `params` + `axis_values`), or creates a new cache with
+  exact match (same `cache_id` + `axis_values`), or creates a new cache with
   specified (or default) `chunk_spec`.
 - If `axis_values` is provided and `allow_superset=True`: finds an exact match
   or finds a superset cache that contains all requested data.
-- If `axis_values` is not provided: finds caches with matching `params`. Requires
-  exactly 1 match, or raises `ValueError` (ambiguous).
+- If `axis_values` is not provided: loads the cache with matching `cache_id` if it
+  exists.
 - When creating a new cache without `chunk_spec`, defaults to chunk size 1
   for all axes.
 
@@ -373,7 +382,7 @@ from chunk_memo import auto_load
 
 memo = auto_load(
     root="cache_dir",
-    params=params_dict,
+    cache_id=cache_id,
     axis_values=axis_values_dict,
     chunk_spec=chunk_spec_dict,
     collate_fn=collate_fn,
@@ -384,7 +393,7 @@ memo = auto_load(
 ```
 
 Convenience wrapper for `ChunkCache.auto_load()`. Automatically finds an
-existing cache or creates a new one based on your `params` and `axis_values`.
+ existing cache or creates a new one based on your `cache_id` and `axis_values`.
 
 Use cases:
 
@@ -394,10 +403,7 @@ Use cases:
 - Flexible chunking: `auto_load` handles different `chunk_spec` values for
   the same data.
 - Subset detection: use `allow_superset=True` to find and reuse existing caches
-  that are supersets of your requested data. This allows you to:
-  - Define reduced `axis_values` by moving some axes to `params`.
-  - Find caches with broader axis coverage automatically.
-  - Avoid creating redundant caches for overlapping data.
+  that are supersets of your requested data.
 
 ```python
 import functools
@@ -469,9 +475,9 @@ run_parallel(
 
 ## Caching behavior
 
-- Each chunk file is named by a hash of `(params, chunk_key, cache_version)`.
-- Cache files live under a memo directory hashed from params, axis values, and
-  chunk spec, with a `metadata.json` file for memo-level context.
+- Each chunk file is named by a hash of `(cache_id, chunk_key, version)`.
+- Cache files live under a memo directory named by `cache_id`, with a
+  `metadata.json` file for memo-level context.
 - Cache files include a `spec` payload keyed by item hash, describing per-item
   axis values.
 - Chunk-level timestamps live in `chunks_index.json` under the memo directory.
@@ -498,19 +504,24 @@ You can define caches with broad axis coverage and then find them for more
 specific requests using `allow_superset=True`:
 
 ```python
-from chunk_memo import ChunkCache, run, run_streaming
+import functools
+
+from chunk_memo import ChunkCache, params_to_cache_id, run, run_streaming
 
 
 # Create a broad cache with strat=["a", "b"]
 broad_cache = ChunkCache(
     root="./memo_cache",
+    cache_id=params_to_cache_id({"alpha": 0.4}),
+    metadata={"params": {"alpha": 0.4}},
     chunk_spec={"strat": 1, "s": 3},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
     collate_fn=collate_fn,
 )
 params = {"alpha": 0.4}
-broad_cache.set_params(params)
-output1, diag1 = run(broad_cache, exec_fn)
+cache_id = params_to_cache_id(params)
+broad_cache.set_identity(cache_id, metadata={"params": params})
+output1, diag1 = run(broad_cache, functools.partial(exec_fn, params))
 
 # Executes all 6 points: (a,1), (a,2), (a,3), (b,1), (b,2), (b,3)
 
@@ -520,13 +531,13 @@ from chunk_memo import auto_load
 
 memo_a = auto_load(
     root="./memo_cache",
-    params=params,
+    cache_id=cache_id,
     axis_values={"strat": ["a"]},  # Subset of original
     allow_superset=True,  # Enable superset detection
     collate_fn=collate_fn,
 )
-memo_a.set_params(params)
-output2, diag2 = run(memo_a, exec_fn)
+memo_a.set_identity(cache_id, metadata={"params": params})
+output2, diag2 = run(memo_a, functools.partial(exec_fn, params))
 
 # Only executes the 3 points for strat="a", reuses cached data
 assert diag2.cached_chunks == 1
@@ -535,30 +546,9 @@ assert diag2.executed_chunks == 0
 
 ### Flexible axis/param mapping
 
-You can choose whether to include an axis in `axis_values` or as a fixed
-parameter value, depending on your workflow:
-
-```python
-# Option 1: Include strat as axis (full sweep over strat values)
-memo_full = ChunkCache.auto_load(
-    root="./cache",
-    params={"alpha": 0.4},
-    axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
-    allow_superset=True,
-)
-
-# Option 2: Fix strat as a parameter (single value)
-# Useful when you only need one value or plan to iterate externally
-memo_fixed = ChunkCache.auto_load(
-    root="./cache",
-    params={"alpha": 0.4, "strat": "a"},  # strat as param
-    axis_values={"s": [1, 2, 3]},  # Reduced axes
-    allow_superset=True,
-)
-```
-
-Both approaches work, and `allow_superset=True` will find the appropriate cache
-or create a new one that covers your requested data.
+`cache_id` is derived from your params, so changing params changes the cache
+identity. If you want axis reductions to share a cache, keep params stable and
+use `axis_values` subsets with `allow_superset=True`.
 
 ## Running examples
 
@@ -580,14 +570,18 @@ python examples/basic.py
 not execute runs directly; use `run` / `run_streaming` from `chunk_memo`.
 
 ```python
+import functools
+
 from chunk_memo import ChunkCache, run
 
 
 cache = ChunkCache(
     root="./cache",
+    cache_id=params_to_cache_id(params),
+    metadata={"params": params},
     chunk_spec={"strat": 1, "s": 2},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3, 4]},
 )
-cache.set_params(params)
-output, diag = run(cache, exec_fn)
+cache.set_identity(params_to_cache_id(params), metadata={"params": params})
+output, diag = run(cache, functools.partial(exec_fn, params))
 ```

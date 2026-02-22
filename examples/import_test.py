@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from chunk_memo import ChunkCache, run
+from chunk_memo import ChunkCache, params_to_cache_id, run
 
 
 def exec_fn(params, strat, s):
@@ -23,15 +23,15 @@ def collate_fn(chunks):
 def main():
     output_root = Path("output")
     output_root.mkdir(exist_ok=True)
+    params = {"alpha": 0.4}
     memo = ChunkCache(
         root=output_root / "memo_cache",
+        cache_id=params_to_cache_id(params),
+        metadata={"params": params},
         chunk_spec={"strat": 1, "s": 2},
         axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
         collate_fn=collate_fn,
     )
-
-    params = {"alpha": 0.4}
-    memo.set_params(params)
     output, diag = run(memo, exec_fn)
 
     print("Output:", output)

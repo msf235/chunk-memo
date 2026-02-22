@@ -46,6 +46,15 @@ def format_axis_values(values: Any) -> str:
     return repr(values)
 
 
+def format_cache_id(cache_id: str | None) -> list[str]:
+    lines = ["[ChunkCache] cache_id:"]
+    if not cache_id:
+        lines.append("  (none)")
+        return lines
+    lines.append(f"  {cache_id}")
+    return lines
+
+
 def format_params(params: Mapping[str, Any]) -> list[str]:
     lines = ["[ChunkCache] params:"]
     if not params:
@@ -118,6 +127,7 @@ def chunk_key_size(chunk_key: ChunkKey) -> int:
 
 
 def build_plan_lines(
+    cache_id: str | None,
     params: Mapping[str, Any],
     axis_values: Mapping[str, Any],
     axis_order: Sequence[str],
@@ -125,6 +135,7 @@ def build_plan_lines(
     execute_count: int,
 ) -> list[str]:
     lines: list[str] = []
+    lines.extend(format_cache_id(cache_id))
     lines.extend(format_params(params))
     lines.extend(format_spec(axis_values, axis_order))
     lines.append(f"[ChunkCache] plan: cached={cached_count} execute={execute_count}")

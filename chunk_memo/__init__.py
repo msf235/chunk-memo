@@ -2,6 +2,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .cache import ChunkCache
 from .memo import ChunkMemo
+from .identity import params_to_cache_id
 from .runner_protocol import CacheStatus, RunnerContext
 from .runners import (
     Diagnostics,
@@ -29,4 +30,5 @@ __all__ = [
     "run_streaming",
     "RunnerContext",
     "CacheStatus",
+    "params_to_cache_id",
 ]

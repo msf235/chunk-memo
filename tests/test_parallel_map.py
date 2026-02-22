@@ -1,8 +1,8 @@
+import functools
+import inspect
 import tempfile
 
-import functools
-
-from chunk_memo import ChunkCache, run_parallel
+from chunk_memo import ChunkCache, params_to_cache_id, run_parallel
 from chunk_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs, item_from_index
@@ -26,14 +26,26 @@ def _parallel_kwargs(memo):
 
 
 def _set_params(memo, params):
-    memo.set_params(params)
+    cache_id = params_to_cache_id(params)
+    metadata = dict(memo.metadata)
+    metadata["params"] = params
+    memo.set_identity(cache_id, metadata=metadata)
     memo.write_metadata()
 
 
 def slice_and_run(memo, params, exec_fn, **kwargs):
+    _set_params(memo, params)
     axis_indices = kwargs.pop("axis_indices", None)
-    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
-    return _memo_run(sliced, exec_fn)
+    sliced = memo.slice(axis_indices=axis_indices, **kwargs)
+    return _memo_run(sliced, _bind_exec_fn(exec_fn, params))
+
+
+def _bind_exec_fn(exec_fn, params):
+    signature = inspect.signature(exec_fn)
+    param_names = list(signature.parameters)
+    if param_names and param_names[0] == "params":
+        return functools.partial(exec_fn, params)
+    return exec_fn
 
 
 def test_run_parallel_returns_requested_points():
@@ -42,8 +54,11 @@ def test_run_parallel_returns_requested_points():
     items = [(0, 0), (1, 2), (0, 1), (1, 0)]
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        cache_id = params_to_cache_id(params)
         memo = ChunkCache(
             root=temp_dir,
+            cache_id=cache_id,
+            metadata={"params": params},
             chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )

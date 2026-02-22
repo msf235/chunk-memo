@@ -1,8 +1,9 @@
-import itertools
 import functools
+import inspect
+import itertools
 import tempfile
 
-from chunk_memo import ChunkCache, run_parallel
+from chunk_memo import ChunkCache, params_to_cache_id, run_parallel
 from chunk_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs
@@ -30,26 +31,40 @@ def _parallel_kwargs(memo):
 
 
 def _set_params(memo, params):
-    memo.set_params(params)
+    cache_id = params_to_cache_id(params)
+    metadata = dict(memo.metadata)
+    metadata["params"] = params
+    memo.set_identity(cache_id, metadata=metadata)
     memo.write_metadata()
 
 
 def slice_and_run(memo, params, exec_fn, **kwargs):
+    _set_params(memo, params)
     axis_indices = kwargs.pop("axis_indices", None)
-    sliced = memo.slice(params, axis_indices=axis_indices, **kwargs)
-    return _memo_run(sliced, exec_fn)
+    sliced = memo.slice(axis_indices=axis_indices, **kwargs)
+    return _memo_run(sliced, _bind_exec_fn(exec_fn, params))
+
+
+def _bind_exec_fn(exec_fn, params):
+    signature = inspect.signature(exec_fn)
+    param_names = list(signature.parameters)
+    if param_names and param_names[0] == "params":
+        return functools.partial(exec_fn, params)
+    return exec_fn
 
 
 def test_run_parallel_caches_missing_points():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        params = {"alpha": 0.4}
         memo = ChunkCache(
             root=temp_dir,
+            cache_id=params_to_cache_id(params),
+            metadata={"params": params},
             chunk_spec={"strat": 1, "s": 2},
             collate_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )
-        params = {"alpha": 0.4}
         _set_params(memo, params)
         items = [
             {"strat": "a", "s": 1},
@@ -73,13 +88,15 @@ def test_run_parallel_caches_missing_points():
 def test_run_parallel_reuses_partial_chunks():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
+        params = {"alpha": 0.4}
         memo = ChunkCache(
             root=temp_dir,
+            cache_id=params_to_cache_id(params),
+            metadata={"params": params},
             chunk_spec={"strat": 1, "s": 2},
             collate_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )
-        params = {"alpha": 0.4}
         _set_params(memo, params)
         slice_and_run(memo, params, exec_fn_grid)
 

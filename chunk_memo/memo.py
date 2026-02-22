@@ -7,6 +7,7 @@ import inspect
 from typing import Any, Callable, Mapping, Tuple, cast
 
 from .cache import ChunkCache
+from .identity import params_to_cache_id
 from .runners import Diagnostics, run, run_streaming
 
 
@@ -93,12 +94,16 @@ class ChunkMemo:
                     params_provided=params_provided,
                 )
 
-                exec_fn = functools.partial(func, **exec_extras)
-                sliced = self.cache.slice(
-                    merged_params,
-                    axis_indices=axis_indices,
-                    **axis_inputs,
-                )
+                cache_id = params_to_cache_id(merged_params)
+                metadata = dict(self.cache.metadata)
+                metadata["params"] = merged_params
+                self.cache.set_identity(cache_id, metadata=metadata)
+
+                exec_kwargs = dict(exec_extras)
+                if params_arg in signature.parameters:
+                    exec_kwargs[params_arg] = merged_params
+                exec_fn = functools.partial(func, **exec_kwargs)
+                sliced = self.cache.slice(axis_indices=axis_indices, **axis_inputs)
                 if streaming:
                     return run_streaming(sliced, exec_fn)
                 return run(sliced, exec_fn)
@@ -112,13 +117,20 @@ class ChunkMemo:
                 if params is not None and not isinstance(params, dict):
                     raise ValueError(f"'{params_arg}' must be a dict")
                 exec_extras, axis_inputs = self._split_bound_args(axes, params_arg)
-                base_params = params if params is not None else self.cache.params
+                base_params = (
+                    params
+                    if params is not None
+                    else self.cache.metadata.get("params", {})
+                )
                 merged_params = self._merge_params(
                     base_params,
                     exec_extras,
                     params_provided=params is not None,
                 )
-                self.cache.params = merged_params
+                cache_id = params_to_cache_id(merged_params)
+                metadata = dict(self.cache.metadata)
+                metadata["params"] = merged_params
+                self.cache.set_identity(cache_id, metadata=metadata)
                 return self.cache.cache_status(axis_indices=axis_indices, **axis_inputs)
 
             setattr(wrapper, "cache_status", cache_status)

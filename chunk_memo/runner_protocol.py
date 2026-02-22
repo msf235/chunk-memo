@@ -12,7 +12,8 @@ AxisChunkMaps = dict[str, dict[Any, int]]
 class CacheStatus(TypedDict):
     """Cache status payload consumed by runners."""
 
-    params: dict[str, Any]
+    cache_id: str
+    metadata: dict[str, Any]
     axis_values: Mapping[str, Any]
     axis_order: Tuple[str, ...]
     axis_chunk_maps: AxisChunkMaps

@@ -157,6 +157,7 @@ def _prepare_parallel_setup(
         if isinstance(axis_values, Mapping):
             axis_order, _ = _require_axis_info(cache_status)
             lines = build_plan_lines(
+                cache_status.get("cache_id"),
                 params_dict,
                 axis_values,
                 axis_order,
@@ -455,9 +456,10 @@ def _build_item_axis_extractor(
 
     signature = inspect.signature(exec_fn)
     param_names = list(signature.parameters)
-    if not param_names or param_names[0] != "params":
-        raise ValueError("exec_fn must accept 'params' as the first argument")
-    axis_names = [name for name in param_names[1:] if name in axis_order]
+    if param_names and param_names[0] == "params":
+        axis_names = [name for name in param_names[1:] if name in axis_order]
+    else:
+        axis_names = [name for name in param_names if name in axis_order]
     if not axis_names:
         raise ValueError(
             "Positional items require exec_fn to list axis arguments in its signature"
