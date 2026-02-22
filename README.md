@@ -1,12 +1,10 @@
 # chunk-memo
 
-chunk-memo provides chunked memoization for grid-style experiments. You define a
-parameter grid (axis values), the library partitions it into reusable memo
-chunks for disk efficiency, and cached chunk outputs are reused on subsequent
-runs, including partial reuse for smaller parameter selections. Memoization and
-parallel execution are independent: memoization lives in `ChunkCache`, while
-runner helpers (serial and parallel) consume cache metadata and execute missing
-work.
+chunk-memo provides chunked memoization for grid-style parameter sweeps. You define a
+parameter grid (axis values) and a partitioning of this grid into chunks for disk efficiency.
+Cached chunk outputs are reused on subsequent runs (memoization).
+Parallel runners are provided that allow you to pass your own map function (such as
+ProcessPoolExecutor.map).
 
 ## What problem does it solve?
 
@@ -36,11 +34,7 @@ axis values change, only the new chunks are computed.
 
 ## Installation
 
-Local install from the repo:
-
-```bash
-pip install -e .
-```
+pip install memo-chunk
 
 ## Quick start
 
