@@ -90,7 +90,7 @@ class ChunkCache:
                 experimental and not yet thoroughly tested.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order (defaults to lexicographic).
-            axis_values: Canonical split spec for the cache. Can be:
+            axis_values: Canonical axis values for the cache. Can be:
                 - dict of iterables (lists, tuples): converted to list on init
                 - dict of callables: For memory-efficient lazy loading.
                   Supports two patterns:
@@ -175,7 +175,7 @@ class ChunkCache:
         """Return cached vs missing chunk info for a subset of axes.
 
         axis_indices selects axes by index (int, slice, range, or list/tuple of
-        those), based on the canonical split spec order. Chunk indices are
+        those), based on the canonical axis order. Chunk indices are
         returned as lists of ints.
         axis_values_override provides explicit axis values for axis_indices
         expansion; when extend_cache=True those values are appended in-place.
@@ -735,7 +735,7 @@ class ChunkCache:
         *,
         axis_values_override: Mapping[str, Sequence[Any]] | None = None,
     ) -> dict[str, list[Any]]:
-        """Normalize axis_indices into axis values using canonical split order."""
+        """Normalize axis_indices into axis values using canonical axis order."""
         if self._axis_values is None:
             raise ValueError("axis_values must be set before running memoized function")
         axis_values: dict[str, list[Any]] = {}

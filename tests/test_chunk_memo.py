@@ -99,7 +99,7 @@ def test_basic_cache_reuse():
         assert diag2.executed_chunks == 0
 
 
-def test_incremental_split_extension():
+def test_incremental_axis_values_extension():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}

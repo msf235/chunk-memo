@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chunk-memo"
-version = "0.1.0"
+version = "0.1.1"
 description = "Memoization with chunked caching and parallelization."
-readme = "README.md"
+readme = "README_PYPI.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
@@ -39,7 +39,7 @@ packages = ["chunk_memo"]
 [tool.hatch.build.targets.sdist]
 include = [
     "chunk_memo/**",
-    "README.md",
+    "README_PYPI.md",
     "LICENSE",
     "pyproject.toml",
     "CHANGELOG.md",
