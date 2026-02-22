@@ -125,6 +125,18 @@ def run_memo(root, params=None, *, merge=True, chunk_spec=None, axis_values=None
     )
 
 
+def run_memo_wrapper(root, *, merge=True, chunk_spec=None, axis_values=None):
+    axis_values = axis_values or {}
+    return ChunkMemo(
+        root=root,
+        cache_id=params_to_cache_id({}),
+        metadata={},
+        chunk_spec=chunk_spec or {"strat": 1, "s": 3},
+        axis_values=axis_values,
+        collate_fn=collate_fn if merge else None,
+    )
+
+
 def test_basic_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
@@ -192,8 +204,7 @@ def test_collate_fn_optional_returns_nested():
 def test_run_wrap_positional_params():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
-        memo = run_memo(temp_dir, axis_values=axis_values)
-        wrapper = ChunkMemo(memo)
+        wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
         exec_point = wrapper.run_wrap()(exec_point_extra_default)
         params = {"alpha": 0.4}
@@ -205,8 +216,7 @@ def test_run_wrap_positional_params():
 def test_run_wrap_executes_with_axis_values():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
-        memo = run_memo(temp_dir, axis_values=axis_values)
-        wrapper = ChunkMemo(memo)
+        wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
         exec_point = wrapper.run_wrap()(exec_fn_grid)
         params = {"alpha": 0.4}
@@ -218,8 +228,7 @@ def test_run_wrap_executes_with_axis_values():
 def test_run_wrap_infers_params_from_args():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
-        memo = run_memo(temp_dir, axis_values=axis_values)
-        wrapper = ChunkMemo(memo)
+        wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
         exec_point = wrapper.run_wrap()(exec_point_inferred)
         output, diag = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3], extra=2)
@@ -234,8 +243,7 @@ def test_run_wrap_infers_params_from_args():
 def test_run_wrap_param_merge():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
-        memo = run_memo(temp_dir, axis_values=axis_values)
-        wrapper = ChunkMemo(memo)
+        wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
         exec_point = wrapper.run_wrap()(exec_point_extra_param)
         params = {"alpha": 0.4}
@@ -264,8 +272,7 @@ def test_run_wrap_param_merge():
 def test_run_wrap_duplicate_params_arg():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
-        memo = run_memo(temp_dir, axis_values=axis_values)
-        wrapper = ChunkMemo(memo)
+        wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
         exec_point = wrapper.run_wrap()(exec_fn_grid)
         params = {"alpha": 0.4}

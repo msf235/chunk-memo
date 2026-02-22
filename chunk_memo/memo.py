@@ -11,9 +11,8 @@ from .identity import params_to_cache_id
 from .runners import Diagnostics, run, run_streaming
 
 
-class ChunkMemo:
-    def __init__(self, cache: ChunkCache) -> None:
-        self.cache = cache
+class ChunkMemo(ChunkCache):
+    """ChunkCache with decorator helpers."""
 
     def run_wrap(
         self, *, params_arg: str = "params"
@@ -42,7 +41,7 @@ class ChunkMemo:
         bound_args: Mapping[str, Any],
         params_arg: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        axis_names = set(self.cache._axis_values or {})
+        axis_names = set(self._axis_values or {})
         extras = {k: v for k, v in bound_args.items() if k != params_arg}
         axis_inputs = {k: v for k, v in extras.items() if k in axis_names}
         exec_extras = {k: v for k, v in extras.items() if k not in axis_names}
@@ -95,15 +94,15 @@ class ChunkMemo:
                 )
 
                 cache_id = params_to_cache_id(merged_params)
-                metadata = dict(self.cache.metadata)
+                metadata = dict(self.metadata)
                 metadata["params"] = merged_params
-                self.cache.set_identity(cache_id, metadata=metadata)
+                self.set_identity(cache_id, metadata=metadata)
 
                 exec_kwargs = dict(exec_extras)
                 if params_arg in signature.parameters:
                     exec_kwargs[params_arg] = merged_params
                 exec_fn = functools.partial(func, **exec_kwargs)
-                sliced = self.cache.slice(axis_indices=axis_indices, **axis_inputs)
+                sliced = self.slice(axis_indices=axis_indices, **axis_inputs)
                 if streaming:
                     return run_streaming(sliced, exec_fn)
                 return run(sliced, exec_fn)
@@ -118,9 +117,7 @@ class ChunkMemo:
                     raise ValueError(f"'{params_arg}' must be a dict")
                 exec_extras, axis_inputs = self._split_bound_args(axes, params_arg)
                 base_params = (
-                    params
-                    if params is not None
-                    else self.cache.metadata.get("params", {})
+                    params if params is not None else self.metadata.get("params", {})
                 )
                 merged_params = self._merge_params(
                     base_params,
@@ -128,10 +125,10 @@ class ChunkMemo:
                     params_provided=params is not None,
                 )
                 cache_id = params_to_cache_id(merged_params)
-                metadata = dict(self.cache.metadata)
+                metadata = dict(self.metadata)
                 metadata["params"] = merged_params
-                self.cache.set_identity(cache_id, metadata=metadata)
-                return self.cache.cache_status(axis_indices=axis_indices, **axis_inputs)
+                self.set_identity(cache_id, metadata=metadata)
+                return self.cache_status(axis_indices=axis_indices, **axis_inputs)
 
             setattr(wrapper, "cache_status", cache_status)
             return wrapper

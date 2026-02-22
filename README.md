@@ -39,21 +39,19 @@ pip install memo-chunk
 ## Quick start
 
 ```python
-from chunk_memo import ChunkCache, ChunkMemo, params_to_cache_id
+from chunk_memo import ChunkMemo, params_to_cache_id
 
 params = {"alpha": 0.5}
 axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
 cache_id = params_to_cache_id(params)
 
-memo = ChunkCache(
+wrapper = ChunkMemo(
     root="./memo_cache",
     cache_id=cache_id,
     metadata={"params": params},
     chunk_spec={"strat": 1, "s": 3},
     axis_values=axis_values,
 )
-
-wrapper = ChunkMemo(memo)
 
 @wrapper.run_wrap()
 def exec_fn(alpha, strat, s):
@@ -105,8 +103,8 @@ ChunkCache(
 
 ### ChunkMemo
 
-`ChunkMemo` is a thin wrapper around a `ChunkCache` that provides
-`run_wrap` and `streaming_wrap` decorators.
+`ChunkMemo` subclasses `ChunkCache` and provides `run_wrap` and
+`streaming_wrap` decorators.
 
 Notes:
 
@@ -201,7 +199,15 @@ diagnostics = run_chunks_streaming(chunk_keys, exec_fn, cache=memo)
 ### run_wrap (memoized wrapper)
 
 ```python
-wrapper = ChunkMemo(memo)
+from chunk_memo import ChunkMemo, params_to_cache_id
+
+wrapper = ChunkMemo(
+    root="./memo_cache",
+    cache_id=params_to_cache_id({"alpha": 0.4}),
+    metadata={"params": {"alpha": 0.4}},
+    chunk_spec={"strat": 1, "s": 3},
+    axis_values={"strat": ["a"], "s": [1, 2, 3]},
+)
 
 
 @wrapper.run_wrap()
@@ -230,7 +236,15 @@ output, diag = exec_point(
 ### streaming_wrap (memoized streaming wrapper)
 
 ```python
-wrapper = ChunkMemo(memo)
+from chunk_memo import ChunkMemo, params_to_cache_id
+
+wrapper = ChunkMemo(
+    root="./memo_cache",
+    cache_id=params_to_cache_id({"alpha": 0.4}),
+    metadata={"params": {"alpha": 0.4}},
+    chunk_spec={"strat": 1, "s": 3},
+    axis_values={"strat": ["a"], "s": [1, 2, 3]},
+)
 
 
 @wrapper.streaming_wrap()

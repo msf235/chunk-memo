@@ -1,7 +1,7 @@
 import functools
 from pathlib import Path
 
-from chunk_memo import ChunkCache, ChunkMemo, params_to_cache_id, run
+from chunk_memo import ChunkMemo, params_to_cache_id, run
 
 
 def exec_fn(params, strat, s):
@@ -37,7 +37,7 @@ def main():
     params = {"alpha": 0.4}
     axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
-    memo = ChunkCache(
+    memo = ChunkMemo(
         root=output_root / "memo_run_cache",
         cache_id=params_to_cache_id(params),
         metadata={"params": params},
@@ -50,13 +50,12 @@ def main():
     print("Output:", output)
     print("Diagnostics:", diag)
 
-    wrapper = ChunkMemo(memo)
-    memoized_exec = wrapper.run_wrap()(exec_fn)
+    memoized_exec = memo.run_wrap()(exec_fn)
     wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3, 4])
     print("Wrapped output:", wrapped_output)
     print("Wrapped diagnostics:", wrapped_diag)
 
-    @wrapper.run_wrap()
+    @memo.run_wrap()
     def exec_fn_2(alpha, strat, s):
         outputs = []
         for strat_value in strat:
