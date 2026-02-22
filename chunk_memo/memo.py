@@ -4,15 +4,86 @@ from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable, Mapping, Tuple, cast
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence, Tuple
 
-from .cache import ChunkCache
+from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
 from .identity import params_to_cache_id
 from .runners import Diagnostics, run, run_streaming
 
 
-class ChunkMemo(ChunkCache):
-    """ChunkCache with decorator helpers."""
+class ChunkMemo:
+    """Chunk cache manager with decorator helpers."""
+
+    def __init__(
+        self,
+        root: str | Path | None,
+        chunk_spec: dict[str, Any] | None,
+        axis_values: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+        collate_fn: CollateFn | None = None,
+        chunk_enumerator: MemoChunkEnumerator | None = None,
+        chunk_hash_fn: Callable[
+            [str, Tuple[Tuple[str, Tuple[Any, ...]], ...], str], str
+        ]
+        | None = None,
+        path_fn: CachePathFn | None = None,
+        version: str = "v1",
+        axis_order: Sequence[str] | None = None,
+        verbose: int = 1,
+        profile: bool = False,
+        exclusive: bool = False,
+        warn_on_overlap: bool = False,
+        precompute_chunk_keys: bool = False,
+    ) -> None:
+        self.root = root
+        self.chunk_spec = chunk_spec
+        self.axis_values = axis_values
+        self.metadata = metadata or {}
+        self.collate_fn = collate_fn
+        self.chunk_enumerator = chunk_enumerator
+        self.chunk_hash_fn = chunk_hash_fn
+        self.path_fn = path_fn
+        self.version = version
+        self.axis_order = axis_order
+        self.verbose = verbose
+        self.profile = profile
+        self.exclusive = exclusive
+        self.warn_on_overlap = warn_on_overlap
+        self.precompute_chunk_keys = precompute_chunk_keys
+        self._caches: dict[str, ChunkCache] = {}
+
+    def cache_for_params(self, params: dict[str, Any]) -> ChunkCache:
+        if not isinstance(params, dict):
+            raise ValueError("'params' must be a dict")
+        cache_id = params_to_cache_id(params)
+        cache = self._caches.get(cache_id)
+        merged_metadata = dict(self.metadata)
+        merged_metadata["params"] = params
+        if cache is None:
+            cache = ChunkCache(
+                root=self.root,
+                cache_id=cache_id,
+                metadata=merged_metadata,
+                chunk_spec=self.chunk_spec,
+                axis_values=self.axis_values,
+                collate_fn=self.collate_fn,
+                chunk_enumerator=self.chunk_enumerator,
+                chunk_hash_fn=self.chunk_hash_fn,
+                path_fn=self.path_fn,
+                version=self.version,
+                axis_order=self.axis_order,
+                verbose=self.verbose,
+                profile=self.profile,
+                exclusive=self.exclusive,
+                warn_on_overlap=self.warn_on_overlap,
+                precompute_chunk_keys=self.precompute_chunk_keys,
+            )
+            self._caches[cache_id] = cache
+        elif cache.metadata != merged_metadata:
+            cache.set_identity(cache_id, metadata=merged_metadata)
+        return cache
 
     def cache(
         self, *, params_arg: str = "params"
@@ -41,7 +112,7 @@ class ChunkMemo(ChunkCache):
         bound_args: Mapping[str, Any],
         params_arg: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        axis_names = set(self._axis_values or {})
+        axis_names = set(self.axis_values or {})
         extras = {k: v for k, v in bound_args.items() if k != params_arg}
         axis_inputs = {k: v for k, v in extras.items() if k in axis_names}
         exec_extras = {k: v for k, v in extras.items() if k not in axis_names}
@@ -86,23 +157,22 @@ class ChunkMemo(ChunkCache):
                 exec_extras, axis_inputs = self._split_bound_args(
                     bound.arguments, params_arg
                 )
-                base_params: dict[str, Any] | None = params if params_provided else {}
+                base_params: dict[str, Any] | None = (
+                    params if params_provided else self.metadata.get("params", {})
+                )
                 merged_params = self._merge_params(
                     base_params,
                     exec_extras,
                     params_provided=params_provided,
                 )
 
-                cache_id = params_to_cache_id(merged_params)
-                metadata = dict(self.metadata)
-                metadata["params"] = merged_params
-                self.set_identity(cache_id, metadata=metadata)
+                cache = self.cache_for_params(merged_params)
 
                 exec_kwargs = dict(exec_extras)
                 if params_arg in signature.parameters:
                     exec_kwargs[params_arg] = merged_params
                 exec_fn = functools.partial(func, **exec_kwargs)
-                sliced = self.slice(axis_indices=axis_indices, **axis_inputs)
+                sliced = cache.slice(axis_indices=axis_indices, **axis_inputs)
                 if streaming:
                     return run_streaming(sliced, exec_fn)
                 return run(sliced, exec_fn)
@@ -124,11 +194,8 @@ class ChunkMemo(ChunkCache):
                     exec_extras,
                     params_provided=params is not None,
                 )
-                cache_id = params_to_cache_id(merged_params)
-                metadata = dict(self.metadata)
-                metadata["params"] = merged_params
-                self.set_identity(cache_id, metadata=metadata)
-                return self.cache_status(axis_indices=axis_indices, **axis_inputs)
+                cache = self.cache_for_params(merged_params)
+                return cache.cache_status(axis_indices=axis_indices, **axis_inputs)
 
             setattr(wrapper, "cache_status", cache_status)
             return wrapper

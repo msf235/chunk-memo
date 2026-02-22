@@ -39,22 +39,18 @@ pip install memo-chunk
 ## Quick start
 
 ```python
-from chunk_memo import ChunkMemo, params_to_cache_id
+from chunk_memo import ChunkMemo
 
-params = {"alpha": 0.5}
 axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
-cache_id = params_to_cache_id(params)
 
-wrapper = ChunkMemo(
+memo = ChunkMemo(
     root="./memo_cache",
-    cache_id=cache_id,
-    metadata={"params": params},
     chunk_spec={"strat": 1, "s": 3},
     axis_values=axis_values,
 )
 
-@wrapper.cache()
-def exec_fn(alpha, strat, s):
+@memo.cache()
+def foo(alpha, strat, s):
     outputs = []
     for strat_value in strat:
         for s_value in s:
@@ -63,7 +59,7 @@ def exec_fn(alpha, strat, s):
             )
     return outputs
 
-output, diag = exec_fn(alpha=0.5, strat=["aaa", "bb"], s=[1, 2])
+output, diag = foo(alpha=0.5, strat=["aaa", "bb"], s=[1, 2])
 print(output)
 print(diag)
 ```
@@ -79,8 +75,8 @@ print(diag)
 
 ### ChunkCache
 
-`ChunkCache` owns the cache state and exposes the cache interface. Wrap it with
-`ChunkMemo` to get `run_wrap` and `streaming_wrap` decorator helpers.
+`ChunkCache` owns the cache state and exposes the cache interface.
+`ChunkMemo` manages one or more `ChunkCache` instances keyed by memoization params.
 
 ```python
 ChunkCache(
@@ -103,8 +99,9 @@ ChunkCache(
 
 ### ChunkMemo
 
-`ChunkMemo` subclasses `ChunkCache` and provides `run_wrap` and
-`streaming_wrap` decorators.
+`ChunkMemo` is a cache manager that provides `cache` and `stream_cache`
+decorators plus access to per-params caches.
+Use `cache_for_params(params)` to retrieve a `ChunkCache` for low-level access.
 
 Notes:
 
@@ -139,9 +136,8 @@ collapse to a single entry in the internal index map.
 ```python
 import functools
 
-cache_id = params_to_cache_id(params)
-memo.set_identity(cache_id, metadata={"params": params})
-output, diagnostics = run(memo, functools.partial(exec_fn, params))
+cache = memo.cache_for_params(params)
+output, diagnostics = run(cache, functools.partial(exec_fn, params))
 
 # Or run a subset
 sliced = memo.slice(strat=["a"], s=[1, 2, 3])
@@ -167,15 +163,14 @@ Pass `collate_fn` to override the cache-level `collate_fn` for this run.
 ### run_streaming
 
 ```python
-cache_id = params_to_cache_id(params)
-memo.set_identity(cache_id, metadata={"params": params})
-diagnostics = run_streaming(memo, exec_fn)
+cache = memo.cache_for_params(params)
+diagnostics = run_streaming(cache, exec_fn)
 
 # Or run a subset via slicing
-sliced = memo.slice(strat=["a"], s=[1, 2, 3])
+sliced = cache.slice(strat=["a"], s=[1, 2, 3])
 diagnostics = run_streaming(sliced, exec_fn)
 
-sliced = memo.slice(axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
+sliced = cache.slice(axis_indices={"strat": range(0, 1), "s": slice(0, 3)})
 diagnostics = run_streaming(sliced, exec_fn)
 ```
 
@@ -190,27 +185,25 @@ first if needed). You can pass `collate_fn` to override the cache-level
 `collate_fn` for the duration of the call.
 
 ```python
-chunk_keys = memo.resolved_chunk_keys()
-output, diagnostics = run_chunks(chunk_keys, exec_fn, cache=memo)
+chunk_keys = cache.resolved_chunk_keys()
+output, diagnostics = run_chunks(chunk_keys, exec_fn, cache=cache)
 
-diagnostics = run_chunks_streaming(chunk_keys, exec_fn, cache=memo)
+diagnostics = run_chunks_streaming(chunk_keys, exec_fn, cache=cache)
 ```
 
-### run_wrap (memoized wrapper)
+### cache (memoized wrapper)
 
 ```python
-from chunk_memo import ChunkMemo, params_to_cache_id
+from chunk_memo import ChunkMemo
 
 wrapper = ChunkMemo(
     root="./memo_cache",
-    cache_id=params_to_cache_id({"alpha": 0.4}),
-    metadata={"params": {"alpha": 0.4}},
     chunk_spec={"strat": 1, "s": 3},
     axis_values={"strat": ["a"], "s": [1, 2, 3]},
 )
 
 
-@wrapper.run_wrap()
+@wrapper.cache()
 def exec_point(alpha, strat, s, extra=1):
     ...
 
@@ -233,21 +226,19 @@ output, diag = exec_point(
 - Non-axis keyword arguments are merged into memoization params and also passed
   to the exec function.
 
-### streaming_wrap (memoized streaming wrapper)
+### stream_cache (memoized streaming wrapper)
 
 ```python
-from chunk_memo import ChunkMemo, params_to_cache_id
+from chunk_memo import ChunkMemo
 
 wrapper = ChunkMemo(
     root="./memo_cache",
-    cache_id=params_to_cache_id({"alpha": 0.4}),
-    metadata={"params": {"alpha": 0.4}},
     chunk_spec={"strat": 1, "s": 3},
     axis_values={"strat": ["a"], "s": [1, 2, 3]},
 )
 
 
-@wrapper.streaming_wrap()
+@wrapper.stream_cache()
 def exec_point(alpha, strat, s):
     ...
 

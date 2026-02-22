@@ -129,8 +129,6 @@ def run_memo_wrapper(root, *, merge=True, chunk_spec=None, axis_values=None):
     axis_values = axis_values or {}
     return ChunkMemo(
         root=root,
-        cache_id=params_to_cache_id({}),
-        metadata={},
         chunk_spec=chunk_spec or {"strat": 1, "s": 3},
         axis_values=axis_values,
         collate_fn=collate_fn if merge else None,

@@ -1,7 +1,7 @@
 import functools
 from pathlib import Path
 
-from chunk_memo import ChunkMemo, params_to_cache_id, run
+from chunk_memo import ChunkMemo, run
 
 
 def exec_fn(params, strat, s):
@@ -39,14 +39,13 @@ def main():
 
     memo = ChunkMemo(
         root=output_root / "memo_run_cache",
-        cache_id=params_to_cache_id(params),
-        metadata={"params": params},
         chunk_spec={"strat": 1, "s": 3},
         axis_values=axis_values,
         collate_fn=collate_fn,
         verbose=1,
     )
-    output, diag = run(memo, functools.partial(exec_fn, params))
+    cache = memo.cache_for_params(params)
+    output, diag = run(cache, functools.partial(exec_fn, params))
     print("Output:", output)
     print("Diagnostics:", diag)
 
