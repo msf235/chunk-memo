@@ -20,10 +20,10 @@ def exec_fn(params, s):
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):
     # breakpoint()
     axis_values = {"s": list(range(n_points))}
-    cache_root = root / f"exec_{exec_chunk_size}" / scenario
+    root = root / f"exec_{exec_chunk_size}" / scenario
     memo = ChunkCache(
-        cache_root=str(cache_root),
-        cache_chunk_spec={"s": 100},
+        root=str(root),
+        chunk_spec={"s": 100},
         axis_values=axis_values,
         verbose=0,
     )

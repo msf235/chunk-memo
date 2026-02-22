@@ -43,8 +43,8 @@ def test_run_parallel_returns_requested_points():
 
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
         )
         _set_params(memo, params)

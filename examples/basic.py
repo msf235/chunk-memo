@@ -37,8 +37,8 @@ def main():
     axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
 
     memo = ChunkCache(
-        cache_root=output_root / "memo_run_cache",
-        cache_chunk_spec={"strat": 1, "s": 3},
+        root=output_root / "memo_run_cache",
+        chunk_spec={"strat": 1, "s": 3},
         axis_values=axis_values,
         collate_fn=collate_fn,
         verbose=1,

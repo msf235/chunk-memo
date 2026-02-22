@@ -49,7 +49,7 @@ specify it with `Callable`.
 
 ### Naming - Functions/variables: `snake_case`. - Classes: `PascalCase`.
 - Constants: `UPPER_SNAKE_CASE`. - Use descriptive names (e.g.,
-`cache_chunk_spec`, `exec_chunk_size`).
+`chunk_spec`, `exec_chunk_size`).
 
 ### Public APIs - The public API is exported from `chunk_memo/__init__.py`. -
 Keep backwards compatibility in public names and signatures. - Update README

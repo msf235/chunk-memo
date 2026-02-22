@@ -44,8 +44,8 @@ def test_run_parallel_caches_missing_points():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             collate_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )
@@ -74,8 +74,8 @@ def test_run_parallel_reuses_partial_chunks():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             collate_fn=lambda chunks: list(itertools.chain.from_iterable(chunks)),
             axis_values=axis_values,
         )

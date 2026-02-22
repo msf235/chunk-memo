@@ -69,8 +69,8 @@ params = {"alpha": 0.4}
 axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
 
 memo = ChunkCache(
-    cache_root="./memo_cache",
-    cache_chunk_spec={"strat": 1, "s": 3},
+    root="./memo_cache",
+    chunk_spec={"strat": 1, "s": 3},
     axis_values=axis_values,
     collate_fn=collate_fn,
 )
@@ -99,8 +99,8 @@ print(diag)
 
 ```python
 ChunkCache(
-    cache_root: str | Path,
-    cache_chunk_spec: dict[str, int | dict],
+    root: str | Path,
+    chunk_spec: dict[str, int | dict],
     axis_values: dict[str, Any],
     collate_fn: Callable[[list], Any] | None = None,
     cache_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
@@ -116,7 +116,7 @@ ChunkCache(
 
 Notes:
 
-- `cache_chunk_spec`: per-axis chunk sizes, e.g. `{"strat": 1, "s": 3}`.
+- `chunk_spec`: per-axis chunk sizes, e.g. `{"strat": 1, "s": 3}`.
 - `exec_fn(params, **axes)`: chunk-level function; each axis receives a vector of
   values for that chunk. Supply it to `run` or use `run_wrap`/`streaming_wrap`.
 - `collate_fn` defaults to returning a list of chunk outputs.
@@ -125,7 +125,7 @@ Notes:
   are resolved under a memo-specific cache directory. This hook is experimental
   and not yet thoroughly tested.
 - `exclusive`: if True, error when creating a cache with same `params` and
-  `axis_values` as an existing cache (different `cache_chunk_spec` still
+  `axis_values` as an existing cache (different `chunk_spec` still
   conflicts). Also prevents creating subset/superset caches when overlapping
   data exists.
 - `warn_on_overlap`: if True, warn when caches have same `params` but partially
@@ -271,10 +271,10 @@ status["missing_chunk_indices"]
 #### discover_caches
 
 ```python
-caches = ChunkCache.discover_caches(cache_root)
+caches = ChunkCache.discover_caches(root)
 ```
 
-Lists all existing caches in `cache_root`. Returns a list of dictionaries with:
+Lists all existing caches in `root`. Returns a list of dictionaries with:
 
 - `cache_hash`: The unique hash of the cache.
 - `path`: Path to the cache directory.
@@ -284,10 +284,10 @@ Lists all existing caches in `cache_root`. Returns a list of dictionaries with:
 
 ```python
 caches = ChunkCache.find_compatible_caches(
-    cache_root,
+    root,
     params=params_dict,
     axis_values=axis_values_dict,
-    cache_chunk_spec=chunk_spec_dict,
+    chunk_spec=chunk_spec_dict,
     cache_version="v1",
     axis_order=None,
     allow_superset=False,
@@ -310,7 +310,7 @@ Returns a list of compatible cache entries (same structure as `discover_caches`)
 
 ```python
 memo = ChunkCache.load_from_cache(
-    cache_root,
+    root,
     cache_hash="abc123...",
     collate_fn=collate_fn,
     verbose=1,
@@ -327,24 +327,24 @@ invalid.
 
 ```python
 memo = ChunkCache(
-    cache_root,
-    cache_chunk_spec={},
+    root,
+    chunk_spec={},
     axis_values={},
 )
 ```
 
 Create a singleton cache with no axes (empty `axis_values`). Useful for
 memoizing functions that depend only on `params`, not on axis values. Uses
-`cache_chunk_spec={}` and `axis_values={}`.
+`chunk_spec={}` and `axis_values={}`.
 
 #### auto_load (ChunkCache classmethod)
 
 ```python
 memo = ChunkCache.auto_load(
-    cache_root,
+    root,
     params=params_dict,
     axis_values=axis_values_dict,
-    cache_chunk_spec=chunk_spec_dict,
+    chunk_spec=chunk_spec_dict,
     collate_fn=collate_fn,
     cache_chunk_enumerator=cache_chunk_enumerator,
     chunk_hash_fn=chunk_hash_fn,
@@ -363,12 +363,12 @@ Streamlined memoization that finds or creates a cache. Behavior:
 
 - If `axis_values` is provided and `allow_superset=False` (default): finds an
   exact match (same `params` + `axis_values`), or creates a new cache with
-  specified (or default) `cache_chunk_spec`.
+  specified (or default) `chunk_spec`.
 - If `axis_values` is provided and `allow_superset=True`: finds an exact match
   or finds a superset cache that contains all requested data.
 - If `axis_values` is not provided: finds caches with matching `params`. Requires
   exactly 1 match, or raises `ValueError` (ambiguous).
-- When creating a new cache without `cache_chunk_spec`, defaults to chunk size 1
+- When creating a new cache without `chunk_spec`, defaults to chunk size 1
   for all axes.
 
 ## Parallel runners
@@ -388,10 +388,10 @@ from chunk_memo import auto_load
 
 
 memo = auto_load(
-    cache_root="cache_dir",
+    root="cache_dir",
     params=params_dict,
     axis_values=axis_values_dict,
-    cache_chunk_spec=chunk_spec_dict,
+    chunk_spec=chunk_spec_dict,
     collate_fn=collate_fn,
     exclusive=False,
     warn_on_overlap=False,
@@ -407,7 +407,7 @@ Use cases:
 - Quick start: let the library find or create an appropriate cache.
 - Exclusive workflow: prevent duplicate caches with `exclusive=True`. Also
   prevents creating subset/superset caches when overlapping data exists.
-- Flexible chunking: `auto_load` handles different `cache_chunk_spec` values for
+- Flexible chunking: `auto_load` handles different `chunk_spec` values for
   the same data.
 - Subset detection: use `allow_superset=True` to find and reuse existing caches
   that are supersets of your requested data. This allows you to:
@@ -500,9 +500,9 @@ run_parallel(
 
 ## Defaults and ordering
 
-- `cache_root` defaults to `.chunk_memo` under the current working directory.
+- `root` defaults to `.chunk_memo` under the current working directory.
 - When not provided, `axis_order` defaults to lexicographic order of axis names.
-- If `cache_chunk_spec` is omitted, each axis defaults to a chunk size of 1. For
+- If `chunk_spec` is omitted, each axis defaults to a chunk size of 1. For
   list/tuple axes this is overridden to the full axis length; other iterables
   still default to 1.
 
@@ -519,8 +519,8 @@ from chunk_memo import ChunkCache, run, run_streaming
 
 # Create a broad cache with strat=["a", "b"]
 broad_cache = ChunkCache(
-    cache_root="./memo_cache",
-    cache_chunk_spec={"strat": 1, "s": 3},
+    root="./memo_cache",
+    chunk_spec={"strat": 1, "s": 3},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
     collate_fn=collate_fn,
 )
@@ -535,7 +535,7 @@ from chunk_memo import auto_load
 
 
 memo_a = auto_load(
-    cache_root="./memo_cache",
+    root="./memo_cache",
     params=params,
     axis_values={"strat": ["a"]},  # Subset of original
     allow_superset=True,  # Enable superset detection
@@ -557,7 +557,7 @@ parameter value, depending on your workflow:
 ```python
 # Option 1: Include strat as axis (full sweep over strat values)
 memo_full = ChunkCache.auto_load(
-    cache_root="./cache",
+    root="./cache",
     params={"alpha": 0.4},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
     allow_superset=True,
@@ -566,7 +566,7 @@ memo_full = ChunkCache.auto_load(
 # Option 2: Fix strat as a parameter (single value)
 # Useful when you only need one value or plan to iterate externally
 memo_fixed = ChunkCache.auto_load(
-    cache_root="./cache",
+    root="./cache",
     params={"alpha": 0.4, "strat": "a"},  # strat as param
     axis_values={"s": [1, 2, 3]},  # Reduced axes
     allow_superset=True,
@@ -600,8 +600,8 @@ from chunk_memo import ChunkCache, run
 
 
 cache = ChunkCache(
-    cache_root="./cache",
-    cache_chunk_spec={"strat": 1, "s": 2},
+    root="./cache",
+    chunk_spec={"strat": 1, "s": 2},
     axis_values={"strat": ["a", "b"], "s": [1, 2, 3, 4]},
 )
 cache.set_params(params)

@@ -75,10 +75,10 @@ def exec_point_extra_param(params, strat, s, extra=2):
     return outputs
 
 
-def run_memo(cache_root, *, merge=True, chunk_spec=None, axis_values):
+def run_memo(root, *, merge=True, chunk_spec=None, axis_values):
     return ChunkCache(
-        cache_root=cache_root,
-        cache_chunk_spec=chunk_spec or {"strat": 1, "s": 3},
+        root=root,
+        chunk_spec=chunk_spec or {"strat": 1, "s": 3},
         axis_values=axis_values,
         collate_fn=collate_fn if merge else None,
     )
@@ -254,8 +254,8 @@ def test_run_restart_uses_cached_chunks_after_interrupt():
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
             collate_fn=collate_fn,
         )
@@ -283,8 +283,8 @@ def test_cache_status_axis_indices_extend_cache():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             axis_values={"strat": ["a"], "s": [1, 2]},
             params=params,
         )
@@ -301,14 +301,14 @@ def test_cache_status_axis_indices_extend_cache():
 
 
 def test_cache_chunk_enumerator_order():
-    cache_chunk_spec = {"strat": 1, "s": 2}
+    chunk_spec = {"strat": 1, "s": 2}
 
     def build_chunk_keys(axis_values):
         axis_order = sorted(axis_values)
         axis_chunks = []
         for axis in axis_order:
             values = axis_values[axis]
-            size = cache_chunk_spec[axis]
+            size = chunk_spec[axis]
             axis_chunks.append(
                 [tuple(values[i : i + size]) for i in range(0, len(values), size)]
             )
@@ -332,8 +332,8 @@ def test_cache_chunk_enumerator_order():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec=cache_chunk_spec,
+            root=temp_dir,
+            chunk_spec=chunk_spec,
             axis_values=axis_values,
             collate_fn=collate_markers,
             cache_chunk_enumerator=cache_chunk_enumerator,
@@ -485,8 +485,8 @@ def test_singleton_cache_basic():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
         output, diag = slice_and_run(memo, params, exec_fn_singleton)
@@ -500,8 +500,8 @@ def test_singleton_cache_reuse():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
         output1, diag1 = slice_and_run(memo, params, exec_fn_singleton)
@@ -516,8 +516,8 @@ def test_singleton_cache_reuse():
 def test_singleton_cache_param_change():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
         output1, diag1 = slice_and_run(memo, {"alpha": 0.4}, exec_fn_singleton)
@@ -532,8 +532,8 @@ def test_singleton_cache_no_axes_allowed():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
 
@@ -553,8 +553,8 @@ def test_singleton_cache_streaming():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
         diag1 = slice_and_run_streaming(memo, params, exec_fn_singleton)
@@ -569,8 +569,8 @@ def test_singleton_via_regular_constructor():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
             collate_fn=None,
         )
@@ -589,8 +589,8 @@ def test_exclusive_mode_exact_match():
         slice_and_run(memo, params, exec_fn_grid)
 
         memo2 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values,
             collate_fn=collate_fn,
             exclusive=True,
@@ -609,8 +609,8 @@ def test_exclusive_mode_rejects_different_chunking():
         slice_and_run(memo, params, exec_fn_grid)
 
         memo2 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             axis_values=axis_values,
             collate_fn=collate_fn,
             exclusive=True,
@@ -625,8 +625,8 @@ def test_exclusive_mode_rejects_different_chunking():
 def test_warn_on_overlap():
     with tempfile.TemporaryDirectory() as temp_dir:
         memo1 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
             collate_fn=collate_fn,
         )
@@ -634,8 +634,8 @@ def test_warn_on_overlap():
         slice_and_run(memo1, params, exec_fn_grid)
 
         memo2 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 2},
             axis_values={"strat": ["a"], "s": [1, 2, 3, 4]},
             collate_fn=collate_fn,
             warn_on_overlap=True,
@@ -659,8 +659,8 @@ def test_auto_load_finds_singleton():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo1 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
         output1, diag1 = slice_and_run(memo1, params, exec_fn_singleton)
@@ -695,15 +695,15 @@ def test_auto_load_ambiguous_no_axis_values():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         memo1 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={},
+            root=temp_dir,
+            chunk_spec={},
             axis_values={},
         )
         slice_and_run(memo1, params, exec_fn_singleton)
 
         memo2 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 1},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 1},
             axis_values={"strat": ["a", "b"], "s": [1, 2]},
             collate_fn=collate_fn,
         )
@@ -723,8 +723,8 @@ def test_auto_load_ambiguous_with_axis_values():
         slice_and_run(memo1, params, exec_fn_grid)
 
         memo2 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 2, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 2, "s": 3},
             axis_values=axis_values,
             collate_fn=collate_fn,
         )
@@ -734,7 +734,7 @@ def test_auto_load_ambiguous_with_axis_values():
             ChunkCache.auto_load(temp_dir, params, axis_values=axis_values)
 
 
-def test_auto_load_with_cache_chunk_spec():
+def test_auto_load_with_chunk_spec():
     with tempfile.TemporaryDirectory() as temp_dir:
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         params = {"alpha": 0.4}
@@ -742,7 +742,7 @@ def test_auto_load_with_cache_chunk_spec():
             temp_dir,
             params,
             axis_values=axis_values,
-            cache_chunk_spec={"strat": 1, "s": 2},
+            chunk_spec={"strat": 1, "s": 2},
             collate_fn=collate_fn,
         )
         output, diag = slice_and_run(memo, params, exec_fn_grid)
@@ -768,8 +768,8 @@ def test_allow_superset_finds_superset_cache():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
@@ -798,8 +798,8 @@ def test_allow_superset_false_requires_exact_match():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
@@ -828,16 +828,16 @@ def test_allow_superset_multiple_supersets_raises_error():
         params_superset = {"alpha": 0.4}
 
         memo1 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values1,
             collate_fn=collate_fn,
         )
         slice_and_run(memo1, params_superset, exec_fn_grid)
 
         memo2 = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values2,
             collate_fn=collate_fn,
         )
@@ -860,8 +860,8 @@ def test_exclusive_prevents_subset_cache_creation():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
             exclusive=True,
@@ -891,8 +891,8 @@ def test_exclusive_prevents_subset_when_superset_exists():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
             exclusive=True,
@@ -921,8 +921,8 @@ def test_find_compatible_caches_with_allow_superset():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
@@ -954,8 +954,8 @@ def test_allow_superset_no_superset_creates_new():
         params_subset = {"alpha": 0.4, "strat": "a"}
 
         memo_subset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_subset,
             collate_fn=collate_fn,
         )
@@ -984,8 +984,8 @@ def test_allow_superset_mixed_params_and_axes():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
@@ -1013,8 +1013,8 @@ def test_allow_superset_partial_subset_match():
         axis_values_superset = {"strat": ["a", "b", "c"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
@@ -1042,8 +1042,8 @@ def test_exclusive_prevents_redundant_subset():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
             exclusive=True,
@@ -1073,8 +1073,8 @@ def test_allow_superset_with_different_params():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )
@@ -1102,8 +1102,8 @@ def test_allow_superset_multiple_axes_subset():
         axis_values_superset = {"strat": ["a", "b"], "s": [1, 2, 3]}
         params_superset = {"alpha": 0.4}
         memo_superset = ChunkCache(
-            cache_root=temp_dir,
-            cache_chunk_spec={"strat": 1, "s": 3},
+            root=temp_dir,
+            chunk_spec={"strat": 1, "s": 3},
             axis_values=axis_values_superset,
             collate_fn=collate_fn,
         )

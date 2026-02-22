@@ -24,8 +24,8 @@ def main():
     output_root = Path("output")
     output_root.mkdir(exist_ok=True)
     memo = ChunkCache(
-        cache_root=output_root / "memo_cache",
-        cache_chunk_spec={"strat": 1, "s": 2},
+        root=output_root / "memo_cache",
+        chunk_spec={"strat": 1, "s": 2},
         axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
         collate_fn=collate_fn,
     )
