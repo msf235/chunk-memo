@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
 from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
-from ._format import chunk_key_size, print_chunk_summary
+from ._format import chunk_key_size, prepare_progress, print_chunk_summary
 from .runner_protocol import (
     BuildItemMapsFromChunkOutputFn,
     CacheProtocol,
@@ -26,7 +24,6 @@ from .runners_common import (
     _merge_outputs,
     _payload_item_map,
     _stream_item_count,
-    prepare_progress_callbacks,
     resolve_chunk_path,
     resolve_runner_deps,
 )
@@ -228,7 +225,7 @@ def run_chunks(
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
     total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
-    report_progress, update_processed = prepare_progress_callbacks(
+    report_progress, update_processed = prepare_progress(
         total_chunks=total_chunks,
         total_items=total_items,
         verbose=context.verbose,
@@ -366,7 +363,7 @@ def run_chunks_streaming(
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
     total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
-    report_progress, update_processed = prepare_progress_callbacks(
+    report_progress, update_processed = prepare_progress(
         total_chunks=total_chunks,
         total_items=total_items,
         verbose=context.verbose,

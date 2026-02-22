@@ -206,7 +206,7 @@ def test_run_wrap_positional_params():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
-        exec_point = wrapper.run_wrap()(exec_point_extra_default)
+        exec_point = wrapper.cache()(exec_point_extra_default)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
@@ -218,7 +218,7 @@ def test_run_wrap_executes_with_axis_values():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
-        exec_point = wrapper.run_wrap()(exec_fn_grid)
+        exec_point = wrapper.cache()(exec_fn_grid)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
@@ -230,7 +230,7 @@ def test_run_wrap_infers_params_from_args():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
-        exec_point = wrapper.run_wrap()(exec_point_inferred)
+        exec_point = wrapper.cache()(exec_point_inferred)
         output, diag = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3], extra=2)
         assert diag.executed_chunks == 1
         assert output[0]["alpha"] == 0.4
@@ -245,7 +245,7 @@ def test_run_wrap_param_merge():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
-        exec_point = wrapper.run_wrap()(exec_point_extra_param)
+        exec_point = wrapper.cache()(exec_point_extra_param)
         params = {"alpha": 0.4}
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=3)
         assert diag.executed_chunks == 1
@@ -274,7 +274,7 @@ def test_run_wrap_duplicate_params_arg():
         axis_values = {"strat": ["a"], "s": [1, 2, 3]}
         wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
 
-        exec_point = wrapper.run_wrap()(exec_fn_grid)
+        exec_point = wrapper.cache()(exec_fn_grid)
         params = {"alpha": 0.4}
         with pytest.raises(ValueError, match="both positional and keyword"):
             exec_point(params, params=params, strat=["a"], s=[1, 2, 3])

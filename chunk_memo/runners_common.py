@@ -88,52 +88,81 @@ def resolve_runner_deps(
     missing: list[str] = []
     require_set = set(require or ())
 
-    def resolve(name: str, value: Any) -> Any:
+    def resolve_dep(name: str, value: Any, *, required: bool) -> Any:
         if value is not None:
             return value
-        if cache is None:
-            return None
-        if not hasattr(cache, name):
-            return None
-        return getattr(cache, name)
+        if cache is not None and hasattr(cache, name):
+            return getattr(cache, name)
+        if required:
+            missing.append(name)
+        return None
 
     context_resolved = context if context is not None else cache
     if context_resolved is None and "context" in require_set:
         missing.append("context")
 
-    def resolve_required(name: str, value: Any) -> Any:
-        resolved = resolve(name, value)
-        if resolved is None and name in require_set:
-            missing.append(name)
-        return resolved
-
     deps = RunnerDeps(
-        write_metadata=resolve_required("write_metadata", write_metadata),
-        chunk_hash=resolve_required("chunk_hash", chunk_hash),
-        resolve_cache_path=resolve_required("resolve_cache_path", resolve_cache_path),
-        load_payload=resolve_required("load_payload", load_payload),
-        write_chunk_payload=resolve_required(
-            "write_chunk_payload", write_chunk_payload
+        write_metadata=resolve_dep(
+            "write_metadata", write_metadata, required="write_metadata" in require_set
         ),
-        update_chunk_index=resolve_required("update_chunk_index", update_chunk_index),
-        build_item_maps_from_axis_values=resolve_required(
-            "build_item_maps_from_axis_values", build_item_maps_from_axis_values
+        chunk_hash=resolve_dep(
+            "chunk_hash", chunk_hash, required="chunk_hash" in require_set
         ),
-        build_item_maps_from_chunk_output=resolve_required(
-            "build_item_maps_from_chunk_output", build_item_maps_from_chunk_output
+        resolve_cache_path=resolve_dep(
+            "resolve_cache_path",
+            resolve_cache_path,
+            required="resolve_cache_path" in require_set,
         ),
-        reconstruct_output_from_items=resolve_required(
-            "reconstruct_output_from_items", reconstruct_output_from_items
+        load_payload=resolve_dep(
+            "load_payload", load_payload, required="load_payload" in require_set
         ),
-        reconstruct_partial_output_from_items=resolve_required(
+        write_chunk_payload=resolve_dep(
+            "write_chunk_payload",
+            write_chunk_payload,
+            required="write_chunk_payload" in require_set,
+        ),
+        update_chunk_index=resolve_dep(
+            "update_chunk_index",
+            update_chunk_index,
+            required="update_chunk_index" in require_set,
+        ),
+        build_item_maps_from_axis_values=resolve_dep(
+            "build_item_maps_from_axis_values",
+            build_item_maps_from_axis_values,
+            required="build_item_maps_from_axis_values" in require_set,
+        ),
+        build_item_maps_from_chunk_output=resolve_dep(
+            "build_item_maps_from_chunk_output",
+            build_item_maps_from_chunk_output,
+            required="build_item_maps_from_chunk_output" in require_set,
+        ),
+        reconstruct_output_from_items=resolve_dep(
+            "reconstruct_output_from_items",
+            reconstruct_output_from_items,
+            required="reconstruct_output_from_items" in require_set,
+        ),
+        reconstruct_partial_output_from_items=resolve_dep(
             "reconstruct_partial_output_from_items",
             reconstruct_partial_output_from_items,
+            required="reconstruct_partial_output_from_items" in require_set,
         ),
-        collect_chunk_data=resolve_required("collect_chunk_data", collect_chunk_data),
-        item_hash=resolve_required("item_hash", item_hash),
-        load_chunk_index=resolve_required("load_chunk_index", load_chunk_index),
-        extract_items_from_map=resolve_required(
-            "extract_items_from_map", extract_items_from_map
+        collect_chunk_data=resolve_dep(
+            "collect_chunk_data",
+            collect_chunk_data,
+            required="collect_chunk_data" in require_set,
+        ),
+        item_hash=resolve_dep(
+            "item_hash", item_hash, required="item_hash" in require_set
+        ),
+        load_chunk_index=resolve_dep(
+            "load_chunk_index",
+            load_chunk_index,
+            required="load_chunk_index" in require_set,
+        ),
+        extract_items_from_map=resolve_dep(
+            "extract_items_from_map",
+            extract_items_from_map,
+            required="extract_items_from_map" in require_set,
         ),
         context=context_resolved,
     )
@@ -280,21 +309,6 @@ def _merge_outputs(
     if context.collate_fn is not None:
         return context.collate_fn(outputs)
     return outputs
-
-
-def prepare_progress_callbacks(
-    *,
-    total_chunks: int,
-    total_items: int,
-    verbose: int,
-    label: str,
-) -> tuple[Callable[[int, bool], None], Callable[[int], None]]:
-    return prepare_progress(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=verbose,
-        label=label,
-    )
 
 
 def prepare_planning_progress(

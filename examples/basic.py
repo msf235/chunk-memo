@@ -50,12 +50,12 @@ def main():
     print("Output:", output)
     print("Diagnostics:", diag)
 
-    memoized_exec = memo.run_wrap()(exec_fn)
+    memoized_exec = memo.cache()(exec_fn)
     wrapped_output, wrapped_diag = memoized_exec(params, strat=["aaa"], s=[1, 2, 3, 4])
     print("Wrapped output:", wrapped_output)
     print("Wrapped diagnostics:", wrapped_diag)
 
-    @memo.run_wrap()
+    @memo.cache()
     def exec_fn_2(alpha, strat, s):
         outputs = []
         for strat_value in strat:
