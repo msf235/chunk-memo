@@ -67,7 +67,7 @@ class ChunkCache:
         collate_fn: CollateFn | None = None,
         cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
-        cache_path_fn: CachePathFn | None = None,
+        path_fn: CachePathFn | None = None,
         cache_version: str = "v1",
         axis_order: Sequence[str] | None = None,
         verbose: int = 1,
@@ -86,7 +86,7 @@ class ChunkCache:
             cache_chunk_enumerator: Optional chunk enumerator that defines the
                 cache chunk order.
             chunk_hash_fn: Optional override for chunk hashing.
-            cache_path_fn: Optional override for cache file paths. This hook is
+            path_fn: Optional override for cache file paths. This hook is
                 experimental and not yet thoroughly tested.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order (defaults to lexicographic).
@@ -132,7 +132,7 @@ class ChunkCache:
         self.collate_fn = collate_fn
         self.cache_chunk_enumerator = cache_chunk_enumerator
         self.chunk_hash_fn = chunk_hash_fn or default_chunk_hash
-        self.cache_path_fn = cache_path_fn
+        self.path_fn = path_fn
         self.cache_version = cache_version
         self.axis_order = tuple(axis_order) if axis_order is not None else None
         self.verbose = verbose
@@ -275,7 +275,7 @@ class ChunkCache:
             collate_fn=self.collate_fn,
             cache_chunk_enumerator=self.cache_chunk_enumerator,
             chunk_hash_fn=self.chunk_hash_fn,
-            cache_path_fn=self.cache_path_fn,
+            path_fn=self.path_fn,
             cache_version=self.cache_version,
             axis_order=self.axis_order,
             verbose=self.verbose,
@@ -311,11 +311,9 @@ class ChunkCache:
 
     def resolve_cache_path(self, chunk_key: ChunkKey, chunk_hash: str) -> Path:
         memo_root = self._memo_root()
-        if self.cache_path_fn is None:
+        if self.path_fn is None:
             return memo_root / "chunks" / f"{chunk_hash}.pkl"
-        path = self.cache_path_fn(
-            self.params, chunk_key, self.cache_version, chunk_hash
-        )
+        path = self.path_fn(self.params, chunk_key, self.cache_version, chunk_hash)
         path_obj = Path(path)
         if path_obj.is_absolute():
             return path_obj
@@ -555,11 +553,11 @@ class ChunkCache:
             self._check_exclusive()
 
     def _bind_exec_fn(self, exec_fn: Callable[..., Any]) -> Callable[..., Any]:
-        if self._axis_values is None:
-            return functools.partial(exec_fn, self.params)
         signature = inspect.signature(exec_fn)
         param_names = list(signature.parameters)
         if not param_names or param_names[0] != "params":
+            return exec_fn
+        if self._axis_values is None:
             return functools.partial(exec_fn, self.params)
         axis_names = param_names[1:]
         fixed_axes = {
@@ -1204,7 +1202,7 @@ class ChunkCache:
         collate_fn: CollateFn | None = None,
         cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
-        cache_path_fn: CachePathFn | None = None,
+        path_fn: CachePathFn | None = None,
         cache_version: str = "v1",
         axis_order: Sequence[str] | None = None,
         verbose: int = 1,
@@ -1237,7 +1235,7 @@ class ChunkCache:
             collate_fn: Optional collate function.
             cache_chunk_enumerator: Optional chunk enumerator.
             chunk_hash_fn: Optional override for chunk hashing.
-            cache_path_fn: Optional override for cache file paths.
+            path_fn: Optional override for cache file paths.
             cache_version: Cache namespace/version tag.
             axis_order: Axis iteration order.
             verbose: Verbosity flag.
@@ -1317,7 +1315,7 @@ class ChunkCache:
                 collate_fn=collate_fn,
                 cache_chunk_enumerator=cache_chunk_enumerator,
                 chunk_hash_fn=chunk_hash_fn,
-                cache_path_fn=cache_path_fn,
+                path_fn=path_fn,
                 verbose=verbose,
                 profile=profile,
                 exclusive=exclusive,
@@ -1330,7 +1328,7 @@ class ChunkCache:
             collate_fn=collate_fn,
             cache_chunk_enumerator=cache_chunk_enumerator,
             chunk_hash_fn=chunk_hash_fn,
-            cache_path_fn=cache_path_fn,
+            path_fn=path_fn,
             cache_version=cache_version,
             axis_order=axis_order,
             verbose=verbose,
@@ -1347,7 +1345,7 @@ class ChunkCache:
         collate_fn: CollateFn | None = None,
         cache_chunk_enumerator: MemoChunkEnumerator | None = None,
         chunk_hash_fn: Callable[[dict[str, Any], ChunkKey, str], str] | None = None,
-        cache_path_fn: CachePathFn | None = None,
+        path_fn: CachePathFn | None = None,
         verbose: int = 1,
         profile: bool = False,
         exclusive: bool = False,
@@ -1365,7 +1363,7 @@ class ChunkCache:
             collate_fn: Optional collate function for the list of chunk outputs.
             cache_chunk_enumerator: Optional chunk enumerator.
             chunk_hash_fn: Optional override for chunk hashing.
-            cache_path_fn: Optional override for cache file paths.
+            path_fn: Optional override for cache file paths.
             verbose: Verbosity flag.
             profile: Enable profiling output.
             exclusive: If True, error when creating a cache with same
@@ -1394,7 +1392,7 @@ class ChunkCache:
             collate_fn=collate_fn,
             cache_chunk_enumerator=cache_chunk_enumerator,
             chunk_hash_fn=chunk_hash_fn,
-            cache_path_fn=cache_path_fn,
+            path_fn=path_fn,
             cache_version=metadata.get("cache_version", "v1"),
             axis_order=metadata.get("axis_order"),
             verbose=verbose,

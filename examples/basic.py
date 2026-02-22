@@ -54,6 +54,25 @@ def main():
     print("Wrapped output:", wrapped_output)
     print("Wrapped diagnostics:", wrapped_diag)
 
+    @wrapper.run_wrap()
+    def exec_fn_2(alpha, strat, s):
+        outputs = []
+        for strat_value in strat:
+            for s_value in s:
+                outputs.append(
+                    {
+                        "alpha": alpha,
+                        "strat": strat_value,
+                        "s": s_value,
+                        "value": len(strat_value) + s_value,
+                    }
+                )
+        return outputs
+
+    wrapped_output, wrapped_diag = exec_fn_2(alpha=0.4, strat=["aaa"], s=[1, 2, 3, 4])
+    print("Wrapped output 2:", wrapped_output)
+    print("Wrapped diagnostics 2:", wrapped_diag)
+
 
 if __name__ == "__main__":
     main()

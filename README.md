@@ -42,14 +42,6 @@ pip install memo-chunk
 from chunk_memo import ChunkCache, run
 
 
-def exec_fn(params, strat, s):
-    outputs = []
-    for strat_value in strat:
-        for s_value in s:
-            outputs.append(
-                {"strat": strat_value, "s": s_value, "value": len(strat_value) + s_value}
-            )
-    return outputs
 
 
 params = {"alpha": 0.4}
@@ -61,7 +53,16 @@ memo = ChunkCache(
     axis_values=axis_values,
     params=params,
 )
-memo.set_params(params)
+
+@memo.run_wrap
+def exec_fn(params, strat, s):
+    outputs = []
+    for strat_value in strat:
+        for s_value in s:
+            outputs.append(
+                {"strat": strat_value, "s": s_value, "value": len(strat_value) + s_value}
+            )
+    return outputs
 
 output, diag = run(memo, exec_fn)
 print(output)
@@ -90,7 +91,7 @@ ChunkCache(
     collate_fn: Callable[[list], Any] | None = None,
     cache_chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
     chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
-    cache_path_fn: Callable[[dict, tuple, str, str], Path | str] | None = None,
+    path_fn: Callable[[dict, tuple, str, str], Path | str] | None = None,
     cache_version: str = "v1",
     axis_order: Sequence[str] | None = None,
     verbose: int = 1,
@@ -106,9 +107,6 @@ Notes:
   values for that chunk. Supply it to `run` or use `run_wrap`/`streaming_wrap`.
 - `collate_fn` defaults to returning a list of chunk outputs.
 - `axis_values` defines the canonical grid for cache chunking.
-- `cache_path_fn` can be used to place cache files in nested directories. Paths
-  are resolved under a memo-specific cache directory. This hook is experimental
-  and not yet thoroughly tested.
 - `exclusive`: if True, error when creating a cache with same `params` and
   `axis_values` as an existing cache (different `chunk_spec` still
   conflicts). Also prevents creating subset/superset caches when overlapping
@@ -196,25 +194,27 @@ wrapper = ChunkMemo(memo)
 
 
 @wrapper.run_wrap()
-def exec_point(params, strat, s, extra=1):
+def exec_point(alpha, strat, s, extra=1):
     ...
 
 
-output, diag = exec_point(params, strat=["a"], s=[1, 2, 3], extra=2)
+output, diag = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3], extra=2)
 
 # Or by index
 output, diag = exec_point(
-    params,
+    alpha=0.4,
     axis_indices={"strat": range(0, 1), "s": slice(0, 3)},
     extra=2,
 )
 ```
 
+- The wrapper infers memoization params from non-axis arguments.
+- You can pass an explicit `params` dict to override inferred values.
 - The wrapper accepts axis values directly (singletons or lists).
 - You can also pass `axis_indices` (same keys as `axis_values`) with ints,
   ranges, or slices to select by index.
-- Extra keyword arguments are merged into memoization params and also passed to
-  the exec function.
+- Non-axis keyword arguments are merged into memoization params and also passed
+  to the exec function.
 
 ### streaming_wrap (memoized streaming wrapper)
 
@@ -223,11 +223,11 @@ wrapper = ChunkMemo(memo)
 
 
 @wrapper.streaming_wrap()
-def exec_point(params, strat, s):
+def exec_point(alpha, strat, s):
     ...
 
 
-diagnostics = exec_point(params, strat=["a"], s=[1, 2, 3])
+diagnostics = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3])
 ```
 
 - Streaming wrappers return diagnostics only and write cache outputs to disk.
@@ -333,7 +333,6 @@ memo = ChunkCache.auto_load(
     collate_fn=collate_fn,
     cache_chunk_enumerator=cache_chunk_enumerator,
     chunk_hash_fn=chunk_hash_fn,
-    cache_path_fn=cache_path_fn,
     cache_version="v1",
     axis_order=axis_order,
     verbose=1,

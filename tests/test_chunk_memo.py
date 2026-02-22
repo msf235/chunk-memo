@@ -75,6 +75,20 @@ def exec_point_extra_param(params, strat, s, extra=2):
     return outputs
 
 
+def exec_point_inferred(alpha, strat, s, extra=1):
+    outputs = []
+    for strat_value, s_value in itertools.product(strat, s):
+        outputs.append(
+            {
+                "alpha": alpha,
+                "extra": extra,
+                "strat": strat_value,
+                "s": s_value,
+            }
+        )
+    return outputs
+
+
 def run_memo(root, *, merge=True, chunk_spec=None, axis_values):
     return ChunkCache(
         root=root,
@@ -172,6 +186,22 @@ def test_run_wrap_executes_with_axis_values():
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
         assert output
+
+
+def test_run_wrap_infers_params_from_args():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        memo = run_memo(temp_dir, axis_values=axis_values)
+        wrapper = ChunkMemo(memo)
+
+        exec_point = wrapper.run_wrap()(exec_point_inferred)
+        output, diag = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3], extra=2)
+        assert diag.executed_chunks == 1
+        assert output[0]["alpha"] == 0.4
+
+        output2, diag2 = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3], extra=2)
+        assert output2 == output
+        assert diag2.executed_chunks == 0
 
 
 def test_run_wrap_param_merge():
