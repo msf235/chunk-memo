@@ -65,7 +65,7 @@ print(diag)
 ```
 
 Pass a value for `max_workers` that is larger than 1 to `memo.cache` to get parallel execution.
-Note that the wrapped function must be defined at the highest scope level (module scope).
+Note that when using parallelization the wrapped function must be defined at the highest scope level (module scope).
 
 ## Module layout
 
