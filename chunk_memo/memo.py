@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import functools
 import inspect
+import itertools
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, Tuple
+from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
 
 from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
 from .identity import params_to_cache_id, stable_serialize
-from .runners import Diagnostics, run, run_streaming
+from .runners import Diagnostics, run, run_parallel, run_streaming
 from .runners_common import resolve_cache_for_run
 
 
@@ -248,7 +250,12 @@ class ChunkMemo:
         return cache
 
     def cache(
-        self, *, params_arg: str = "params"
+        self,
+        *,
+        params_arg: str = "params",
+        map_fn: Callable[..., Iterable[Any]] | None = None,
+        map_fn_kwargs: Mapping[str, Any] | None = None,
+        max_workers: int = 1,
     ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
         """Decorator for running memoized execution with output.
 
@@ -256,7 +263,13 @@ class ChunkMemo:
         params dict is provided. Supports axis selection by value or by index
         via axis_indices. Uses runners.run under the hood.
         """
-        return self._build_wrapper(params_arg=params_arg, streaming=False)
+        return self._build_wrapper(
+            params_arg=params_arg,
+            streaming=False,
+            map_fn=map_fn,
+            map_fn_kwargs=map_fn_kwargs,
+            max_workers=max_workers,
+        )
 
     def stream_cache(
         self, *, params_arg: str = "params"
@@ -296,7 +309,13 @@ class ChunkMemo:
         return merged_params
 
     def _build_wrapper(
-        self, *, params_arg: str, streaming: bool
+        self,
+        *,
+        params_arg: str,
+        streaming: bool,
+        map_fn: Callable[..., Iterable[Any]] | None = None,
+        map_fn_kwargs: Mapping[str, Any] | None = None,
+        max_workers: int = 1,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             signature = inspect.signature(func)
@@ -340,9 +359,21 @@ class ChunkMemo:
                 if params_arg in signature.parameters:
                     exec_kwargs[params_arg] = merged_params
                 exec_fn = functools.partial(func, **exec_kwargs)
-                sliced = cache.slice(axis_indices=axis_indices, **axis_inputs)
+                sliced = cast(ChunkCache, cache).slice(
+                    axis_indices=axis_indices, **axis_inputs
+                )
                 if streaming:
                     return run_streaming(sliced, exec_fn)
+                if max_workers > 1 or map_fn is not None:
+                    if map_fn is None:
+                        _require_top_level_function(func)
+                    return run_parallel(
+                        _build_items_for_parallel(sliced),
+                        exec_fn=exec_fn,
+                        cache=sliced,
+                        map_fn=map_fn or _map_process_pool,
+                        map_fn_kwargs=_resolve_map_kwargs(map_fn_kwargs, max_workers),
+                    )
                 return run(sliced, exec_fn)
 
             def cache_status(
@@ -369,3 +400,49 @@ class ChunkMemo:
             return wrapper
 
         return decorator
+
+
+def _map_process_pool(
+    func: Callable[..., Any], items: Iterable[Any], **kwargs: Any
+) -> Iterable[Any]:
+    max_workers = kwargs.get("max_workers")
+    chunksize = kwargs.get("chunksize")
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        if chunksize is None:
+            return list(executor.map(func, items))
+        return list(executor.map(func, items, chunksize=chunksize))
+
+
+def _resolve_map_kwargs(
+    map_fn_kwargs: Mapping[str, Any] | None, max_workers: int
+) -> dict[str, Any]:
+    resolved = dict(map_fn_kwargs or {})
+    if max_workers > 1 and "max_workers" not in resolved:
+        resolved["max_workers"] = max_workers
+    return resolved
+
+
+def _build_items_for_parallel(cache: ChunkCache) -> list[dict[str, Any]]:
+    status = cache.cache_status()
+    axis_values = status.get("axis_values", {})
+    axis_order = status.get("axis_order", tuple(axis_values))
+    axis_lists: list[list[Any]] = []
+    for axis in axis_order:
+        values = axis_values.get(axis, [])
+        if isinstance(values, (list, tuple)):
+            axis_lists.append(list(values))
+        elif isinstance(values, Sequence):
+            axis_lists.append(list(values))
+        else:
+            axis_lists.append([values])
+    return [dict(zip(axis_order, values)) for values in itertools.product(*axis_lists)]
+
+
+def _require_top_level_function(func: Callable[..., Any]) -> None:
+    qualname = getattr(func, "__qualname__", "")
+    if "<locals>" in qualname:
+        raise ValueError(
+            "Parallel execution requires a top-level function (module scope) so it can be "
+            "pickled for ProcessPoolExecutor. Move the function to module scope or pass a "
+            "custom map_fn that does not require pickling."
+        )

@@ -64,6 +64,9 @@ print(output)
 print(diag)
 ```
 
+Pass a value for `max_workers` that is larger than 1 to `memo.cache` to get parallel execution.
+Note that the wrapped function must be defined at the highest scope level (module scope).
+
 ## Module layout
 
 - `chunk_memo/cache.py`: cache logic (`ChunkCache`).
@@ -134,16 +137,24 @@ import functools
 
 from chunk_memo import run_parallel
 
-
-parallel_cache = memo.cache_for_params(params).slice(
-    axis_indices={"strat": range(0, 1), "s": slice(0, 3)}
+memo = ChunkMemo(
+    root=output_root / "memo_run_cache",
+    chunk_spec={"strat": 1, "s": 3},
+    axis_values=axis_values,
+    collate_fn=collate_fn,
+    verbose=1,
 )
 
-parallel_output, parallel_diag = run_parallel(
-    items,
-    exec_fn=functools.partial(exec_fn, params),
-    cache=parallel_cache,
-)
+@memo.cache(max_workers=2)
+def foo(alpha, strat, s):
+    outputs = []
+    for strat_value in strat:
+        for s_value in s:
+            outputs.append(
+                {"alpha": alpha, "strat": strat_value, "s": s_value, "value": len(strat_value) + alpha*s_value}
+            )
+    return outputs
+
 ```
 
 ### run_parallel
