@@ -1,7 +1,7 @@
 # chunk-memo
 
 chunk-memo provides chunked memoization for grid-style parameter sweeps. You define a
-parameter grid (axis values) and a partitioning of this grid into chunks for disk efficiency.
+parameter grid (axis values) and a partitioning of this grid into chunks for disk read/write efficiency.
 Cached chunk outputs are reused on subsequent runs (memoization).
 Parallel runners are provided that allow you to pass your own map function (such as
 ProcessPoolExecutor.map).
