@@ -2,9 +2,9 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="65.677368mm"
+   width="141.83385mm"
    height="38.388054mm"
-   viewBox="0 0 65.677368 38.388054"
+   viewBox="0 0 141.83385 38.388054"
    version="1.1"
    id="svg1"
    xmlns="http://www.w3.org/2000/svg"
@@ -13,7 +13,7 @@
      id="defs1" />
   <g
      id="layer1"
-     transform="translate(-9.8059719,-10.805972)">
+     transform="translate(-9.805972,-10.805972)">
     <rect
        style="fill:#ffeeaa;stroke:#000000;stroke-width:0.388056"
        id="rect3-3"
@@ -98,13 +98,47 @@
        ry="2.4999998" />
     <text
        xml:space="preserve"
-       style="font-size:7.05556px;font-family:'Liberation Sans';-inkscape-font-specification:'Liberation Sans';writing-mode:lr-tb;direction:ltr;fill:#ffeeaa;stroke:#000000;stroke-width:0.388056"
+       style="font-size:4.23333px;font-family:'Liberation Sans';-inkscape-font-specification:'Liberation Sans';writing-mode:lr-tb;direction:ltr;white-space:pre;inline-size:120;display:inline;fill:#ffeeaa;stroke:#000000;stroke-width:0.388056"
        x="35"
        y="32.13229"
-       id="text3"><tspan
-         id="tspan3"
-         style="font-size:7.05556px;fill:#000000;stroke:none;stroke-width:0.388056"
+       id="text3"
+       transform="translate(2.5135421,-16.801047)"><tspan
          x="35"
-         y="32.13229">chunk-memo</tspan></text>
+         y="32.13229"
+         id="tspan5"><tspan
+           style="font-weight:bold"
+           id="tspan1">chunk-memo</tspan><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan2"> provides chunked memoization for grid-style </tspan></tspan><tspan
+         x="35"
+         y="37.423954"
+         id="tspan7"><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan6">parameter sweeps. You define a parameter grid (axis values) </tspan></tspan><tspan
+         x="35"
+         y="42.715618"
+         id="tspan9"><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan8">and a partitioning of this grid into chunks for disk read/write </tspan></tspan><tspan
+         x="35"
+         y="48.007282"
+         id="tspan11"><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan10">efficiency. Cached chunk outputs are reused on subsequent </tspan></tspan><tspan
+         x="35"
+         y="53.298946"
+         id="tspan13"><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan12">runs (memoization). Parallel runners are provided that allow </tspan></tspan><tspan
+         x="35"
+         y="58.590611"
+         id="tspan15"><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan14">you to pass your own map function (such as </tspan></tspan><tspan
+         x="35"
+         y="63.882275"
+         id="tspan17"><tspan
+           style="fill:#000000;stroke:none"
+           id="tspan16">ProcessPoolExecutor.map).</tspan></tspan></text>
   </g>
 </svg>
