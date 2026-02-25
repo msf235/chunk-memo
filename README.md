@@ -20,7 +20,7 @@ You want to:
 3. Chunk outputs into reasonable file sizes, without losing the ability to load
    arbitrary subsets of parameter values.
 
-chunk-memo breaks the grid into memo chunks and stores each chunk on disk. When
+chunk-memo breaks the grid into chunks and stores each chunk on disk. When
 axis values change, only the new chunks are computed.
 
 ## Concepts
@@ -34,7 +34,7 @@ axis values change, only the new chunks are computed.
 
 ## Installation
 
-pip install memo-chunk
+pip install chunk-memo
 
 ## Quick start
 
