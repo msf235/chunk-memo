@@ -1,8 +1,7 @@
 # chunk-memo
 
-Chunked memoization for grid-style experiments. Define a parameter grid, cache
-chunked outputs to disk, and reuse cached work across runs, including partial
-reuse for subsets of parameter values.
+Chunked memoization for grid-style parameter sweeps. Define a parameter grid, cache
+chunked outputs to disk, and reuse cached work across runs.
 
 ## Install
 

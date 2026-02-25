@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chunk-memo"
-version = "0.1.1"
+version = "0.1.0"
 description = "Memoization with chunked caching and parallelization."
 readme = "README_PYPI.md"
 requires-python = ">=3.10"

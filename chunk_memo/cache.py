@@ -185,7 +185,7 @@ class ChunkCache:
         if axis_indices is not None and axes:
             raise ValueError("axis_indices cannot be combined with axis values")
         if axis_values_override is not None and extend_cache:
-            self.extend_axis_values(axis_values_override)
+            self.extend_axis_values(axis_values_override, allow_new_axes=True)
         axis_values = self._normalize_axes(
             axes,
             axis_indices=axis_indices,
@@ -596,6 +596,8 @@ class ChunkCache:
         axis_values: Mapping[str, Sequence[Any]],
         *,
         write_metadata: bool = True,
+        allow_new_axes: bool = False,
+        chunk_spec_override: Mapping[str, Any] | None = None,
     ) -> None:
         """Extend axis_values in-place with new values.
 
@@ -606,10 +608,36 @@ class ChunkCache:
             raise ValueError("axis_values must be set before extending")
         axis_order = self._resolve_axis_order(self._axis_values)
         missing_axes = [axis for axis in axis_values if axis not in self._axis_values]
-        if missing_axes:
+        if missing_axes and not allow_new_axes:
             raise KeyError(f"Unknown axis(es) in extension: {missing_axes}")
 
         updated = False
+        if missing_axes:
+            spec_override = dict(chunk_spec_override or {})
+            for axis in missing_axes:
+                axis_values_obj = axis_values[axis]
+                values = self._materialize_axis_values(axis_values_obj)
+                self._axis_values[axis] = values
+                self._axis_index_map[axis] = {
+                    value: index for index, value in enumerate(values)
+                }
+                if axis not in self.chunk_spec:
+                    if axis in spec_override:
+                        self.chunk_spec[axis] = spec_override[axis]
+                    else:
+                        if isinstance(axis_values_obj, (list, tuple)):
+                            size = len(axis_values_obj)
+                        else:
+                            size = 1
+                        self.chunk_spec[axis] = size
+                updated = True
+            if self.axis_order is not None:
+                new_axis_order = list(self.axis_order)
+                for axis in missing_axes:
+                    if axis not in new_axis_order:
+                        new_axis_order.append(axis)
+                self.axis_order = tuple(new_axis_order)
+                axis_order = self.axis_order
         for axis in axis_order:
             if axis not in axis_values:
                 continue
@@ -631,6 +659,8 @@ class ChunkCache:
 
         if updated:
             self._axis_values_serializable = self._make_axis_values_serializable()
+            self._normalized_chunk_keys = None
+            self._selected_items_by_chunk = None
             if write_metadata:
                 self.write_metadata()
 

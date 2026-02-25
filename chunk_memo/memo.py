@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
 
 from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
+from .cache_index import chunk_index_path
+from .data_write_utils import _atomic_write_json
 from .identity import params_to_cache_id, stable_serialize
 from .runners import Diagnostics, run, run_parallel, run_streaming
 from .runners_common import resolve_cache_for_run
@@ -80,6 +82,7 @@ class ChunkMemo:
         warn_on_overlap: bool = False,
         precompute_chunk_keys: bool = False,
         allow_superset: bool = False,
+        extend_cache: bool = False,
     ) -> "ChunkMemo":
         if not isinstance(params, dict):
             raise ValueError("'params' must be a dict")
@@ -110,10 +113,123 @@ class ChunkMemo:
         base_metadata = dict(metadata or {})
         base_metadata.pop("params", None)
 
+        def params_are_superset(
+            existing_params: Mapping[str, Any] | None,
+            requested_params: Mapping[str, Any],
+        ) -> bool:
+            if not isinstance(existing_params, Mapping):
+                return False
+            for key, value in existing_params.items():
+                if key not in requested_params:
+                    return False
+                if stable_serialize(requested_params[key]) != stable_serialize(value):
+                    return False
+            return True
+
+        def find_cache_with_subset_params() -> dict[str, Any] | None:
+            caches = ChunkCache.discover_caches(root_path)
+            matches: list[dict[str, Any]] = []
+            for cache in caches:
+                cache_meta = cache.get("metadata", {})
+                existing_params = None
+                if isinstance(cache_meta, Mapping):
+                    meta_payload = cache_meta.get("metadata", {})
+                    if isinstance(meta_payload, Mapping):
+                        existing_params = meta_payload.get("params")
+                if params_are_superset(existing_params, params):
+                    matches.append(cache)
+            if not matches:
+                return None
+            if len(matches) > 1:
+                raise ValueError(
+                    "Multiple caches found with params that are subsets of the requested params. "
+                    "Please disambiguate by passing exact params or cleanup existing caches."
+                )
+            return matches[0]
+
+        def resolve_cache_path_with_metadata(
+            memo_root: Path,
+            chunk_key: Tuple[Tuple[str, Tuple[Any, ...]], ...],
+            chunk_hash: str,
+            metadata_payload: Mapping[str, Any],
+            cache_path_fn: CachePathFn | None,
+        ) -> Path:
+            if cache_path_fn is None:
+                return memo_root / "chunks" / f"{chunk_hash}.pkl"
+            payload = dict(metadata_payload)
+            path = cache_path_fn(payload, chunk_key, version, chunk_hash)
+            path_obj = Path(path)
+            if path_obj.is_absolute():
+                return path_obj
+            return memo_root / path_obj
+
+        def migrate_cache_id(
+            cache: ChunkCache,
+            *,
+            new_cache_id: str,
+            new_metadata: dict[str, Any],
+            old_axis_names: set[str],
+            new_axis_names: set[str],
+        ) -> ChunkCache:
+            old_memo_root = cache._memo_root()
+            new_memo_root = root_path / new_cache_id
+            if new_memo_root.exists() and new_memo_root != old_memo_root:
+                raise ValueError(
+                    f"Target cache directory already exists: {new_memo_root}"
+                )
+            old_index = cache.load_chunk_index()
+            old_metadata = dict(cache.metadata)
+            old_memo_root.rename(new_memo_root)
+            cache._memo_root_override = new_memo_root
+            cache.set_identity(new_cache_id, metadata=new_metadata)
+            if old_axis_names != new_axis_names:
+                _atomic_write_json(chunk_index_path(new_memo_root), {})
+                return cache
+            if not old_index:
+                return cache
+            new_index: dict[str, Any] = {}
+            for old_hash, entry in old_index.items():
+                chunk_key = entry.get("chunk_key")
+                if chunk_key is None:
+                    continue
+                new_hash = cache.chunk_hash(chunk_key)
+                old_path = resolve_cache_path_with_metadata(
+                    new_memo_root,
+                    chunk_key,
+                    old_hash,
+                    old_metadata,
+                    cache.path_fn,
+                )
+                new_path = resolve_cache_path_with_metadata(
+                    new_memo_root,
+                    chunk_key,
+                    new_hash,
+                    new_metadata,
+                    cache.path_fn,
+                )
+                if not old_path.exists():
+                    continue
+                if new_hash != old_hash:
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    if new_path.exists():
+                        raise ValueError(
+                            f"Chunk path collision during cache migration: {new_path}"
+                        )
+                    old_path.rename(new_path)
+                new_index[new_hash] = {"chunk_key": chunk_key}
+            _atomic_write_json(chunk_index_path(new_memo_root), new_index)
+            return cache
+
+        cache_from_subset: dict[str, Any] | None = None
+        if not cache_path.exists() and extend_cache:
+            cache_from_subset = find_cache_with_subset_params()
+            if cache_from_subset is not None:
+                cache_path = Path(cache_from_subset.get("path", cache_path))
+
         if cache_path.exists():
             cache = ChunkCache.load_from_cache(
                 root=root_path,
-                cache_id=cache_id,
+                cache_id=cache_path.name,
                 collate_fn=collate_fn,
                 chunk_enumerator=chunk_enumerator,
                 chunk_hash_fn=chunk_hash_fn,
@@ -126,11 +242,18 @@ class ChunkMemo:
             if not base_metadata:
                 base_metadata = dict(cache.metadata)
                 base_metadata.pop("params", None)
+            old_axis_names = set(cache._axis_values_serializable or {})
             if axis_values is not None:
                 meta_axis_values = cache._axis_values_serializable
                 if meta_axis_values is None:
                     raise ValueError("Cache missing axis_values")
-                if allow_superset:
+                if extend_cache:
+                    cache.extend_axis_values(
+                        axis_values,
+                        allow_new_axes=True,
+                        chunk_spec_override=chunk_spec,
+                    )
+                elif allow_superset:
                     if not ChunkCache._is_superset_compatible(
                         {"axis_values": meta_axis_values}, axis_values
                     ):
@@ -148,6 +271,17 @@ class ChunkMemo:
                         f"Existing axis_values={summarize_axis_values(meta_axis_values)}, "
                         f"requested={summarize_axis_values(axis_values)}."
                     )
+            if cache_path.name != cache_id and extend_cache:
+                merged_metadata = dict(base_metadata)
+                merged_metadata["params"] = params
+                new_axis_names = set(cache._axis_values_serializable or {})
+                cache = migrate_cache_id(
+                    cache,
+                    new_cache_id=cache_id,
+                    new_metadata=merged_metadata,
+                    old_axis_names=old_axis_names,
+                    new_axis_names=new_axis_names,
+                )
             merged_metadata = dict(base_metadata)
             merged_metadata["params"] = params
             if cache.metadata != merged_metadata:
@@ -156,9 +290,9 @@ class ChunkMemo:
                 root=root_path,
                 chunk_spec=cache.chunk_spec,
                 axis_values=(
-                    axis_values
-                    if axis_values is not None
-                    else (cache._axis_values_serializable or {})
+                    cache._axis_values_serializable
+                    if cache._axis_values_serializable is not None
+                    else (axis_values if axis_values is not None else {})
                 ),
                 metadata=base_metadata,
                 collate_fn=cache.collate_fn,

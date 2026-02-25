@@ -3,6 +3,7 @@ import inspect
 import itertools
 import tempfile
 import time
+from pathlib import Path
 
 import pytest  # type: ignore[import-not-found]
 
@@ -827,6 +828,93 @@ def test_auto_load_default_chunk_spec():
 
         assert output
         assert diag.total_chunks == 1
+
+
+def test_auto_load_extend_cache_updates_axis_values():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        memo = ChunkCache(
+            root=temp_dir,
+            **_cache_identity(params),
+            chunk_spec={"strat": 1, "s": 2},
+            axis_values={"strat": ["a"], "s": [1, 2]},
+            collate_fn=collate_fn,
+        )
+        slice_and_run(memo, params, exec_fn_grid)
+
+        memo2 = ChunkMemo.auto_load(
+            temp_dir,
+            params,
+            axis_values={"strat": ["a", "b"], "s": [1, 2, 3]},
+            extend_cache=True,
+            collate_fn=collate_fn,
+        )
+
+        assert "b" in memo2.axis_values["strat"]
+        assert 3 in memo2.axis_values["s"]
+
+
+def test_auto_load_extend_cache_allows_new_axes():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+
+        def exec_fn_s(params, s):
+            return [{"alpha": params["alpha"], "s": value} for value in s]
+
+        memo = ChunkCache(
+            root=temp_dir,
+            **_cache_identity(params),
+            chunk_spec={"s": 2},
+            axis_values={"s": [1, 2]},
+            collate_fn=collate_fn,
+        )
+        slice_and_run(memo, params, exec_fn_s)
+
+        memo2 = ChunkMemo.auto_load(
+            temp_dir,
+            params,
+            axis_values={"s": [1, 2], "strat": ["a"]},
+            chunk_spec={"s": 2, "strat": 1},
+            extend_cache=True,
+            collate_fn=collate_fn,
+        )
+
+        assert "strat" in memo2.axis_values
+        assert memo2.chunk_spec is not None
+        assert memo2.chunk_spec.get("strat") == 1
+
+
+def test_auto_load_superset_params_rewrites_cache_id():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        params = {"alpha": 0.4}
+        memo = ChunkCache(
+            root=temp_dir,
+            **_cache_identity(params),
+            chunk_spec={"strat": 1, "s": 3},
+            axis_values=axis_values,
+            collate_fn=collate_fn,
+        )
+        slice_and_run(memo, params, exec_fn_grid)
+
+        superset_params = {"alpha": 0.4, "beta": 1}
+        memo2 = ChunkMemo.auto_load(
+            temp_dir,
+            superset_params,
+            axis_values=axis_values,
+            extend_cache=True,
+            collate_fn=collate_fn,
+        )
+
+        output, diag = slice_and_run(memo2, superset_params, exec_fn_grid)
+        assert output
+        assert diag.cached_chunks == 1
+        assert diag.executed_chunks == 0
+
+        old_cache_id = params_to_cache_id(params)
+        new_cache_id = params_to_cache_id(superset_params)
+        assert not (Path(temp_dir) / old_cache_id).exists()
+        assert (Path(temp_dir) / new_cache_id).exists()
 
 
 def test_allow_superset_finds_superset_cache():

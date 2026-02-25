@@ -217,6 +217,7 @@ def resolve_cache_for_run(
             warn_on_overlap=cache.warn_on_overlap,
             precompute_chunk_keys=cache.precompute_chunk_keys,
             allow_superset=allow_superset_for_load,
+            extend_cache=extend_cache,
         )
     cache = cache.cache_for_params(params)
     if extend_cache and axis_values is not None:
