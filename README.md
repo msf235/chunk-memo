@@ -115,11 +115,3 @@ Ordering rules:
 Axis values must be hashable and unique within each axis. Duplicates will
 collapse to a single entry in the internal index map.
 
-### run_chunks / run_chunks_streaming (low-level)
-
-These are low-level helpers that expect a cache object and a list of chunk keys.
-The cache should already represent the desired axis subset (use `memo.slice(...)`
-first if needed). You can pass `collate_fn` to override the cache-level
-`collate_fn` for the duration of the call.
-
-
