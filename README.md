@@ -1,6 +1,5 @@
 <h1 align="left">
 <img src="https://raw.githubusercontent.com/msf235/chunk-memo/main/.github/images/banner.svg" width="800">
-</h1><br>
 
 ## What problem does it solve?
 
