@@ -10,8 +10,8 @@ ProcessPoolExecutor.map).
 
 Suppose you have:
 
-- Fixed parameters (values that do not vary across the grid).
-- Axis values (lists of values you want to sweep over).
+- Fixed parameters (parameter values that do not vary across the grid).
+- Axis values (lists of parameter values you want to sweep over).
 
 You want to:
 
