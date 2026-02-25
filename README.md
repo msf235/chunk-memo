@@ -79,7 +79,6 @@ Note that when using parallelization the wrapped function must be defined at the
 ### ChunkCache
 
 `ChunkCache` owns the cache state and exposes the cache interface.
-`ChunkMemo` manages one or more `ChunkCache` instances keyed by memoization params.
 
 ```python
 ChunkCache(
@@ -104,12 +103,12 @@ ChunkCache(
 
 `ChunkMemo` is a cache manager that provides `cache` and `stream_cache`
 decorators for memoization. A stream_cache flushes data to disk as
-the function is executed.
+the function is executed. `ChunkMemo` may create one or more `ChunkCache` instances.
 
 ### axis_values: lists and iterables
 
 `axis_values` must be concrete iterables (lists, tuples, ranges, or other
-iterable objects). Callables are not supported by the current implementation.
+iterable objects). Callables are not currently supported.
 
 Ordering rules:
 
