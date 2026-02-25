@@ -1,4 +1,6 @@
-# chunk-memo
+<h1 align="left">
+<img src="https://raw.githubusercontent.com/msf235/chunk-memo/main/.github/images/banner.svg" width="200">
+</h1><br>
 
 chunk-memo provides chunked memoization for grid-style parameter sweeps. You define a
 parameter grid (axis values) and a partitioning of this grid into chunks for disk read/write efficiency.
