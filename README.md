@@ -1,17 +1,12 @@
-# chunk-memo
-
-chunk-memo provides chunked memoization for grid-style parameter sweeps. You define a
-parameter grid (axis values) and a partitioning of this grid into chunks for disk efficiency.
-Cached chunk outputs are reused on subsequent runs (memoization).
-Parallel runners are provided that allow you to pass your own map function (such as
-ProcessPoolExecutor.map).
+<h1 align="left">
+<img src="https://raw.githubusercontent.com/msf235/chunk-memo/main/.github/images/banner.svg" width="800">
 
 ## What problem does it solve?
 
 Suppose you have:
 
-- Fixed parameters (values that do not vary across the grid).
-- Axis values (lists of values you want to sweep over).
+- Fixed parameters (parameter values that do not vary across the grid).
+- Axis values (lists of parameter values you want to sweep over).
 
 You want to:
 
@@ -20,7 +15,7 @@ You want to:
 3. Chunk outputs into reasonable file sizes, without losing the ability to load
    arbitrary subsets of parameter values.
 
-chunk-memo breaks the grid into memo chunks and stores each chunk on disk. When
+chunk-memo breaks the grid into chunks and stores each chunk on disk. When
 axis values change, only the new chunks are computed.
 
 ## Concepts
@@ -34,7 +29,7 @@ axis values change, only the new chunks are computed.
 
 ## Installation
 
-pip install memo-chunk
+pip install chunk-memo
 
 ## Quick start
 
@@ -65,7 +60,7 @@ print(diag)
 ```
 
 Pass a value for `max_workers` that is larger than 1 to `memo.cache` to get parallel execution.
-Note that the wrapped function must be defined at the highest scope level (module scope).
+Note that when using parallelization the wrapped function must be defined at the highest scope level (module scope).
 
 ## Module layout
 
@@ -79,7 +74,6 @@ Note that the wrapped function must be defined at the highest scope level (modul
 ### ChunkCache
 
 `ChunkCache` owns the cache state and exposes the cache interface.
-`ChunkMemo` manages one or more `ChunkCache` instances keyed by memoization params.
 
 ```python
 ChunkCache(
@@ -104,12 +98,12 @@ ChunkCache(
 
 `ChunkMemo` is a cache manager that provides `cache` and `stream_cache`
 decorators for memoization. A stream_cache flushes data to disk as
-the function is executed.
+the function is executed. `ChunkMemo` may create one or more `ChunkCache` instances.
 
 ### axis_values: lists and iterables
 
 `axis_values` must be concrete iterables (lists, tuples, ranges, or other
-iterable objects). Callables are not supported by the current implementation.
+iterable objects). Callables are not currently supported.
 
 Ordering rules:
 
@@ -120,12 +114,4 @@ Ordering rules:
 
 Axis values must be hashable and unique within each axis. Duplicates will
 collapse to a single entry in the internal index map.
-
-### run_chunks / run_chunks_streaming (low-level)
-
-These are low-level helpers that expect a cache object and a list of chunk keys.
-The cache should already represent the desired axis subset (use `memo.slice(...)`
-first if needed). You can pass `collate_fn` to override the cache-level
-`collate_fn` for the duration of the call.
-
 
