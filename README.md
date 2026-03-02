@@ -13,7 +13,8 @@ You want to:
 1. Evaluate a function across the grid.
 2. Cache results so subsequent runs only compute what is new.
 3. Chunk outputs into reasonable file sizes, without losing the ability to load
-   arbitrary subsets of parameter values.
+   arbitrary subsets of parameter values. This is particularly relevant when the
+   grid has a large number of points.
 
 chunk-memo breaks the grid into chunks and stores each chunk on disk. When
 axis values change, only the new chunks are computed.
@@ -26,6 +27,8 @@ axis values change, only the new chunks are computed.
 - Memo chunk: a block of points created by chunking each axis list and taking
   the cartesian product of those bins. Each memo chunk is written to a single
   file that can serve partial reads for subsets of points.
+- chunk_spec: a specification for the chunk sizes. For instance, chunk_spec={"strat": 1, "s": 3}
+  specifies that each chunk should contain one "strat" value and three "s" values.
 
 ## Installation
 
