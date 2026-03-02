@@ -27,7 +27,7 @@ axis values change, only the new chunks are computed.
 - Memo chunk: a block of points created by chunking each axis list and taking
   the cartesian product of those bins. Each memo chunk is written to a single
   file that can serve partial reads for subsets of points.
-- chunk_spec: a specification for the chunk sizes. For instance, chunk_spec={"strat": 1, "s": 3}
+- chunk_spec: a specification for the memo chunk sizes. For instance, `chunk_spec={"strat": 1, "s": 3}`
   specifies that each chunk should contain one "strat" value and three "s" values.
 
 ## Installation
