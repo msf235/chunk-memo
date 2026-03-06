@@ -49,13 +49,12 @@ memo = ChunkMemo(
 
 @memo.cache()
 def foo(alpha, strat, s):
-    outputs = []
-    for strat_value in strat:
-        for s_value in s:
-            outputs.append(
-                {"alpha": alpha, "strat": strat_value, "s": s_value, "value": len(strat_value) + alpha*s_value}
-            )
-    return outputs
+    return {
+        "alpha": alpha,
+        "strat": strat,
+        "s": s,
+        "value": len(strat) + alpha * s,
+    }
 
 output, diag = foo(alpha=0.5, strat=["aaa", "bb"], s=[1, 2])
 print(output)
@@ -117,4 +116,3 @@ Ordering rules:
 
 Axis values must be hashable and unique within each axis. Duplicates will
 collapse to a single entry in the internal index map.
-

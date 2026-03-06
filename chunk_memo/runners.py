@@ -56,6 +56,7 @@ def run(
     """Run memoized execution with output via the cache runner.
 
     The cache must already represent the desired axis subset.
+    exec_fn is called once per point with singleton axis values.
     collate_fn overrides cache.collate_fn for this run.
     Partial chunks return whatever cached output is available and increment
     diagnostics.partial_chunks.
@@ -114,6 +115,7 @@ def run_streaming(
     """Run memoized execution without returning outputs.
 
     The cache must already represent the desired axis subset.
+    exec_fn is called once per point with singleton axis values.
     collate_fn is accepted for API parity but has no effect without outputs.
     Partial chunks still count as cached and increment diagnostics.partial_chunks.
     """
@@ -147,7 +149,23 @@ def run_streaming(
     )
 
 
+def _execute_chunk_items(
+    cache: CacheProtocol,
+    chunk_key: ChunkKey,
+    exec_fn: Callable[..., Any],
+) -> Any:
+    if not chunk_key:
+        return exec_fn()
+    axis_names = [axis for axis, _ in chunk_key]
+    outputs: list[Any] = []
+    for values in cache.iter_chunk_axis_values(chunk_key):
+        item_kwargs = dict(zip(axis_names, values))
+        outputs.append(exec_fn(**item_kwargs))
+    return outputs
+
+
 def execute_and_save_chunk(
+    cache: CacheProtocol,
     chunk_key: ChunkKey,
     exec_fn: Callable[..., Any],
     chunk_hash: str,
@@ -161,8 +179,7 @@ def execute_and_save_chunk(
 ) -> tuple[Any, dict[str, Any] | None]:
     """Execute a chunk, persist payload, and update index."""
     diagnostics.executed_chunks += 1
-    chunk_axes = {axis: list(values) for axis, values in chunk_key}
-    chunk_output = exec_fn(**chunk_axes)
+    chunk_output = _execute_chunk_items(cache, chunk_key, exec_fn)
     diagnostics.max_stream_items = max(
         diagnostics.max_stream_items,
         _stream_item_count(chunk_output),
@@ -285,6 +302,7 @@ def run_chunks(
                 return cached_output, True, is_partial
 
         chunk_output, item_map = execute_and_save_chunk(
+            cache,
             chunk_key,
             exec_fn,
             chunk_hash_value,
@@ -442,6 +460,7 @@ def run_chunks_streaming(
                 continue
 
         execute_and_save_chunk(
+            cache,
             chunk_key,
             exec_fn,
             chunk_hash_value,

@@ -3,13 +3,6 @@ from typing import Any
 
 
 def exec_fn_grid(params: dict[str, Any], strat: Any, s: Any) -> Any:
-    if isinstance(strat, (list, tuple)) and isinstance(s, (list, tuple)):
-        outputs = []
-        for strat_value, s_value in itertools.product(strat, s):
-            outputs.append(
-                {"alpha": params["alpha"], "strat": strat_value, "s": s_value}
-            )
-        return outputs
     return {"alpha": params["alpha"], "strat": strat, "s": s}
 
 

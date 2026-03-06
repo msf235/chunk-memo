@@ -13,7 +13,7 @@ from chunk_memo import ChunkCache, run
 
 def exec_fn(params, s):
     scale = params["scale"]
-    return [value * scale for value in s]
+    return s * scale
 
 
 def run_warm_benchmark(*, n_points, chunk_size, repeats):

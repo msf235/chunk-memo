@@ -5,18 +5,12 @@ from chunk_memo import ChunkMemo, run
 
 
 def exec_fn(params, strat, s):
-    outputs = []
-    for strat_value in strat:
-        for s_value in s:
-            outputs.append(
-                {
-                    "alpha": params["alpha"],
-                    "strat": strat_value,
-                    "s": s_value,
-                    "value": len(strat_value) + s_value,
-                }
-            )
-    return outputs
+    return {
+        "alpha": params["alpha"],
+        "strat": strat,
+        "s": s,
+        "value": len(strat) + s,
+    }
 
 
 def collate_fn(chunks):
@@ -65,18 +59,12 @@ def main():
 
     @memo.cache()
     def exec_fn_2(alpha, strat, s):
-        outputs = []
-        for strat_value in strat:
-            for s_value in s:
-                outputs.append(
-                    {
-                        "alpha": alpha,
-                        "strat": strat_value,
-                        "s": s_value,
-                        "value": len(strat_value) + s_value,
-                    }
-                )
-        return outputs
+        return {
+            "alpha": alpha,
+            "strat": strat,
+            "s": s,
+            "value": len(strat) + s,
+        }
 
     wrapped_output, wrapped_diag = exec_fn_2(alpha=0.4, strat=["aaa"], s=[1, 2, 3, 4])
     print("Wrapped output 2:", wrapped_output)
