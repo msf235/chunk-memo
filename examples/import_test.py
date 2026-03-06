@@ -4,13 +4,7 @@ from chunk_memo import ChunkCache, params_to_cache_id, run
 
 
 def exec_fn(params, strat, s):
-    outputs = []
-    for strat_value in strat:
-        for s_value in s:
-            outputs.append(
-                {"alpha": params["alpha"], "strat": strat_value, "s": s_value}
-            )
-    return outputs
+    return {"alpha": params["alpha"], "strat": strat, "s": s}
 
 
 def collate_fn(chunks):

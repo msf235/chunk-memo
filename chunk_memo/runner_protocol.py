@@ -108,3 +108,7 @@ class CacheProtocol(RunnerContext, Protocol):
     def requested_items_by_chunk(
         self,
     ) -> Mapping[ChunkKey, list[Tuple[Any, ...]]] | None: ...
+
+    def iter_chunk_axis_values(
+        self, chunk_key: ChunkKey
+    ) -> Sequence[Tuple[Any, ...]]: ...

@@ -19,11 +19,8 @@ def exec_fn_singleton(params):
 
 
 def exec_fn_sleep(params, strat, s):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        time.sleep(0.05)
-        outputs.append({"alpha": params["alpha"], "strat": strat_value, "s": s_value})
-    return outputs
+    time.sleep(0.05)
+    return {"alpha": params["alpha"], "strat": strat, "s": s}
 
 
 def collate_fn(chunks):
@@ -74,45 +71,30 @@ def slice_and_run_streaming(memo, params, exec_fn, **kwargs):
 
 
 def exec_point_extra_default(params, strat, s, extra=1):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        outputs.append(
-            {
-                "alpha": params["alpha"],
-                "extra": extra,
-                "strat": strat_value,
-                "s": s_value,
-            }
-        )
-    return outputs
+    return {
+        "alpha": params["alpha"],
+        "extra": extra,
+        "strat": strat,
+        "s": s,
+    }
 
 
 def exec_point_extra_param(params, strat, s, extra=2):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        outputs.append(
-            {
-                "alpha": params["alpha"],
-                "extra": extra,
-                "strat": strat_value,
-                "s": s_value,
-            }
-        )
-    return outputs
+    return {
+        "alpha": params["alpha"],
+        "extra": extra,
+        "strat": strat,
+        "s": s,
+    }
 
 
 def exec_point_inferred(alpha, strat, s, extra=1):
-    outputs = []
-    for strat_value, s_value in itertools.product(strat, s):
-        outputs.append(
-            {
-                "alpha": alpha,
-                "extra": extra,
-                "strat": strat_value,
-                "s": s_value,
-            }
-        )
-    return outputs
+    return {
+        "alpha": alpha,
+        "extra": extra,
+        "strat": strat,
+        "s": s,
+    }
 
 
 def run_memo(root, params=None, *, merge=True, chunk_spec=None, axis_values=None):
@@ -326,13 +308,10 @@ def test_run_restart_uses_cached_chunks_after_interrupt():
             axis_values=axis_values,
             collate_fn=collate_fn,
         )
-        call_count = 0
 
         def exec_interrupt(params, strat, s):
-            nonlocal call_count
-            if call_count >= 1:
+            if s == 3:
                 raise RuntimeError("interrupted")
-            call_count += 1
             return exec_fn_grid(params, strat, s)
 
         with pytest.raises(RuntimeError, match="interrupted"):
@@ -390,7 +369,7 @@ def test_chunk_enumerator_order():
         return list(reversed(build_chunk_keys(axis_values)))
 
     def exec_fn_marker(params, strat, s):
-        return [{"marker": f"{strat[0]}-{s[0]}"}]
+        return {"marker": f"{strat}-{s}"}
 
     def collate_markers(chunks):
         return [chunk[0]["marker"] for chunk in chunks]
@@ -859,7 +838,7 @@ def test_auto_load_extend_cache_allows_new_axes():
         params = {"alpha": 0.4}
 
         def exec_fn_s(params, s):
-            return [{"alpha": params["alpha"], "s": value} for value in s]
+            return {"alpha": params["alpha"], "s": s}
 
         memo = ChunkCache(
             root=temp_dir,

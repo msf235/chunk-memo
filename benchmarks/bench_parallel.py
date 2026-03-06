@@ -8,13 +8,8 @@ from chunk_memo import ChunkCache, run, run_parallel
 
 
 def exec_fn(params, s):
-    if not isinstance(s, (list, tuple)):
-        s = [s]
-    outputs = []
-    for value in s:
-        time.sleep(params["sleep_s"])
-        outputs.append(value)
-    return outputs
+    time.sleep(params["sleep_s"])
+    return s
 
 
 def run_case(root, n_points, sleep_s, exec_chunk_size, scenario):

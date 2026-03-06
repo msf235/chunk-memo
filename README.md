@@ -13,7 +13,8 @@ You want to:
 1. Evaluate a function across the grid.
 2. Cache results so subsequent runs only compute what is new.
 3. Chunk outputs into reasonable file sizes, without losing the ability to load
-   arbitrary subsets of parameter values.
+   arbitrary subsets of parameter values. This is particularly relevant when the
+   grid has a large number of points.
 
 chunk-memo breaks the grid into chunks and stores each chunk on disk. When
 axis values change, only the new chunks are computed.
@@ -26,6 +27,8 @@ axis values change, only the new chunks are computed.
 - Memo chunk: a block of points created by chunking each axis list and taking
   the cartesian product of those bins. Each memo chunk is written to a single
   file that can serve partial reads for subsets of points.
+- chunk_spec: a specification for the memo chunk sizes. For instance, `chunk_spec={"strat": 1, "s": 3}`
+  specifies that each chunk should contain one "strat" value and three "s" values.
 
 ## Installation
 
@@ -46,13 +49,12 @@ memo = ChunkMemo(
 
 @memo.cache()
 def foo(alpha, strat, s):
-    outputs = []
-    for strat_value in strat:
-        for s_value in s:
-            outputs.append(
-                {"alpha": alpha, "strat": strat_value, "s": s_value, "value": len(strat_value) + alpha*s_value}
-            )
-    return outputs
+    return {
+        "alpha": alpha,
+        "strat": strat,
+        "s": s,
+        "value": len(strat) + alpha * s,
+    }
 
 output, diag = foo(alpha=0.5, strat=["aaa", "bb"], s=[1, 2])
 print(output)
@@ -114,4 +116,3 @@ Ordering rules:
 
 Axis values must be hashable and unique within each axis. Duplicates will
 collapse to a single entry in the internal index map.
-
