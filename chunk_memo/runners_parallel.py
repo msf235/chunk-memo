@@ -9,45 +9,22 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
 
-from ._format import (
-    build_plan_lines,
-    chunk_key_size,
-    format_rate_eta,
-    print_chunk_summary,
-    print_progress,
-)
-from .runner_protocol import (
-    BuildItemMapsFromAxisValuesFn,
-    BuildItemMapsFromChunkOutputFn,
-    CacheProtocol,
-    CacheStatus,
-    ChunkHashFn,
-    CollectChunkDataFn,
-    ItemHashFn,
-    LoadChunkIndexFn,
-    LoadPayloadFn,
-    ReconstructPartialOutputFromItemsFn,
-    ReconstructOutputFromItemsFn,
-    ResolveCachePathFn,
-    RunnerContext,
-    UpdateChunkIndexFn,
-    WriteChunkPayloadFn,
-    WriteMetadataFn,
-)
-from .runners_common import (
-    ChunkKey,
-    Diagnostics,
-    _log_chunk,
-    _merge_outputs,
-    _payload_item_map,
-    _require_axis_info,
-    _require_params,
-    _save_chunk_payload,
-    prepare_planning_progress,
-    resolve_cache_for_run,
-    resolve_runner_deps,
-    resolve_chunk_path,
-)
+from ._format import (build_plan_lines, chunk_key_size, format_rate_eta,
+                      print_chunk_summary, print_progress)
+from .runner_protocol import (BuildItemMapsFromAxisValuesFn,
+                              BuildItemMapsFromChunkOutputFn, CacheProtocol,
+                              CacheStatus, ChunkHashFn, CollectChunkDataFn,
+                              ItemHashFn, LoadChunkIndexFn, LoadPayloadFn,
+                              ReconstructOutputFromItemsFn,
+                              ReconstructPartialOutputFromItemsFn,
+                              ResolveCachePathFn, RunnerContext,
+                              UpdateChunkIndexFn, WriteChunkPayloadFn,
+                              WriteMetadataFn)
+from .runners_common import (ChunkKey, Diagnostics, _log_chunk, _merge_outputs,
+                             _payload_item_map, _require_axis_info,
+                             _require_params, _save_chunk_payload,
+                             prepare_planning_progress, resolve_cache_for_run,
+                             resolve_chunk_path, resolve_runner_deps)
 
 EXEC_REPORT_INTERVAL_SECONDS = 2.0
 
@@ -599,9 +576,9 @@ def _cumulative_chunk_counts(
 
 def run_parallel(
     items: Iterable[Any],
-    *,
-    exec_fn: Callable[..., Any],
     cache: CacheProtocol,
+    exec_fn: Callable[..., Any],
+    *,
     map_fn: Callable[..., Iterable[Any]] | None = None,
     map_fn_kwargs: Mapping[str, Any] | None = None,
     collate_fn: Callable[[list[Any]], Any] | None = None,
