@@ -6,11 +6,19 @@ import tempfile
 import pytest  # type: ignore[import-not-found]
 from concurrent.futures import ProcessPoolExecutor
 
-from chunk_memo import ChunkCache, ChunkMemo, params_to_cache_id, run_parallel
+from chunk_memo import (
+    ChunkCache,
+    ChunkMemo,
+    params_to_cache_id,
+    run_parallel as run_parallel_cache,
+    run_parallel_over_iterator,
+)
 from chunk_memo.runners import run as _memo_run
 from chunk_memo.runners import run_streaming as _memo_run_streaming
 
 from .utils import exec_fn_grid, item_dicts, observed_items
+
+run_parallel = run_parallel_over_iterator
 
 
 def _parallel_kwargs(memo):
@@ -708,3 +716,63 @@ def test_run_parallel_flush_on_chunk_partial_chunks_load_as_partial():
         assert diag.cached_chunks == diag.total_chunks
         assert diag.partial_chunks == diag.total_chunks
         assert observed_items(output) == {("a", 1), ("a", 3)}
+
+
+def test_run_parallel_over_cache_builds_items():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2]}
+        memo = ChunkCache(
+            root=temp_dir,
+            **_cache_identity(params),
+            chunk_spec={"strat": 1, "s": 1},
+            axis_values=axis_values,
+        )
+        _set_params(memo, params)
+
+        status = memo.cache_status()
+
+        outputs, diag = run_parallel_cache(
+            memo,
+            exec_fn=functools.partial(exec_fn_grid, params),
+            map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            map_fn_kwargs={"chunksize": 1},
+        )
+        assert diag.executed_chunks == len(status.get("missing_chunks", []))
+        assert observed_items(outputs) == {
+            ("a", 1),
+            ("a", 2),
+            ("b", 1),
+            ("b", 2),
+        }
+
+
+def test_run_parallel_over_cache_matches_iterator():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        params = {"alpha": 0.4}
+        axis_values = {"strat": ["a", "b"], "s": [1, 2, 3]}
+        memo = ChunkCache(
+            root=temp_dir,
+            **_cache_identity(params),
+            chunk_spec={"strat": 1, "s": 1},
+            axis_values=axis_values,
+        )
+        _set_params(memo, params)
+
+        items = item_dicts(axis_values)
+        outputs, diag = run_parallel_cache(
+            memo,
+            exec_fn=functools.partial(exec_fn_grid, params),
+            map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            map_fn_kwargs={"chunksize": 1},
+        )
+        outputs_iter, _diag_iter = run_parallel(
+            items,
+            exec_fn=functools.partial(exec_fn_grid, params),
+            map_fn=lambda func, items, **kwargs: [func(item) for item in items],
+            map_fn_kwargs={"chunksize": 1},
+            cache=memo,
+        )
+
+        assert diag.executed_chunks > 0
+        assert observed_items(outputs) == observed_items(outputs_iter)

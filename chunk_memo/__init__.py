@@ -8,6 +8,7 @@ from .runners import (
     Diagnostics,
     run,
     run_parallel,
+    run_parallel_over_iterator,
     run_streaming,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "auto_load",
     "run",
     "run_parallel",
+    "run_parallel_over_iterator",
     "run_streaming",
     "RunnerContext",
     "CacheStatus",

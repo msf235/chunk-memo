@@ -3,28 +3,52 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import itertools
 import time
 from bisect import bisect_right
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
 
-from ._format import (build_plan_lines, chunk_key_size, format_rate_eta,
-                      print_chunk_summary, print_progress)
-from .runner_protocol import (BuildItemMapsFromAxisValuesFn,
-                              BuildItemMapsFromChunkOutputFn, CacheProtocol,
-                              CacheStatus, ChunkHashFn, CollectChunkDataFn,
-                              ItemHashFn, LoadChunkIndexFn, LoadPayloadFn,
-                              ReconstructOutputFromItemsFn,
-                              ReconstructPartialOutputFromItemsFn,
-                              ResolveCachePathFn, RunnerContext,
-                              UpdateChunkIndexFn, WriteChunkPayloadFn,
-                              WriteMetadataFn)
-from .runners_common import (ChunkKey, Diagnostics, _log_chunk, _merge_outputs,
-                             _payload_item_map, _require_axis_info,
-                             _require_params, _save_chunk_payload,
-                             prepare_planning_progress, resolve_cache_for_run,
-                             resolve_chunk_path, resolve_runner_deps)
+from ._format import (
+    build_plan_lines,
+    chunk_key_size,
+    format_rate_eta,
+    print_chunk_summary,
+    print_progress,
+)
+from .runner_protocol import (
+    BuildItemMapsFromAxisValuesFn,
+    BuildItemMapsFromChunkOutputFn,
+    CacheProtocol,
+    CacheStatus,
+    ChunkHashFn,
+    CollectChunkDataFn,
+    ItemHashFn,
+    LoadChunkIndexFn,
+    LoadPayloadFn,
+    ReconstructOutputFromItemsFn,
+    ReconstructPartialOutputFromItemsFn,
+    ResolveCachePathFn,
+    RunnerContext,
+    UpdateChunkIndexFn,
+    WriteChunkPayloadFn,
+    WriteMetadataFn,
+)
+from .runners_common import (
+    ChunkKey,
+    Diagnostics,
+    _log_chunk,
+    _merge_outputs,
+    _payload_item_map,
+    _require_axis_info,
+    _require_params,
+    _save_chunk_payload,
+    prepare_planning_progress,
+    resolve_cache_for_run,
+    resolve_chunk_path,
+    resolve_runner_deps,
+)
 
 EXEC_REPORT_INTERVAL_SECONDS = 2.0
 
@@ -574,7 +598,7 @@ def _cumulative_chunk_counts(
     return counts
 
 
-def run_parallel(
+def run_parallel_over_iterator(
     items: Iterable[Any],
     cache: CacheProtocol,
     exec_fn: Callable[..., Any],
@@ -622,7 +646,10 @@ def run_parallel(
         extend_cache=extend_cache,
         allow_superset=allow_superset,
     )
-    cache_status = cache.cache_status()
+    cache_status = cache.cache_status(
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+    )
     if not return_output:
         flush_on_chunk = True
     deps = resolve_runner_deps(
@@ -986,3 +1013,99 @@ def run_parallel(
             merged = exec_outputs if missing_items else []
     print_chunk_summary(diagnostics, context.verbose)
     return merged, diagnostics
+
+
+def _build_items_from_axis_values(
+    axis_values: Mapping[str, Sequence[Any]],
+    axis_order: Sequence[str] | None,
+) -> list[dict[str, Any]]:
+    resolved_order = tuple(axis_order or tuple(axis_values))
+    axis_lists: list[list[Any]] = []
+    for axis in resolved_order:
+        values = axis_values.get(axis, [])
+        if isinstance(values, (list, tuple)):
+            axis_lists.append(list(values))
+        elif isinstance(values, Sequence):
+            axis_lists.append(list(values))
+        else:
+            axis_lists.append([values])
+    return [
+        dict(zip(resolved_order, values)) for values in itertools.product(*axis_lists)
+    ]
+
+
+def run_parallel(
+    cache: Any,
+    exec_fn: Callable[..., Any],
+    *,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    flush_on_chunk: bool = False,
+    return_output: bool = True,
+    extend_cache: bool = False,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    allow_superset: bool = False,
+    # Manual cache methods (optional overrides)
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    load_chunk_index: LoadChunkIndexFn | None = None,
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    item_hash: ItemHashFn | None = None,
+    context: RunnerContext | None = None,
+) -> tuple[Any, Diagnostics]:
+    """Execute the full cache product in parallel.
+
+    This mirrors runners.run by expanding the cache axis values into an
+    iterator and delegating to run_parallel_over_iterator.
+    """
+    resolved_cache = resolve_cache_for_run(
+        cache,
+        params=params,
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+        allow_superset=allow_superset,
+    )
+    cache_status = resolved_cache.cache_status(
+        axis_values_override=axis_values_override,
+    )
+    axis_values = cache_status.get("axis_values", {})
+    axis_order = cache_status.get("axis_order")
+    if not isinstance(axis_values, Mapping):
+        raise ValueError("cache_status must include axis_values")
+    items = _build_items_from_axis_values(axis_values, axis_order)
+    return run_parallel_over_iterator(
+        items,
+        cache=resolved_cache,
+        exec_fn=exec_fn,
+        map_fn=map_fn,
+        map_fn_kwargs=map_fn_kwargs,
+        collate_fn=collate_fn,
+        flush_on_chunk=flush_on_chunk,
+        return_output=return_output,
+        extend_cache=extend_cache,
+        params=None,
+        axis_values_override=axis_values_override,
+        allow_superset=allow_superset,
+        write_metadata=write_metadata,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        load_chunk_index=load_chunk_index,
+        build_item_maps_from_axis_values=build_item_maps_from_axis_values,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        reconstruct_output_from_items=reconstruct_output_from_items,
+        collect_chunk_data=collect_chunk_data,
+        item_hash=item_hash,
+        context=context,
+    )

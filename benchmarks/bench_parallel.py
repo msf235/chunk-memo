@@ -4,7 +4,9 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from chunk_memo import ChunkCache, run, run_parallel
+from chunk_memo import ChunkCache, run, run_parallel_over_iterator
+
+run_parallel = run_parallel_over_iterator
 
 
 def exec_fn(params, s):

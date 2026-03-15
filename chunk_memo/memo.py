@@ -13,7 +13,12 @@ from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
 from .cache_index import chunk_index_path
 from .data_write_utils import _atomic_write_json
 from .identity import params_to_cache_id, stable_serialize
-from .runners import Diagnostics, run, run_parallel, run_streaming
+from .runners import (
+    Diagnostics,
+    run,
+    run_parallel_over_iterator,
+    run_streaming,
+)
 from .runners_common import resolve_cache_for_run
 
 
@@ -501,7 +506,7 @@ class ChunkMemo:
                 if max_workers > 1 or map_fn is not None:
                     if map_fn is None:
                         _require_top_level_function(func)
-                    return run_parallel(
+                    return run_parallel_over_iterator(
                         _build_items_for_parallel(sliced),
                         exec_fn=exec_fn,
                         cache=sliced,

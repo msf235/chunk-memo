@@ -3,10 +3,12 @@ import inspect
 import itertools
 import tempfile
 
-from chunk_memo import ChunkCache, params_to_cache_id, run_parallel
+from chunk_memo import ChunkCache, params_to_cache_id, run_parallel_over_iterator
 from chunk_memo.runners import run as _memo_run
 
 from .utils import exec_fn_grid, flatten_outputs
+
+run_parallel = run_parallel_over_iterator
 
 
 def collate_fn(outputs):

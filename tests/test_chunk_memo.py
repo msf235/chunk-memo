@@ -394,7 +394,7 @@ def test_chunk_enumerator_order():
         assert output == expected
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.flaky(max_runs=3)
 def test_timing_cache_speedup():
     params = {"alpha": 0.4}
     axis_values = {"strat": ["a", "b"], "s": [1, 2, 3, 4]}
