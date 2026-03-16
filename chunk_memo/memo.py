@@ -13,12 +13,8 @@ from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
 from .cache_index import chunk_index_path
 from .data_write_utils import _atomic_write_json
 from .identity import params_to_cache_id, stable_serialize
-from .runners import (
-    Diagnostics,
-    run,
-    run_parallel_over_iterator,
-    run_streaming,
-)
+from .runners import (Diagnostics, run, run_parallel_over_iterator,
+                      run_streaming)
 from .runners_common import resolve_cache_for_run
 
 
@@ -388,39 +384,6 @@ class ChunkMemo:
             cache.set_identity(cache_id, metadata=merged_metadata)
         return cache
 
-    def cache(
-        self,
-        *,
-        params_arg: str = "params",
-        map_fn: Callable[..., Iterable[Any]] | None = None,
-        map_fn_kwargs: Mapping[str, Any] | None = None,
-        max_workers: int = 1,
-    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
-        """Decorator for running memoized execution with output.
-
-        Infers memoization params from non-axis arguments unless an explicit
-        params dict is provided. Supports axis selection by value or by index
-        via axis_indices. Uses runners.run under the hood.
-        """
-        return self._build_wrapper(
-            params_arg=params_arg,
-            streaming=False,
-            map_fn=map_fn,
-            map_fn_kwargs=map_fn_kwargs,
-            max_workers=max_workers,
-        )
-
-    def stream_cache(
-        self, *, params_arg: str = "params"
-    ) -> Callable[[Callable[..., Any]], Callable[..., Diagnostics]]:
-        """Decorator for streaming memoized execution to disk only.
-
-        Infers memoization params from non-axis arguments unless an explicit
-        params dict is provided. Supports axis selection by value or by index
-        via axis_indices. Uses runners.run_streaming under the hood.
-        """
-        return self._build_wrapper(params_arg=params_arg, streaming=True)
-
     def _split_bound_args(
         self,
         bound_args: Mapping[str, Any],
@@ -447,17 +410,41 @@ class ChunkMemo:
             merged_params.update(exec_extras)
         return merged_params
 
-    def _build_wrapper(
+    def cache(
         self,
         *,
-        params_arg: str,
-        streaming: bool,
+        params_arg: str = "params",
+        streaming=False,
         map_fn: Callable[..., Iterable[Any]] | None = None,
         map_fn_kwargs: Mapping[str, Any] | None = None,
         max_workers: int = 1,
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    ) -> Callable[[Callable[..., Any]], Callable[..., Tuple[Any, Diagnostics]]]:
+        """Decorator for running memoized execution with output.
+
+        Infers memoization params from non-axis arguments unless an explicit
+        params dict is provided. Supports axis selection by value or by index
+        via axis_indices. Uses runners.run under the hood.
+        """
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             signature = inspect.signature(func)
+
+            def expand_var_keyword_args(bound_args: inspect.BoundArguments) -> None:
+                for param_name, param in signature.parameters.items():
+                    if param.kind is not inspect.Parameter.VAR_KEYWORD:
+                        continue
+                    if param_name not in bound_args.arguments:
+                        continue
+                    extra_kwargs = bound_args.arguments.pop(param_name)
+                    if not isinstance(extra_kwargs, Mapping):
+                        raise ValueError(
+                            f"'{param_name}' must be a mapping of keyword arguments"
+                        )
+                    overlap = set(extra_kwargs) & set(bound_args.arguments)
+                    if overlap:
+                        raise ValueError(
+                            f"'{param_name}' overlaps with explicit arguments: {sorted(overlap)}"
+                        )
+                    bound_args.arguments.update(extra_kwargs)
 
             @functools.wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -470,6 +457,7 @@ class ChunkMemo:
                 extend_cache = kwargs.pop("extend_cache", False)
                 bound = signature.bind_partial(*args, **kwargs)
                 bound.apply_defaults()
+                expand_var_keyword_args(bound)
                 params_provided = params_arg in bound.arguments
                 params = bound.arguments.get(params_arg)
                 if params_provided and not isinstance(params, dict):

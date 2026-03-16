@@ -25,13 +25,11 @@ def collate_fn(chunks):
     return list(chunks)
 
 
-def exec_fn_parallel(params, strat, s):
-    return {
-        "alpha": params["alpha"],
-        "strat": strat,
-        "s": s,
-        "value": len(strat) + s,
-    }
+def exec_fn3(params, **axis_val):
+    breakpoint()
+    dict = {'alpha': params["alpha"], **axis_val}
+    dict["value"] = len(dict["strat"]) + dict["s"]
+    return dict
 
 
 def main():
@@ -70,11 +68,19 @@ def main():
     print("Wrapped output 2:", wrapped_output)
     print("Wrapped diagnostics 2:", wrapped_diag)
 
-    exec_fn_parallel_wrapped = memo.cache(max_workers=2)(exec_fn_parallel)
+    exec_fn_parallel_wrapped = memo.cache(max_workers=2)(exec_fn)
     parallel_output, parallel_diag = exec_fn_parallel_wrapped(
         params,
         strat=["aaa"],
         s=[1, 2, 3, 4],
+    )
+    print("Parallel wrapped output:", parallel_output)
+    print("Parallel wrapped diagnostics:", parallel_diag)
+
+    exec_fn_wrapped = memo.cache(max_workers=1)(exec_fn3)
+    output, diag = exec_fn_wrapped(
+        params,
+        **axis_values,
     )
     print("Parallel wrapped output:", parallel_output)
     print("Parallel wrapped diagnostics:", parallel_diag)

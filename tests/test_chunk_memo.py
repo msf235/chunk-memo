@@ -97,6 +97,10 @@ def exec_point_inferred(alpha, strat, s, extra=1):
     }
 
 
+def exec_point_kwargs(params, **axis_val):
+    return {"params": params, **axis_val}
+
+
 def run_memo(root, params=None, *, merge=True, chunk_spec=None, axis_values=None):
     params = params or {}
     axis_values = axis_values or {}
@@ -222,6 +226,18 @@ def test_run_wrap_infers_params_from_args():
         output2, diag2 = exec_point(alpha=0.4, strat=["a"], s=[1, 2, 3], extra=2)
         assert output2 == output
         assert diag2.executed_chunks == 0
+
+
+def test_run_wrap_kwargs_does_not_leak_axes_into_params():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        wrapper = run_memo_wrapper(temp_dir, axis_values=axis_values)
+
+        exec_point = wrapper.cache()(exec_point_kwargs)
+        params = {"alpha": 0.4}
+        output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
+        assert diag.executed_chunks == 1
+        assert output[0]["params"] == params
 
 
 def test_run_wrap_param_merge():
