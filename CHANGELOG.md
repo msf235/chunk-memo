@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+Changed api for runners_parallel.run_parallel to match runners.run, and
+added a runners_parallel_over_iterators with the old api.
+
+Fixed unintended extra nesting of outputs of memo-wrapped methods.
+
 ## 0.1.3
 Added pypi publish github workflow. This release is the first test of that
 workflow.
