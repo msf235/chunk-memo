@@ -929,7 +929,7 @@ class ChunkCache:
         payload: Mapping[str, Any],
         chunk_key: ChunkKey,
         requested_items: list[Tuple[Any, ...]] | None,
-        collate_fn: Callable[[list[Any]], Any],
+        _collate_fn: Callable[[list[Any]], Any],
     ) -> tuple[Any | None, bool]:
         if requested_items is None:
             chunk_output = payload.get("output")
@@ -960,7 +960,7 @@ class ChunkCache:
             cached_outputs.append(item_map[item_key])
         if not cached_outputs:
             return None, False
-        return collate_fn([cached_outputs]), missing
+        return cached_outputs, missing
 
     def _materialize_axis_values(self, axis_values_obj: Any) -> list[Any]:
         if isinstance(axis_values_obj, ABCSequence) and not isinstance(

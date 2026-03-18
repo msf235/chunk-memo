@@ -355,6 +355,11 @@ def _merge_outputs(
         return collate_fn(outputs)
     if context.collate_fn is not None:
         return context.collate_fn(outputs)
+    if all(isinstance(chunk, (list, tuple)) for chunk in outputs):
+        merged: list[Any] = []
+        for chunk in outputs:
+            merged.extend(chunk)
+        return merged
     return outputs
 
 

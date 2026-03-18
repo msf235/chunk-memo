@@ -1003,11 +1003,12 @@ def run_parallel_over_iterator(
 
     merged: Any = None
     if outputs is not None:
+        final_collate_fn = collate_fn if collate_fn is not None else context.collate_fn
         merged = _merge_outputs(
             context,
             outputs,
             diagnostics,
-            collate_fn=collate_fn_resolved,
+            collate_fn=final_collate_fn,
         )
         if not merged and item_list:
             merged = exec_outputs if missing_items else []

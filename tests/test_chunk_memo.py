@@ -178,7 +178,7 @@ def test_chunk_count_grid():
         assert diag.executed_chunks == 6
 
 
-def test_collate_fn_optional_returns_nested():
+def test_collate_fn_optional_returns_flat_output():
     with tempfile.TemporaryDirectory() as temp_dir:
         params = {"alpha": 0.4}
         axis_values = {"strat": ["a"], "s": [1, 2, 3, 4]}
@@ -186,7 +186,7 @@ def test_collate_fn_optional_returns_nested():
         output, diag = slice_and_run(memo, params, exec_fn_grid)
         assert diag.total_chunks == 2
         assert isinstance(output, list)
-        assert isinstance(output[0], list)
+        assert isinstance(output[0], dict)
 
 
 def test_run_wrap_positional_params():
@@ -211,6 +211,25 @@ def test_run_wrap_executes_with_axis_values():
         output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
         assert diag.executed_chunks == 1
         assert output
+
+
+def test_run_wrap_without_collate_does_not_double_nest():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        axis_values = {"strat": ["a"], "s": [1, 2, 3]}
+        wrapper = run_memo_wrapper(temp_dir, merge=False, axis_values=axis_values)
+
+        exec_point = wrapper.cache()(exec_point_kwargs)
+        params = {"alpha": 0.4}
+        output, diag = exec_point(params, strat=["a"], s=[1, 2, 3])
+        assert diag.executed_chunks == 1
+        assert isinstance(output, list)
+        assert isinstance(output[0], dict)
+        assert output[0]["strat"] == "a"
+        assert output[0]["s"] == 1
+
+        output2, diag2 = exec_point(params, strat=["a"], s=[1, 2, 3])
+        assert diag2.executed_chunks == 0
+        assert output2 == output
 
 
 def test_run_wrap_infers_params_from_args():

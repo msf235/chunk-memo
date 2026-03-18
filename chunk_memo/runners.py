@@ -255,13 +255,13 @@ def run_chunks(
     collect_chunk_data = cast(CollectChunkDataFn, deps.collect_chunk_data)
     extract_items_from_map = cast(ExtractItemsFromMapFn, deps.extract_items_from_map)
     requested_items_map = cache.requested_items_by_chunk()
-    collate_fn_resolved: MergeFn
+    collate_fn_resolved: MergeFn | None
     if collate_fn is not None:
         collate_fn_resolved = collate_fn
     elif context.collate_fn is not None:
         collate_fn_resolved = context.collate_fn
     else:
-        collate_fn_resolved = lambda chunk: chunk
+        collate_fn_resolved = None
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
     total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
@@ -290,7 +290,7 @@ def run_chunks(
                 payload,
                 chunk_key,
                 requested_items,
-                collate_fn_resolved,
+                collate_fn_resolved or (lambda chunk: chunk),
             )
             if cached_output is not None:
                 _log_chunk(
@@ -325,9 +325,7 @@ def run_chunks(
             chunk_key,
             requested_items,
         )
-        result = (
-            collate_fn_resolved([extracted]) if extracted is not None else chunk_output
-        )
+        result = extracted if extracted is not None else chunk_output
         return result, False, False
 
     outputs: list[Any] = []

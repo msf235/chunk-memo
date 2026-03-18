@@ -84,6 +84,7 @@ def main():
     )
     print("Parallel wrapped output:", parallel_output)
     print("Parallel wrapped diagnostics:", parallel_diag)
+    breakpoint()
 
 
 if __name__ == "__main__":
