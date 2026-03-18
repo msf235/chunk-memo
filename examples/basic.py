@@ -27,7 +27,7 @@ def collate_fn(chunks):
 
 def exec_fn3(params, **axis_val):
     breakpoint()
-    dict = {'alpha': params["alpha"], **axis_val}
+    dict = {"alpha": params["alpha"], **axis_val}
     dict["value"] = len(dict["strat"]) + dict["s"]
     return dict
 
@@ -84,7 +84,6 @@ def main():
     )
     print("Parallel wrapped output:", parallel_output)
     print("Parallel wrapped diagnostics:", parallel_diag)
-    breakpoint()
 
 
 if __name__ == "__main__":
