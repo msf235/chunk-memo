@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.4
+## 0.1.5
 Changed API for runners_parallel.run_parallel to match runners.run and
 added new runners_parallel.run_parallel_over_iterators with previous API.
 
@@ -8,6 +8,9 @@ Fixed a bug when execution function which is wrapped by the memo cache
 utility has input **kwargs
 
 Fixed nested outputs
+
+## 0.1.4
+Made by mistake.
 
 ## 0.1.3
 Added pypi publish github workflow. This release is the first test of that
