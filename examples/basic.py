@@ -27,7 +27,7 @@ def collate_fn(chunks):
 
 def exec_fn3(params, **axis_val):
     breakpoint()
-    dict = {'alpha': params["alpha"], **axis_val}
+    dict = {"alpha": params["alpha"], **axis_val}
     dict["value"] = len(dict["strat"]) + dict["s"]
     return dict
 
