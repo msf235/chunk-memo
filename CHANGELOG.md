@@ -1,9 +1,6 @@
 # Changelog
 
 ## 0.1.4
-Changed api for runners_parallel.run_parallel to match runners.run, and
-added a runners_parallel_over_iterators with the old api.
-
 Changed API for runners_parallel.run_parallel to match runners.run and
 added new runners_parallel.run_parallel_over_iterators with previous API.
 
