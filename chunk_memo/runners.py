@@ -7,14 +7,14 @@ from .runner_protocol import (
     BuildItemMapsFromChunkOutputFn,
     CacheProtocol,
     ChunkHashFn,
-    ResolveCachePathFn,
-    RunnerContext,
-    UpdateChunkIndexFn,
-    WriteMetadataFn,
-    WriteChunkPayloadFn,
     CollectChunkDataFn,
     ExtractItemsFromMapFn,
     LoadPayloadFn,
+    ResolveCachePathFn,
+    RunnerContext,
+    UpdateChunkIndexFn,
+    WriteChunkPayloadFn,
+    WriteMetadataFn,
 )
 from .runners_parallel import run_parallel, run_parallel_over_iterator
 from .runners_common import (
@@ -24,8 +24,8 @@ from .runners_common import (
     _merge_outputs,
     _payload_item_map,
     _stream_item_count,
-    resolve_chunk_path,
     resolve_cache_for_run,
+    resolve_chunk_path,
     resolve_runner_deps,
 )
 
@@ -269,7 +269,8 @@ def run_chunks(
         total_chunks=total_chunks,
         total_items=total_items,
         verbose=context.verbose,
-        label="planning",
+        # label="planning",
+        label="execution",
     )
 
     def process_chunk(chunk_key: ChunkKey) -> tuple[Any, bool, bool]:
