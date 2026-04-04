@@ -36,7 +36,8 @@ def main():
     output_root = Path("output")
     output_root.mkdir(exist_ok=True)
     params = {"alpha": 0.4}
-    axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
+    # axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4, 5, 6, 7, 8]}
+    axis_values = {"strat": ["aaa", "bb"], "s": list(range(20000))}
 
     memo = ChunkMemo(
         root=output_root / "memo_run_cache",
@@ -72,7 +73,8 @@ def main():
     parallel_output, parallel_diag = exec_fn_parallel_wrapped(
         params,
         strat=["aaa"],
-        s=[1, 2, 3, 4],
+        # s=[1, 2, 3, 4],
+        s=list(range(20000)),
     )
     print("Parallel wrapped output:", parallel_output)
     print("Parallel wrapped diagnostics:", parallel_diag)
