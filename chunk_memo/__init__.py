@@ -4,13 +4,8 @@ from .cache import ChunkCache
 from .memo import ChunkMemo
 from .identity import params_to_cache_id
 from .runner_protocol import CacheStatus, RunnerContext
-from .runners import (
-    Diagnostics,
-    run,
-    run_parallel,
-    run_parallel_over_iterator,
-    run_streaming,
-)
+from .runners import Diagnostics, run, run_streaming
+from .runners_parallel import run_parallel, run_parallel_over_iterator
 
 auto_load = ChunkMemo.auto_load
 

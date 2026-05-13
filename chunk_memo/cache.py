@@ -17,7 +17,7 @@ from .data_write_utils import (
     _atomic_write_pickle,
 )
 from .identity import stable_serialize
-from .runner_protocol import CacheStatus
+from .runner_protocol import CacheStatus, ChunkCacheHit
 
 ChunkKey = Tuple[Tuple[str, Tuple[Any, ...]], ...]
 MemoChunkEnumerator = Callable[[dict[str, Any]], Sequence[ChunkKey]]
@@ -961,6 +961,81 @@ class ChunkCache:
         if not cached_outputs:
             return None, False
         return cached_outputs, missing
+
+    def inspect_chunk_cache(
+        self,
+        chunk_key: ChunkKey,
+        requested_items: list[Tuple[Any, ...]] | None,
+        *,
+        requests_full_chunk: bool,
+        load_full_chunk_payload: bool,
+        chunk_index: Mapping[str, Any] | None = None,
+    ) -> ChunkCacheHit:
+        chunk_hash = self.chunk_hash(chunk_key)
+        path = self.resolve_cache_path(chunk_key, chunk_hash)
+        exists = chunk_hash in chunk_index if chunk_index else path.exists()
+        if not exists:
+            return ChunkCacheHit(is_usable=False)
+
+        payload = self.load_payload(path)
+        if payload is None:
+            return ChunkCacheHit(is_usable=False)
+
+        if requests_full_chunk:
+            if not load_full_chunk_payload:
+                return ChunkCacheHit(is_usable=True, payload=payload)
+            chunk_output, is_partial = self.collect_chunk_data(
+                payload,
+                chunk_key,
+                None,
+                lambda chunk: chunk,
+            )
+            if chunk_output is None:
+                return ChunkCacheHit(is_usable=False, payload=payload)
+            return ChunkCacheHit(
+                is_usable=True,
+                output=chunk_output,
+                is_partial=is_partial,
+                payload=payload,
+            )
+
+        if requested_items is None:
+            raise ValueError(
+                "requested_items is required when requests_full_chunk is False"
+            )
+
+        item_map = payload.get("items")
+        if item_map is None:
+            existing_payload = payload
+            item_map, item_axis_vals = self.build_item_maps_from_chunk_output(
+                chunk_key,
+                payload.get("output"),
+            )
+            if item_map is not None:
+                payload = dict(payload)
+                payload["items"] = item_map
+                if item_axis_vals is not None:
+                    payload["axis_vals"] = item_axis_vals
+                self.write_chunk_payload(path, payload, existing=existing_payload)
+        if item_map is None:
+            return ChunkCacheHit(is_usable=False, payload=payload)
+
+        cached_outputs: list[Any] = []
+        missing = False
+        for values in requested_items:
+            item_key = self.item_hash(chunk_key, values)
+            if item_key not in item_map:
+                missing = True
+                continue
+            cached_outputs.append(item_map[item_key])
+        if not cached_outputs:
+            return ChunkCacheHit(is_usable=False, payload=payload)
+        return ChunkCacheHit(
+            is_usable=True,
+            output=cached_outputs,
+            is_partial=missing,
+            payload=payload,
+        )
 
     def _materialize_axis_values(self, axis_values_obj: Any) -> list[Any]:
         if isinstance(axis_values_obj, ABCSequence) and not isinstance(

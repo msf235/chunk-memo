@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import functools
 import inspect
-import itertools
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
@@ -13,9 +12,9 @@ from .cache import CachePathFn, ChunkCache, CollateFn, MemoChunkEnumerator
 from .cache_index import chunk_index_path
 from .data_write_utils import _atomic_write_json
 from .identity import params_to_cache_id, stable_serialize
-from .runners import (Diagnostics, run, run_parallel_over_iterator,
-                      run_streaming)
+from .runners import Diagnostics, run, run_streaming
 from .runners_common import resolve_cache_for_run
+from .runners_parallel import run_parallel
 
 
 class ChunkMemo:
@@ -494,13 +493,16 @@ class ChunkMemo:
                 if max_workers > 1 or map_fn is not None:
                     if map_fn is None:
                         _require_top_level_function(func)
-                    return run_parallel_over_iterator(
-                        _build_items_for_parallel(sliced),
-                        exec_fn=exec_fn,
-                        cache=sliced,
-                        map_fn=map_fn or _map_process_pool,
-                        map_fn_kwargs=_resolve_map_kwargs(map_fn_kwargs, max_workers),
-                    )
+                    return run_parallel(cache=sliced, exec_fn=exec_fn,
+                                        map_fn = map_fn or _map_process_pool,
+                                        map_fn_kwargs=_resolve_map_kwargs(map_fn_kwargs, max_workers))
+                    # return run_parallel_over_iterator(
+                    #     _build_items_for_parallel(sliced),
+                    #     exec_fn=exec_fn,
+                    #     cache=sliced,
+                    #     map_fn=map_fn or _map_process_pool,
+                    #     map_fn_kwargs=_resolve_map_kwargs(map_fn_kwargs, max_workers),
+                    # )
                 return run(sliced, exec_fn)
 
             def cache_status(
@@ -547,22 +549,6 @@ def _resolve_map_kwargs(
     if max_workers > 1 and "max_workers" not in resolved:
         resolved["max_workers"] = max_workers
     return resolved
-
-
-def _build_items_for_parallel(cache: ChunkCache) -> list[dict[str, Any]]:
-    status = cache.cache_status()
-    axis_values = status.get("axis_values", {})
-    axis_order = status.get("axis_order", tuple(axis_values))
-    axis_lists: list[list[Any]] = []
-    for axis in axis_order:
-        values = axis_values.get(axis, [])
-        if isinstance(values, (list, tuple)):
-            axis_lists.append(list(values))
-        elif isinstance(values, Sequence):
-            axis_lists.append(list(values))
-        else:
-            axis_lists.append([values])
-    return [dict(zip(axis_order, values)) for values in itertools.product(*axis_lists)]
 
 
 def _require_top_level_function(func: Callable[..., Any]) -> None:

@@ -4,7 +4,7 @@ import dataclasses
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
-from ._format import prepare_progress, print_detail
+from ._format import print_detail
 from .runner_protocol import (
     BuildItemMapsFromAxisValuesFn,
     BuildItemMapsFromChunkOutputFn,
@@ -361,39 +361,3 @@ def _merge_outputs(
             merged.extend(chunk)
         return merged
     return outputs
-
-
-def prepare_planning_progress(
-    *,
-    total_chunks: int,
-    total_items: int,
-    verbose: int,
-    label: str = "planning",
-) -> tuple[Callable[[int, bool], None], Callable[[int], None], Callable[[bool], None]]:
-    """Prepare planning progress callbacks with gated final output."""
-    report_base, update_processed = prepare_progress(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=verbose,
-        label=label,
-    )
-    allow_final = False
-    final_emitted = False
-
-    def set_allow_final(value: bool) -> None:
-        nonlocal allow_final
-        allow_final = value
-
-    def report_progress(processed: int, final: bool = False) -> None:
-        nonlocal final_emitted
-        if processed >= total_chunks:
-            if not allow_final or final_emitted:
-                return
-            final_emitted = True
-            report_base(total_chunks, True)
-            return
-        if final:
-            return
-        report_base(processed, False)
-
-    return report_progress, update_processed, set_allow_final

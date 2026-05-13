@@ -2,32 +2,19 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Sequence, Tuple, cast
 
-from ._format import chunk_key_size, prepare_progress, print_chunk_summary
-from .runner_protocol import (
-    BuildItemMapsFromChunkOutputFn,
-    CacheProtocol,
-    ChunkHashFn,
-    CollectChunkDataFn,
-    ExtractItemsFromMapFn,
-    LoadPayloadFn,
-    ResolveCachePathFn,
-    RunnerContext,
-    UpdateChunkIndexFn,
-    WriteChunkPayloadFn,
-    WriteMetadataFn,
-)
-from .runners_parallel import run_parallel, run_parallel_over_iterator
-from .runners_common import (
-    ChunkKey,
-    Diagnostics,
-    _log_chunk,
-    _merge_outputs,
-    _payload_item_map,
-    _stream_item_count,
-    resolve_cache_for_run,
-    resolve_chunk_path,
-    resolve_runner_deps,
-)
+from tqdm import tqdm
+
+from ._format import print_chunk_summary
+from .runner_protocol import (BuildItemMapsFromChunkOutputFn, CacheProtocol,
+                              ChunkHashFn, CollectChunkDataFn,
+                              ExtractItemsFromMapFn, LoadPayloadFn,
+                              ResolveCachePathFn, RunnerContext,
+                              UpdateChunkIndexFn, WriteChunkPayloadFn,
+                              WriteMetadataFn)
+from .runners_common import (ChunkKey, Diagnostics, _log_chunk, _merge_outputs,
+                             _payload_item_map, _stream_item_count,
+                             resolve_cache_for_run, resolve_chunk_path,
+                             resolve_runner_deps)
 
 MergeFn = Callable[[list[Any]], Any]
 
@@ -264,14 +251,6 @@ def run_chunks(
         collate_fn_resolved = None
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
-    total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
-    report_progress, update_processed = prepare_progress(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=context.verbose,
-        # label="planning",
-        label="execution",
-    )
 
     def process_chunk(chunk_key: ChunkKey) -> tuple[Any, bool, bool]:
         chunk_hash_value, path = resolve_chunk_path(
@@ -330,15 +309,14 @@ def run_chunks(
         return result, False, False
 
     outputs: list[Any] = []
-    for processed, chunk_key in enumerate(chunk_keys, start=1):
-        update_processed(chunk_key_size(chunk_key))
+    it = tqdm(enumerate(chunk_keys, start=1))
+    for processed, chunk_key in it:
         output, cached, is_partial = process_chunk(chunk_key)
         if cached:
             diagnostics.cached_chunks += 1
         if is_partial:
             diagnostics.partial_chunks += 1
         outputs.append(output)
-        report_progress(processed, processed == total_chunks)
 
     merged = _merge_outputs(
         context,
@@ -402,16 +380,8 @@ def run_chunks_streaming(
     )
     diagnostics = Diagnostics(total_chunks=len(chunk_keys))
     total_chunks = len(chunk_keys)
-    total_items = sum(chunk_key_size(chunk_key) for chunk_key in chunk_keys)
-    report_progress, update_processed = prepare_progress(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=context.verbose,
-        label="planning",
-    )
 
     for processed, chunk_key in enumerate(chunk_keys, start=1):
-        update_processed(chunk_key_size(chunk_key))
         chunk_hash_value, path = resolve_chunk_path(
             cast(ChunkHashFn, deps.chunk_hash),
             cast(ResolveCachePathFn, deps.resolve_cache_path),
@@ -429,7 +399,6 @@ def run_chunks_streaming(
                         diagnostics.partial_chunks += 1
                 diagnostics.cached_chunks += 1
                 _log_chunk(context, "load", chunk_key, None)
-                report_progress(processed, processed == total_chunks)
                 continue
             item_map = _payload_item_map(
                 build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
@@ -455,7 +424,6 @@ def run_chunks_streaming(
                     chunk_key,
                     None if requested_items is None else len(requested_items),
                 )
-                report_progress(processed, processed == total_chunks)
                 continue
 
         execute_and_save_chunk(
@@ -484,8 +452,6 @@ def run_chunks_streaming(
             chunk_key,
             None if requested_items is None else len(requested_items),
         )
-
-        report_progress(processed, processed == total_chunks)
 
     print_chunk_summary(diagnostics, context.verbose)
     return diagnostics

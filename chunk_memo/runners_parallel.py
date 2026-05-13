@@ -4,31 +4,17 @@ import dataclasses
 import functools
 import inspect
 import itertools
-import time
-from bisect import bisect_right
 from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
 
-from ._format import (
-    build_plan_lines,
-    chunk_key_size,
-    format_rate_eta,
-    print_chunk_summary,
-    print_progress,
-)
+from ._format import build_plan_lines, chunk_key_size, print_chunk_summary
 from .runner_protocol import (
     BuildItemMapsFromAxisValuesFn,
-    BuildItemMapsFromChunkOutputFn,
     CacheProtocol,
     CacheStatus,
     ChunkHashFn,
     CollectChunkDataFn,
-    ItemHashFn,
     LoadChunkIndexFn,
-    LoadPayloadFn,
-    ReconstructOutputFromItemsFn,
-    ReconstructPartialOutputFromItemsFn,
     ResolveCachePathFn,
     RunnerContext,
     UpdateChunkIndexFn,
@@ -40,17 +26,13 @@ from .runners_common import (
     Diagnostics,
     _log_chunk,
     _merge_outputs,
-    _payload_item_map,
     _require_axis_info,
     _require_params,
     _save_chunk_payload,
-    prepare_planning_progress,
     resolve_cache_for_run,
     resolve_chunk_path,
     resolve_runner_deps,
 )
-
-EXEC_REPORT_INTERVAL_SECONDS = 2.0
 
 
 @dataclasses.dataclass
@@ -215,188 +197,72 @@ def _prepare_parallel_items(
 
 
 def _scan_cached_chunk_items(
+    cache: CacheProtocol,
     context: RunnerContext,
-    chunk_hash: ChunkHashFn,
-    resolve_cache_path: ResolveCachePathFn,
-    load_payload: LoadPayloadFn,
-    reconstruct_output_from_items: ReconstructOutputFromItemsFn,
-    reconstruct_partial_output_from_items: ReconstructPartialOutputFromItemsFn,
-    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn,
-    write_chunk_payload: WriteChunkPayloadFn,
-    item_hash: ItemHashFn,
     cached_chunks: Sequence[ChunkKey],
     cached_chunk_items: Sequence[Sequence[Any]],
     *,
     axis_extractor: Callable[[Any], Tuple[Any, ...]],
-    report_progress: Callable[[int, bool], None],
-    update_processed: Callable[[int], None],
-    total_chunks: int,
     tracker: _MissingTracker,
     diagnostics: Diagnostics,
     cached_payloads: dict[ChunkKey, Mapping[str, Any]],
-    chunk_exists: Callable[[str, Path], bool],
+    chunk_index: Mapping[str, Any] | None,
     load_full_chunk_payload: bool,
     collate_fn: Callable[[list[Any]], Any] | None = None,
     outputs: list[Any] | None = None,
 ) -> None:
-    for processed, (chunk_key, chunk_items) in enumerate(
-        zip(cached_chunks, cached_chunk_items), start=1
-    ):
+    for chunk_key, chunk_items in zip(cached_chunks, cached_chunk_items):
         if not chunk_items:
-            report_progress(processed, processed == total_chunks)
             continue
-        update_processed(len(chunk_items))
-        full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
-        chunk_hash_value, path = resolve_chunk_path(
-            chunk_hash,
-            resolve_cache_path,
+        requests_full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
+        requested_items = None
+        if not requests_full_chunk:
+            requested_items = [axis_extractor(item) for item in chunk_items]
+        cache_hit = cache.inspect_chunk_cache(
             chunk_key,
+            requested_items,
+            requests_full_chunk=requests_full_chunk,
+            load_full_chunk_payload=load_full_chunk_payload,
+            chunk_index=chunk_index,
         )
-        if not chunk_exists(chunk_hash_value, path):
+        if not cache_hit.is_usable:
+            if cache_hit.payload is not None:
+                cached_payloads[chunk_key] = cache_hit.payload
             tracker.register(chunk_key, list(chunk_items))
             continue
-        if full_chunk and not load_full_chunk_payload:
-            diagnostics.cached_chunks += 1
-            _log_chunk(context, "load", chunk_key, None)
-            report_progress(processed, processed == total_chunks)
-            continue
-        payload = load_payload(path)
-        if payload is None:
-            tracker.register(chunk_key, list(chunk_items))
-            continue
-        if full_chunk:
-            diagnostics.cached_chunks += 1
-            _log_chunk(context, "load", chunk_key, None)
-            if outputs is not None and collate_fn is not None:
-                chunk_output = payload.get("output")
-                partial = False
-                if chunk_output is None:
-                    items_payload = payload.get("items")
-                    if items_payload is not None and isinstance(items_payload, Mapping):
-                        chunk_output = reconstruct_output_from_items(
-                            chunk_key, items_payload
-                        )
-                        if chunk_output is None:
-                            chunk_output = reconstruct_partial_output_from_items(
-                                chunk_key, items_payload
-                            )
-                            partial = True
-                if chunk_output is None:
-                    cached_payloads[chunk_key] = payload
-                    tracker.register(chunk_key, list(chunk_items))
-                    report_progress(processed, processed == total_chunks)
-                    continue
-                outputs.append(chunk_output)
-                if partial:
-                    diagnostics.partial_chunks += 1
-            report_progress(processed, processed == total_chunks)
-            continue
-        item_map = _payload_item_map(
-            build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
-            resolve_cache_path=resolve_cache_path,
-            write_chunk_payload=write_chunk_payload,
-            chunk_key=chunk_key,
-            payload=payload,
-        )
-        if item_map is None:
-            cached_payloads[chunk_key] = payload
-            tracker.register(chunk_key, list(chunk_items))
-            continue
-        item_outputs: list[Any] = []
-        partial = False
-        for item in chunk_items:
-            axis_values = axis_extractor(item)
-            item_key = item_hash(chunk_key, axis_values)
-            if item_key not in item_map:
-                partial = True
-                continue
-            if outputs is not None and collate_fn is not None:
-                item_outputs.append(item_map[item_key])
+
         diagnostics.cached_chunks += 1
-        _log_chunk(context, "load", chunk_key, len(chunk_items))
-        if outputs is not None and collate_fn is not None and item_outputs:
-            outputs.append(collate_fn(item_outputs))
-        if partial:
+        if cache_hit.is_partial:
             diagnostics.partial_chunks += 1
-        report_progress(processed, processed == total_chunks)
+        _log_chunk(
+            context,
+            "load",
+            chunk_key,
+            None if requests_full_chunk else len(chunk_items),
+        )
+        if outputs is None or collate_fn is None or cache_hit.output is None:
+            continue
+        if requests_full_chunk:
+            outputs.append(cache_hit.output)
+            continue
+        item_outputs = cast(list[Any], cache_hit.output)
+        if item_outputs:
+            outputs.append(collate_fn(item_outputs))
 
 
-def _exec_iter_with_progress(
-    context: RunnerContext,
-    exec_iter: Iterable[Any],
-    *,
-    cached_items_total: int,
-    total_items_all: int,
-    total_missing: int,
-    cached_chunks: int,
-    total_chunks: int,
-    completed_chunk_counts: Sequence[int] | None,
-) -> Iterable[tuple[int, Any]]:
-    exec_start = time.monotonic()
-    last_report = exec_start
-    report_interval = EXEC_REPORT_INTERVAL_SECONDS
+def _exec_iter(exec_iter: Iterable[Any]) -> Iterable[tuple[int, Any]]:
     for index, result in enumerate(exec_iter, start=1):
-        now = time.monotonic()
-        if context.verbose == 1 and (now - last_report) >= report_interval:
-            processed_items = cached_items_total + index
-            message = format_rate_eta(
-                "exec_items",
-                processed_items,
-                total_items_all,
-                exec_start,
-                rate_processed=index,
-                rate_total=total_missing,
-            )
-            completed_chunks = (
-                bisect_right(completed_chunk_counts, index)
-                if completed_chunk_counts is not None
-                else 0
-            )
-            live_cached = cached_chunks + completed_chunks
-            message = f"{message} cached_chunks={live_cached}/{total_chunks}"
-            print_progress(message, final=False)
-            last_report = now
         yield index, result
-    if context.verbose == 1:
-        processed_items = cached_items_total + total_missing
-        message = format_rate_eta(
-            "exec_items",
-            processed_items,
-            total_items_all,
-            exec_start,
-            rate_processed=total_missing,
-            rate_total=total_missing,
-        )
-        completed_chunks = (
-            bisect_right(completed_chunk_counts, total_missing)
-            if completed_chunk_counts is not None
-            else 0
-        )
-        live_cached = cached_chunks + completed_chunks
-        message = f"{message} cached_chunks={live_cached}/{total_chunks}"
-        print_progress(message, final=True)
 
 
 def _register_missing_chunk_items(
     missing_chunks: Sequence[ChunkKey],
     missing_chunk_items: Sequence[Sequence[Any]],
     tracker: _MissingTracker,
-    update_processed: Callable[[int], None],
-    report_progress: Callable[[int, bool], None],
-    *,
-    base_index: int,
-    total_chunks: int,
 ) -> None:
-    for offset, (chunk_key, chunk_items) in enumerate(
-        zip(missing_chunks, missing_chunk_items), start=1
-    ):
+    for chunk_key, chunk_items in zip(missing_chunks, missing_chunk_items):
         if chunk_items:
             tracker.register(chunk_key, list(chunk_items))
-        update_processed(len(chunk_items))
-        report_progress(
-            base_index + offset,
-            (base_index + offset) == total_chunks,
-        )
 
 
 def _finalize_missing_items(
@@ -583,21 +449,6 @@ def _collect_axis_values_from_items(
     return {axis: values for axis, values in collected.items() if values}
 
 
-def _cumulative_chunk_counts(
-    chunk_order: Sequence[ChunkKey],
-    items_by_chunk: Mapping[ChunkKey, Sequence[Any]],
-) -> list[int]:
-    counts: list[int] = []
-    running = 0
-    for chunk_key in chunk_order:
-        chunk_size = len(items_by_chunk.get(chunk_key, []))
-        if chunk_size <= 0:
-            continue
-        running += chunk_size
-        counts.append(running)
-    return counts
-
-
 def run_parallel_over_iterator(
     items: Iterable[Any],
     cache: CacheProtocol,
@@ -767,7 +618,6 @@ def run_parallel_over_iterator(
     map_fn_kwargs_resolved = setup.map_fn_kwargs
     outputs: list[Any] | None = [] if return_output else None
     exec_outputs: list[Any] = []
-    total_chunks = diagnostics.total_chunks
     (
         item_list,
         axis_extractor,
@@ -782,13 +632,6 @@ def run_parallel_over_iterator(
     )
     if not item_list or axis_extractor is None:
         return [], diagnostics
-    total_items = len(item_list)
-    report_progress_main, update_processed, set_allow_final = prepare_planning_progress(
-        total_chunks=total_chunks,
-        total_items=total_items,
-        verbose=context.verbose,
-        label="planning",
-    )
 
     tracker = _MissingTracker.create(track_item_keys=True)
     cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
@@ -801,50 +644,27 @@ def run_parallel_over_iterator(
         use_index = bool(chunk_index)
 
     _scan_cached_chunk_items(
+        cache,
         context,
-        cast(ChunkHashFn, deps.chunk_hash),
-        cast(ResolveCachePathFn, deps.resolve_cache_path),
-        cast(LoadPayloadFn, deps.load_payload),
-        cast(ReconstructOutputFromItemsFn, deps.reconstruct_output_from_items),
-        cast(
-            ReconstructPartialOutputFromItemsFn,
-            deps.reconstruct_partial_output_from_items,
-        ),
-        cast(BuildItemMapsFromChunkOutputFn, deps.build_item_maps_from_chunk_output),
-        cast(WriteChunkPayloadFn, deps.write_chunk_payload),
-        cast(ItemHashFn, deps.item_hash),
         cached_chunks,
         cached_chunk_items,
         axis_extractor=axis_extractor,
-        report_progress=report_progress_main,
-        update_processed=update_processed,
-        total_chunks=total_chunks,
         tracker=tracker,
         diagnostics=diagnostics,
         cached_payloads=cached_payloads,
-        chunk_exists=lambda _chunk_hash, path: (
-            _chunk_hash in chunk_index if use_index else path.exists()
-        ),
+        chunk_index=chunk_index if use_index else None,
         load_full_chunk_payload=return_output,
         collate_fn=collate_fn_resolved,
         outputs=outputs,
     )
 
-    base_index = len(cached_chunks)
     _register_missing_chunk_items(
         missing_chunks,
         missing_chunk_items,
         tracker,
-        update_processed,
-        report_progress_main,
-        base_index=base_index,
-        total_chunks=total_chunks,
     )
 
     missing_items = _finalize_missing_items(tracker, missing_chunks, item_list)
-    if not missing_items and context.verbose == 1:
-        set_allow_final(True)
-        report_progress_main(total_chunks, True)
 
     if missing_items:
         diagnostics.executed_chunks = len(tracker.missing_chunk_order)
@@ -854,26 +674,11 @@ def run_parallel_over_iterator(
             missing_items,
             **map_fn_kwargs_resolved,
         )
-        total_items_all = len(item_list)
-        cached_items_total = total_items_all - len(missing_items)
-        completed_chunk_counts = _cumulative_chunk_counts(
-            tracker.missing_chunk_order,
-            tracker.missing_items_by_chunk,
-        )
         missing_item_keys = tracker.missing_item_keys or []
         queued_chunks: dict[ChunkKey, list[Any]] = {}
         queued_outputs: dict[ChunkKey, list[Any]] = {}
 
-        for item_idx, result in _exec_iter_with_progress(
-            context,
-            exec_iter,
-            cached_items_total=cached_items_total,
-            total_items_all=total_items_all,
-            total_missing=len(missing_items),
-            cached_chunks=diagnostics.cached_chunks,
-            total_chunks=total_chunks,
-            completed_chunk_counts=completed_chunk_counts,
-        ):
+        for item_idx, result in _exec_iter(exec_iter):
             chunk_key = missing_item_keys[item_idx - 1]
             queued_chunks.setdefault(chunk_key, []).append(missing_items[item_idx - 1])
             queued_outputs.setdefault(chunk_key, []).append(result)
@@ -959,7 +764,6 @@ def run_parallel_over_iterator(
 
         if not flush_on_chunk:
             cursor = 0
-            processed_missing_chunks = 0
             for chunk_key in tracker.missing_chunk_order:
                 chunk_items = tracker.missing_items_by_chunk.get(chunk_key, [])
                 chunk_size = len(chunk_items)
@@ -998,8 +802,6 @@ def run_parallel_over_iterator(
                 if outputs is not None:
                     outputs.append(chunk_output)
                 cursor += chunk_size
-                processed_missing_chunks += 1
-                report_progress_main(base_index + processed_missing_chunks, False)
 
     merged: Any = None
     if outputs is not None:

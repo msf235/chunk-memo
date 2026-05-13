@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence, Tuple, TypedDict
 
@@ -23,6 +24,14 @@ class CacheStatus(TypedDict):
     total_chunks: int
     cached_chunk_indices: list[dict[str, Any]]
     missing_chunk_indices: list[dict[str, Any]]
+
+
+@dataclass
+class ChunkCacheHit:
+    is_usable: bool
+    output: Any | None = None
+    is_partial: bool = False
+    payload: Mapping[str, Any] | None = None
 
 
 class RunnerContext(Protocol):
@@ -112,3 +121,5 @@ class CacheProtocol(RunnerContext, Protocol):
     def iter_chunk_axis_values(
         self, chunk_key: ChunkKey
     ) -> Sequence[Tuple[Any, ...]]: ...
+
+    def inspect_chunk_cache(self, *args: Any, **kwargs: Any) -> ChunkCacheHit: ...
