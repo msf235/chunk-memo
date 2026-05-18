@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chunk-memo"
+version = "0.1.5"
+description = "Memoization with chunked caching and parallelization."
+readme = "README_PYPI.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Matthew Farrell", email = "matthew.farrell.235@gmail.com" },
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "ipdb>=0.13.13",
+    "ipython>=8.39.0",
+    "pdbpp>=0.12.1",
+    "pip>=26.1.1",
+    "tqdm>=4.67.3",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "flaky>=3.8.1"]
+bench = ["joblib>=1.5.3"]
+
+[project.urls]
+Repository = "https://github.com/msf235/chunk-memo"
+
+[tool.pytest.ini_options]
+markers = ["flaky: rerun flaky tests"]
+addopts = "--ignore=tests_dep"
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["chunk_memo"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "chunk_memo/**",
+    "README_PYPI.md",
+    "LICENSE",
+    "pyproject.toml",
+    "CHANGELOG.md",
+]

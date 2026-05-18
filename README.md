@@ -1,0 +1,118 @@
+<h1 align="left">
+<img src="https://raw.githubusercontent.com/msf235/chunk-memo/main/.github/images/banner.svg" width="800">
+
+## What problem does it solve?
+
+Suppose you have:
+
+- Fixed parameters (parameter values that do not vary across the grid).
+- Axis values (lists of parameter values you want to sweep over).
+
+You want to:
+
+1. Evaluate a function across the grid.
+2. Cache results so subsequent runs only compute what is new.
+3. Chunk outputs into reasonable file sizes, without losing the ability to load
+   arbitrary subsets of parameter values. This is particularly relevant when the
+   grid has a large number of points.
+
+chunk-memo breaks the grid into chunks and stores each chunk on disk. When
+axis values change, only the new chunks are computed.
+
+## Concepts
+
+- Point: one combination of axis values (e.g., `(strat="a", s=2)`).
+- Axis values: a dictionary of lists defining the grid, e.g.
+  `{ "strat": ["a", "b"], "s": [1, 2, 3] }`.
+- Memo chunk: a block of points created by chunking each axis list and taking
+  the cartesian product of those bins. Each memo chunk is written to a single
+  file that can serve partial reads for subsets of points.
+- chunk_spec: a specification for the memo chunk sizes. For instance, `chunk_spec={"strat": 1, "s": 3}`
+  specifies that each chunk should contain one "strat" value and three "s" values.
+
+## Installation
+
+pip install chunk-memo
+
+## Quick start
+
+```python
+from chunk_memo import ChunkMemo
+
+axis_values = {"strat": ["aaa", "bb"], "s": [1, 2, 3, 4]}
+
+memo = ChunkMemo(
+    root="./memo_cache",
+    chunk_spec={"strat": 1, "s": 3},
+    axis_values=axis_values,
+)
+
+@memo.cache()
+def foo(alpha, strat, s):
+    return {
+        "alpha": alpha,
+        "strat": strat,
+        "s": s,
+        "value": len(strat) + alpha * s,
+    }
+
+output, diag = foo(alpha=0.5, strat=["aaa", "bb"], s=[1, 2])
+print(output)
+print(diag)
+```
+
+Pass a value for `max_workers` that is larger than 1 to `memo.cache` to get parallel execution.
+Note that when using parallelization the wrapped function must be defined at the highest scope level (module scope).
+
+## Module layout
+
+- `chunk_memo/cache.py`: cache logic (`ChunkCache`).
+- `chunk_memo/runners.py`: serial runner.
+- `chunk_memo/runners_parallel.py`: parallel runner.
+- `chunk_memo/runners_common.py`: shared runner utilities and planning helpers.
+
+## API overview
+
+### ChunkCache
+
+`ChunkCache` owns the cache state and exposes the cache interface.
+
+```python
+ChunkCache(
+    root: str | Path,
+    cache_id: str,
+    metadata: dict[str, Any] | None = None,
+    chunk_spec: dict[str, int | dict],
+    axis_values: dict[str, Any],
+    collate_fn: Callable[[list], Any] | None = None,
+    chunk_enumerator: Callable[[dict], Sequence[tuple]] | None = None,
+    chunk_hash_fn: Callable[[dict, tuple, str], str] | None = None,
+    path_fn: Callable[[dict, tuple, str, str], Path | str] | None = None,
+    version: str = "v1",
+    axis_order: Sequence[str] | None = None,
+    verbose: int = 1,
+    exclusive: bool = False,
+    warn_on_overlap: bool = False,
+)
+```
+
+### ChunkMemo
+
+`ChunkMemo` is a cache manager that provides `cache` and `stream_cache`
+decorators for memoization. A stream_cache flushes data to disk as
+the function is executed. `ChunkMemo` may create one or more `ChunkCache` instances.
+
+### axis_values: lists and iterables
+
+`axis_values` must be concrete iterables (lists, tuples, ranges, or other
+iterable objects). Callables are not currently supported.
+
+Ordering rules:
+
+- If the value is a sequence (list/tuple), order is preserved.
+- If the value is a non-sequence iterable, values are materialized and sorted by
+  a stable serialization of each value. This makes order deterministic but may
+  differ from the original iteration order.
+
+Axis values must be hashable and unique within each axis. Duplicates will
+collapse to a single entry in the internal index map.

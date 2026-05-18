@@ -1,0 +1,898 @@
+from __future__ import annotations
+
+import dataclasses
+import functools
+import inspect
+import itertools
+from concurrent.futures import ProcessPoolExecutor
+from typing import Any, Callable, Iterable, Mapping, Sequence, Tuple, cast
+
+from ._format import chunk_key_size
+from .runner_protocol import (BuildItemMapsFromAxisValuesFn, CacheProtocol,
+                              CacheStatus, ChunkHashFn, CollectChunkDataFn,
+                              LoadChunkIndexFn, ResolveCachePathFn,
+                              RunnerContext, UpdateChunkIndexFn,
+                              WriteChunkPayloadFn, WriteMetadataFn)
+from .runners_common import (ChunkKey, Diagnostics, _log_chunk, _merge_outputs,
+                             _require_axis_info, _require_params,
+                             _save_chunk_payload, resolve_cache_for_run,
+                             resolve_runner_deps)
+
+
+@dataclasses.dataclass
+class _ParallelSetup:
+    map_fn: Callable[..., Iterable[Any]]
+    cached_chunks: list[ChunkKey]
+    missing_chunks: list[ChunkKey]
+    diagnostics: Diagnostics
+    collate_fn: Callable[[list[Any]], Any]
+    map_fn_kwargs: Mapping[str, Any]
+
+
+@dataclasses.dataclass
+class _MissingTracker:
+    missing_items: list[Any] = dataclasses.field(default_factory=list)
+    missing_items_by_chunk: dict[ChunkKey, list[Any]] = dataclasses.field(
+        default_factory=dict
+    )
+    missing_chunk_order: list[ChunkKey] = dataclasses.field(default_factory=list)
+    missing_item_keys: list[ChunkKey] | None = None
+
+    @classmethod
+    def create(cls, *, track_item_keys: bool) -> "_MissingTracker":
+        missing_item_keys = [] if track_item_keys else None
+        return cls(missing_item_keys=missing_item_keys)
+
+    def register(self, chunk_key: ChunkKey, items_to_add: list[Any]) -> None:
+        if not items_to_add:
+            return
+        if chunk_key not in self.missing_items_by_chunk:
+            self.missing_items_by_chunk[chunk_key] = []
+            self.missing_chunk_order.append(chunk_key)
+        self.missing_items_by_chunk[chunk_key].extend(items_to_add)
+        self.missing_items.extend(items_to_add)
+        if self.missing_item_keys is not None:
+            self.missing_item_keys.extend([chunk_key] * len(items_to_add))
+
+
+def _exec_with_item(
+    exec_fn: Callable[..., Any],
+    item: Any,
+) -> Any:
+    if isinstance(item, Mapping):
+        return exec_fn(**item)
+    return exec_fn(item)
+
+
+def _map_executor(
+    func: Callable[..., Any],
+    items: Iterable[Any],
+    **kwargs: Any,
+) -> Iterable[Any]:
+    max_workers = kwargs.get("max_workers")
+    chunksize = kwargs.get("chunksize")
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        if chunksize is None:
+            yield from executor.map(func, items)
+            return
+        yield from executor.map(func, items, chunksize=chunksize)
+
+
+def _prepare_parallel_setup(
+    context: RunnerContext,
+    write_metadata_fn: WriteMetadataFn,
+    cache_status: CacheStatus,
+    *,
+    map_fn: Callable[..., Iterable[Any]] | None,
+    map_fn_kwargs: Mapping[str, Any] | None,
+    collate_fn: Callable[[list[Any]], Any] | None,
+    params_dict: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Any] | None = None,
+    write_metadata: bool = True,
+) -> _ParallelSetup:
+    if map_fn is None:
+        if context.verbose == 1:
+            map_fn = _map_executor
+        else:
+            map_fn = lambda func, items, **kwargs: list(
+                _map_executor(func, items, **kwargs)
+            )
+    map_fn = cast(Callable[..., Iterable[Any]], map_fn)
+
+    if params_dict is None:
+        params_dict = _require_params(cache_status)
+    if write_metadata:
+        write_metadata_fn()
+
+    cached_chunks: list[ChunkKey] = list(cache_status.get("cached_chunks", []))
+    missing_chunks: list[ChunkKey] = list(cache_status.get("missing_chunks", []))
+
+    diagnostics = Diagnostics(total_chunks=len(cached_chunks) + len(missing_chunks))
+
+    if collate_fn is None:
+        collate_fn = (
+            context.collate_fn
+            if context.collate_fn is not None
+            else lambda chunk: chunk
+        )
+    collate_fn = cast(Callable[[list[Any]], Any], collate_fn)
+
+    if map_fn_kwargs is None:
+        map_fn_kwargs = {}
+
+    # if context.verbose == 1:
+    #     axis_values = axis_values_override or cache_status.get("axis_values")
+    #     if isinstance(axis_values, Mapping):
+    #         axis_order, _ = _require_axis_info(cache_status)
+    #         lines = build_plan_lines(
+    #             cache_status.get("cache_id"),
+    #             params_dict,
+    #             axis_values,
+    #             axis_order,
+    #             len(cached_chunks),
+    #             len(missing_chunks),
+    #         )
+    #         # print("\n".join(lines))
+
+    return _ParallelSetup(
+        map_fn=map_fn,
+        cached_chunks=cached_chunks,
+        missing_chunks=missing_chunks,
+        diagnostics=diagnostics,
+        collate_fn=collate_fn,
+        map_fn_kwargs=map_fn_kwargs,
+    )
+
+
+def _prepare_parallel_items(
+    cache_status: CacheStatus,
+    items: Iterable[Any],
+    *,
+    exec_fn: Callable[..., Any],
+    cached_chunks: Sequence[ChunkKey],
+    missing_chunks: Sequence[ChunkKey],
+) -> tuple[
+    list[Any],
+    Callable[[Any], Tuple[Any, ...]] | None,
+    list[list[Any]],
+    list[list[Any]],
+]:
+    item_list = items if isinstance(items, list) else list(items)
+    if not item_list:
+        return item_list, None, [], []
+    axis_extractor = _build_item_axis_extractor(
+        cache_status,
+        item_list,
+        exec_fn,
+    )
+    cached_chunk_items = _expand_items_to_chunks_fast(
+        cache_status,
+        item_list,
+        cached_chunks,
+        axis_extractor,
+    )
+    missing_chunk_items = _expand_items_to_chunks_fast(
+        cache_status,
+        item_list,
+        missing_chunks,
+        axis_extractor,
+    )
+    return item_list, axis_extractor, cached_chunk_items, missing_chunk_items
+
+
+def _scan_cached_chunk_items(
+    cache: CacheProtocol,
+    context: RunnerContext,
+    cached_chunks: Sequence[ChunkKey],
+    cached_chunk_items: Sequence[Sequence[Any]],
+    *,
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+    tracker: _MissingTracker,
+    diagnostics: Diagnostics,
+    cached_payloads: dict[ChunkKey, Mapping[str, Any]],
+    chunk_index: Mapping[str, Any] | None,
+    load_full_chunk_payload: bool,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    outputs: list[Any] | None = None,
+) -> None:
+    for chunk_key, chunk_items in zip(cached_chunks, cached_chunk_items):
+        if not chunk_items:
+            continue
+        requests_full_chunk = len(chunk_items) == chunk_key_size(chunk_key)
+        requested_items = None
+        if not requests_full_chunk:
+            requested_items = [axis_extractor(item) for item in chunk_items]
+        cache_hit = cache.inspect_chunk_cache(
+            chunk_key,
+            requested_items,
+            requests_full_chunk=requests_full_chunk,
+            load_full_chunk_payload=load_full_chunk_payload,
+            chunk_index=chunk_index,
+        )
+        if not cache_hit.is_usable:
+            if cache_hit.payload is not None:
+                cached_payloads[chunk_key] = cache_hit.payload
+            tracker.register(chunk_key, list(chunk_items))
+            continue
+
+        diagnostics.cached_chunks += 1
+        if cache_hit.is_partial:
+            diagnostics.partial_chunks += 1
+        _log_chunk(
+            context,
+            "load",
+            chunk_key,
+            None if requests_full_chunk else len(chunk_items),
+        )
+        if outputs is None or collate_fn is None or cache_hit.output is None:
+            continue
+        if requests_full_chunk:
+            outputs.append(cache_hit.output)
+            continue
+        item_outputs = cast(list[Any], cache_hit.output)
+        if item_outputs:
+            outputs.append(collate_fn(item_outputs))
+
+
+def _exec_iter(exec_iter: Iterable[Any]) -> Iterable[tuple[int, Any]]:
+    for index, result in enumerate(exec_iter, start=1):
+        yield index, result
+
+
+def _register_missing_chunk_items(
+    missing_chunks: Sequence[ChunkKey],
+    missing_chunk_items: Sequence[Sequence[Any]],
+    tracker: _MissingTracker,
+) -> None:
+    for chunk_key, chunk_items in zip(missing_chunks, missing_chunk_items):
+        if chunk_items:
+            tracker.register(chunk_key, list(chunk_items))
+
+
+def _finalize_missing_items(
+    tracker: _MissingTracker,
+    missing_chunks: Sequence[ChunkKey],
+    item_list: Sequence[Any],
+) -> list[Any]:
+    if not tracker.missing_items and missing_chunks:
+        return list(item_list)
+    return tracker.missing_items
+
+
+def _build_item_axis_extractor(
+    cache_status: CacheStatus,
+    items: Sequence[Any],
+    exec_fn: Callable[..., Any],
+) -> Callable[[Any], Tuple[Any, ...]]:
+    axis_order, _ = _require_axis_info(cache_status)
+
+    if items:
+        sample = items[0]
+        if isinstance(sample, Mapping):
+            axis_names = list(axis_order)
+
+            def extract(item: Any) -> Tuple[Any, ...]:
+                if not isinstance(item, Mapping):
+                    raise ValueError("Mixed item types: expected mapping items")
+                return tuple(item[name] for name in axis_names)
+
+            return extract
+        if isinstance(sample, (tuple, list)):
+            if len(sample) == len(axis_order):
+                axis_count = len(axis_order)
+
+                def extract(item: Any) -> Tuple[Any, ...]:
+                    if isinstance(item, Mapping):
+                        raise ValueError("Mixed item types: expected positional items")
+                    if isinstance(item, tuple):
+                        values = item
+                    elif isinstance(item, list):
+                        values = tuple(item)
+                    else:
+                        values = (item,)
+                    if len(values) != axis_count:
+                        raise ValueError(
+                            "Item does not match axis order length for memo axes"
+                        )
+                    return tuple(values)
+
+                return extract
+        if len(axis_order) == 1:
+
+            def extract(item: Any) -> Tuple[Any, ...]:
+                if isinstance(item, Mapping):
+                    raise ValueError("Mixed item types: expected positional items")
+                return (item,)
+
+            return extract
+
+    signature = inspect.signature(exec_fn)
+    param_names = list(signature.parameters)
+    if param_names and param_names[0] == "params":
+        axis_names = [name for name in param_names[1:] if name in axis_order]
+    else:
+        axis_names = [name for name in param_names if name in axis_order]
+    if not axis_names:
+        raise ValueError(
+            "Positional items require exec_fn to list axis arguments in its signature"
+        )
+    axis_positions = {name: index for index, name in enumerate(axis_names)}
+
+    def extract(item: Any) -> Tuple[Any, ...]:
+        if isinstance(item, Mapping):
+            raise ValueError("Mixed item types: expected positional items")
+        if isinstance(item, tuple):
+            values = item
+        elif isinstance(item, list):
+            values = tuple(item)
+        else:
+            values = (item,)
+        if len(values) < len(axis_names):
+            raise ValueError("Item does not provide enough positional values")
+        values_by_axis = {
+            axis_name: values[index] for axis_name, index in axis_positions.items()
+        }
+        missing = [name for name in axis_order if name not in values_by_axis]
+        if missing:
+            raise ValueError(
+                f"Item does not provide positional values for axes: {missing}"
+            )
+        return tuple(values_by_axis[name] for name in axis_order)
+
+    return extract
+
+
+def _expand_items_to_chunks_fast(
+    cache_status: CacheStatus,
+    items: Sequence[Any],
+    chunk_keys: Sequence[ChunkKey],
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+) -> list[list[Any]]:
+    if not chunk_keys:
+        return [[] for _ in chunk_keys]
+    axis_order, axis_chunk_maps = _require_axis_info(cache_status)
+    chunk_index_map: dict[Tuple[int, ...], int] = {}
+    for index, chunk_key in enumerate(chunk_keys):
+        chunk_ids: list[int] = []
+        for axis, values in chunk_key:
+            chunk_ids.append(axis_chunk_maps[axis][values[0]])
+        chunk_index_map[tuple(chunk_ids)] = index
+
+    chunked: list[list[Any]] = [[] for _ in chunk_keys]
+    for item in items:
+        axis_vals = axis_extractor(item)
+        if len(axis_vals) != len(axis_order):
+            raise ValueError("Item axis values do not match axis order")
+        chunk_ids = []
+        for axis, value in zip(axis_order, axis_vals):
+            if value not in axis_chunk_maps[axis]:
+                raise KeyError(
+                    f"Value '{value}' not found in axis_values for axis '{axis}'"
+                )
+            chunk_ids.append(axis_chunk_maps[axis][value])
+        chunk_index = chunk_index_map.get(tuple(chunk_ids))
+        if chunk_index is None:
+            continue
+        chunked[chunk_index].append(item)
+    return chunked
+
+
+def _extract_axis_values(
+    items: Sequence[Any], axis_extractor: Callable[[Any], Tuple[Any, ...]]
+) -> list[Tuple[Any, ...]]:
+    return [axis_extractor(item) for item in items]
+
+
+def _collect_missing_axis_values(
+    *,
+    items: Sequence[Any],
+    axis_order: Sequence[str],
+    axis_values: Mapping[str, Sequence[Any]] | None,
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+) -> dict[str, list[Any]]:
+    if axis_values is None:
+        return {}
+    existing_sets = {axis: set(axis_values.get(axis, [])) for axis in axis_order}
+    missing: dict[str, list[Any]] = {}
+    for item in items:
+        axis_vals = axis_extractor(item)
+        for axis, value in zip(axis_order, axis_vals):
+            if value in existing_sets[axis]:
+                continue
+            missing.setdefault(axis, []).append(value)
+            existing_sets[axis].add(value)
+    return missing
+
+
+def _collect_axis_values_from_items(
+    *,
+    items: Sequence[Any],
+    axis_order: Sequence[str],
+    axis_values: Mapping[str, Sequence[Any]] | None,
+    axis_extractor: Callable[[Any], Tuple[Any, ...]],
+) -> dict[str, list[Any]]:
+    collected: dict[str, list[Any]] = {axis: [] for axis in axis_order}
+    seen: dict[str, set[Any]] = {axis: set() for axis in axis_order}
+    for item in items:
+        axis_vals = axis_extractor(item)
+        for axis, value in zip(axis_order, axis_vals):
+            if value in seen[axis]:
+                continue
+            seen[axis].add(value)
+            collected[axis].append(value)
+    if axis_values is not None:
+        ordered: dict[str, list[Any]] = {}
+        for axis in axis_order:
+            if axis not in seen:
+                continue
+            full_values = axis_values.get(axis, [])
+            ordered_values = [value for value in full_values if value in seen[axis]]
+            if ordered_values:
+                ordered[axis] = ordered_values
+        return ordered
+    return {axis: values for axis, values in collected.items() if values}
+
+
+def run_parallel_over_iterator(
+    items: Iterable[Any],
+    cache: CacheProtocol,
+    exec_fn: Callable[..., Any],
+    *,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    flush_on_chunk: bool = False,
+    return_output: bool = True,
+    extend_cache: bool = False,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    allow_superset: bool = False,
+    # Manual cache methods (optional overrides)
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    load_chunk_index: LoadChunkIndexFn | None = None,
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    item_hash: ItemHashFn | None = None,
+    context: RunnerContext | None = None,
+) -> tuple[Any, Diagnostics]:
+    """Execute items in parallel, reusing cached chunk data.
+
+    cache must already represent the desired axis subset.
+    collate_fn overrides cache.collate_fn for this run.
+    Partial chunks return whatever cached output is available and increment
+    diagnostics.partial_chunks.
+    flush_on_chunk writes chunk payloads as soon as a chunk completes.
+    If return_output is False, chunk payloads are flushed incrementally and
+    the output is returned as None.
+    extend_cache updates the cache axis_values in-place if items introduce
+    new axis values.
+    """
+    cache = resolve_cache_for_run(
+        cache,
+        params=params,
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+        allow_superset=allow_superset,
+    )
+    cache_status = cache.cache_status(
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+    )
+    if not return_output:
+        flush_on_chunk = True
+    deps = resolve_runner_deps(
+        cache=cache,
+        context=context,
+        write_metadata=write_metadata,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        load_chunk_index=load_chunk_index,
+        build_item_maps_from_axis_values=build_item_maps_from_axis_values,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        reconstruct_output_from_items=reconstruct_output_from_items,
+        collect_chunk_data=collect_chunk_data,
+        item_hash=item_hash,
+        require=[
+            "context",
+            "write_metadata",
+            "chunk_hash",
+            "resolve_cache_path",
+            "load_payload",
+            "write_chunk_payload",
+            "update_chunk_index",
+            "build_item_maps_from_axis_values",
+            "build_item_maps_from_chunk_output",
+            "reconstruct_output_from_items",
+            "reconstruct_partial_output_from_items",
+            "item_hash",
+        ],
+    )
+    context = cast(RunnerContext, deps.context)
+    item_list = items if isinstance(items, list) else list(items)
+    axis_extractor = _build_item_axis_extractor(cache_status, item_list, exec_fn)
+    if extend_cache and axis_extractor is not None:
+        axis_order, _ = _require_axis_info(cache_status)
+        missing_axis_values = _collect_missing_axis_values(
+            items=item_list,
+            axis_order=axis_order,
+            axis_values=cache_status.get("axis_values"),
+            axis_extractor=axis_extractor,
+        )
+        if missing_axis_values:
+            cache.extend_axis_values(missing_axis_values)
+            cache_status = cache.cache_status()
+
+    cached_chunks_all = list(cache_status.get("cached_chunks", []))
+    missing_chunks_all = list(cache_status.get("missing_chunks", []))
+    cached_chunk_indices_all = list(cache_status.get("cached_chunk_indices", []))
+    missing_chunk_indices_all = list(cache_status.get("missing_chunk_indices", []))
+
+    requested_axes: dict[str, list[Any]] = {}
+    if axis_extractor is not None:
+        axis_order, _ = _require_axis_info(cache_status)
+        requested_axes = _collect_axis_values_from_items(
+            items=item_list,
+            axis_order=axis_order,
+            axis_values=cache_status.get("axis_values"),
+            axis_extractor=axis_extractor,
+        )
+
+    cached_chunk_items_all = _expand_items_to_chunks_fast(
+        cache_status,
+        item_list,
+        cached_chunks_all,
+        axis_extractor,
+    )
+    missing_chunk_items_all = _expand_items_to_chunks_fast(
+        cache_status,
+        item_list,
+        missing_chunks_all,
+        axis_extractor,
+    )
+    cached_mask = [bool(items) for items in cached_chunk_items_all]
+    missing_mask = [bool(items) for items in missing_chunk_items_all]
+
+    cached_chunks = [
+        chunk for chunk, keep in zip(cached_chunks_all, cached_mask) if keep
+    ]
+    missing_chunks = [
+        chunk for chunk, keep in zip(missing_chunks_all, missing_mask) if keep
+    ]
+    cached_chunk_indices = [
+        index for index, keep in zip(cached_chunk_indices_all, cached_mask) if keep
+    ]
+    missing_chunk_indices = [
+        index for index, keep in zip(missing_chunk_indices_all, missing_mask) if keep
+    ]
+    cached_chunk_items = [
+        items for items, keep in zip(cached_chunk_items_all, cached_mask) if keep
+    ]
+    missing_chunk_items = [
+        items for items, keep in zip(missing_chunk_items_all, missing_mask) if keep
+    ]
+
+    cache_status_for_plan = dict(cache_status)
+    cache_status_for_plan["cached_chunks"] = cached_chunks
+    cache_status_for_plan["missing_chunks"] = missing_chunks
+    cache_status_for_plan["cached_chunk_indices"] = cached_chunk_indices
+    cache_status_for_plan["missing_chunk_indices"] = missing_chunk_indices
+
+    setup = _prepare_parallel_setup(
+        cast(RunnerContext, deps.context),
+        cast(WriteMetadataFn, deps.write_metadata),
+        cast(CacheStatus, cache_status_for_plan),
+        map_fn=map_fn,
+        map_fn_kwargs=map_fn_kwargs,
+        collate_fn=collate_fn,
+        axis_values_override=requested_axes or None,
+    )
+    diagnostics = setup.diagnostics
+    collate_fn_resolved = setup.collate_fn
+    map_fn_resolved = setup.map_fn
+    map_fn_kwargs_resolved = setup.map_fn_kwargs
+    outputs: list[Any] | None = [] if return_output else None
+    exec_outputs: list[Any] = []
+    (
+        item_list,
+        axis_extractor,
+        cached_chunk_items,
+        missing_chunk_items,
+    ) = _prepare_parallel_items(
+        cache_status,
+        item_list,
+        exec_fn=exec_fn,
+        cached_chunks=cached_chunks,
+        missing_chunks=missing_chunks,
+    )
+    if not item_list or axis_extractor is None:
+        return [], diagnostics
+
+    tracker = _MissingTracker.create(track_item_keys=True)
+    cached_payloads: dict[ChunkKey, Mapping[str, Any]] = {}
+
+    use_index = False
+    chunk_index: dict[str, Any] = {}
+    load_chunk_index_fn = cast(LoadChunkIndexFn | None, deps.load_chunk_index)
+    if load_chunk_index_fn is not None:
+        chunk_index = load_chunk_index_fn() or {}
+        use_index = bool(chunk_index)
+
+    _scan_cached_chunk_items(
+        cache,
+        context,
+        cached_chunks,
+        cached_chunk_items,
+        axis_extractor=axis_extractor,
+        tracker=tracker,
+        diagnostics=diagnostics,
+        cached_payloads=cached_payloads,
+        chunk_index=chunk_index if use_index else None,
+        load_full_chunk_payload=return_output,
+        collate_fn=collate_fn_resolved,
+        outputs=outputs,
+    )
+
+    _register_missing_chunk_items(
+        missing_chunks,
+        missing_chunk_items,
+        tracker,
+    )
+
+    missing_items = _finalize_missing_items(tracker, missing_chunks, item_list)
+
+    if missing_items:
+        diagnostics.executed_chunks = len(tracker.missing_chunk_order)
+        exec_fn = functools.partial(_exec_with_item, exec_fn)
+        exec_iter = map_fn_resolved(
+            exec_fn,
+            missing_items,
+            **map_fn_kwargs_resolved,
+        )
+        missing_item_keys = tracker.missing_item_keys or []
+        queued_chunks: dict[ChunkKey, list[Any]] = {}
+        queued_outputs: dict[ChunkKey, list[Any]] = {}
+
+        for item_idx, result in _exec_iter(exec_iter):
+            chunk_key = missing_item_keys[item_idx - 1]
+            queued_chunks.setdefault(chunk_key, []).append(missing_items[item_idx - 1])
+            queued_outputs.setdefault(chunk_key, []).append(result)
+            if not flush_on_chunk:
+                exec_outputs.append(result)
+                continue
+            if len(queued_outputs[chunk_key]) < chunk_key_size(chunk_key):
+                continue
+            chunk_items = queued_chunks.pop(chunk_key, [])
+            chunk_outputs = queued_outputs.pop(chunk_key, [])
+            chunk_output = collate_fn_resolved(chunk_outputs)
+            axis_values = _extract_axis_values(chunk_items, axis_extractor)
+            item_map, item_axis_vals = cast(
+                BuildItemMapsFromAxisValuesFn, deps.build_item_maps_from_axis_values
+            )(
+                chunk_key,
+                axis_values,
+                chunk_outputs,
+            )
+            chunk_hash_value = cast(ChunkHashFn, deps.chunk_hash)(chunk_key)
+            _save_chunk_payload(
+                resolve_cache_path=cast(ResolveCachePathFn, deps.resolve_cache_path),
+                write_chunk_payload=cast(WriteChunkPayloadFn, deps.write_chunk_payload),
+                update_chunk_index=cast(UpdateChunkIndexFn, deps.update_chunk_index),
+                chunk_key=chunk_key,
+                chunk_output=chunk_output,
+                item_map=item_map,
+                cached_payloads=cached_payloads,
+                chunk_hash=chunk_hash_value,
+                missing_chunks=missing_chunks,
+                spec_fn=lambda: item_axis_vals,
+            )
+            _log_chunk(context, "run", chunk_key, len(chunk_items))
+            if outputs is not None:
+                outputs.append(chunk_output)
+            diagnostics.max_parallel_items = max(
+                diagnostics.max_parallel_items, len(chunk_items)
+            )
+            diagnostics.stream_flushes += 1
+
+        if flush_on_chunk and queued_outputs:
+            for chunk_key, chunk_outputs in queued_outputs.items():
+                chunk_items = queued_chunks.get(chunk_key, [])
+                if not chunk_items:
+                    continue
+                chunk_output = collate_fn_resolved(chunk_outputs)
+                axis_values = _extract_axis_values(chunk_items, axis_extractor)
+                item_map, item_axis_vals = cast(
+                    BuildItemMapsFromAxisValuesFn, deps.build_item_maps_from_axis_values
+                )(
+                    chunk_key,
+                    axis_values,
+                    chunk_outputs,
+                )
+                chunk_hash_value = cast(ChunkHashFn, deps.chunk_hash)(chunk_key)
+                _save_chunk_payload(
+                    resolve_cache_path=cast(
+                        ResolveCachePathFn, deps.resolve_cache_path
+                    ),
+                    write_chunk_payload=cast(
+                        WriteChunkPayloadFn, deps.write_chunk_payload
+                    ),
+                    update_chunk_index=cast(
+                        UpdateChunkIndexFn, deps.update_chunk_index
+                    ),
+                    chunk_key=chunk_key,
+                    chunk_output=chunk_output,
+                    item_map=item_map,
+                    cached_payloads=cached_payloads,
+                    chunk_hash=chunk_hash_value,
+                    missing_chunks=missing_chunks,
+                    spec_fn=lambda: item_axis_vals,
+                )
+                _log_chunk(context, "run", chunk_key, len(chunk_items))
+                if outputs is not None:
+                    outputs.append(chunk_output)
+                diagnostics.max_parallel_items = max(
+                    diagnostics.max_parallel_items, len(chunk_items)
+                )
+                diagnostics.stream_flushes += 1
+                if len(chunk_items) < chunk_key_size(chunk_key):
+                    diagnostics.partial_chunks += 1
+
+        if not flush_on_chunk:
+            cursor = 0
+            for chunk_key in tracker.missing_chunk_order:
+                chunk_items = tracker.missing_items_by_chunk.get(chunk_key, [])
+                chunk_size = len(chunk_items)
+                if chunk_size == 0:
+                    continue
+                chunk_outputs = exec_outputs[cursor : cursor + chunk_size]
+                chunk_output = collate_fn_resolved(chunk_outputs)
+                axis_values = _extract_axis_values(chunk_items, axis_extractor)
+                item_map, item_axis_vals = cast(
+                    BuildItemMapsFromAxisValuesFn, deps.build_item_maps_from_axis_values
+                )(
+                    chunk_key,
+                    axis_values,
+                    chunk_outputs,
+                )
+                chunk_hash_value = cast(ChunkHashFn, deps.chunk_hash)(chunk_key)
+                _save_chunk_payload(
+                    resolve_cache_path=cast(
+                        ResolveCachePathFn, deps.resolve_cache_path
+                    ),
+                    write_chunk_payload=cast(
+                        WriteChunkPayloadFn, deps.write_chunk_payload
+                    ),
+                    update_chunk_index=cast(
+                        UpdateChunkIndexFn, deps.update_chunk_index
+                    ),
+                    chunk_key=chunk_key,
+                    chunk_output=chunk_output,
+                    item_map=item_map,
+                    cached_payloads=cached_payloads,
+                    chunk_hash=chunk_hash_value,
+                    missing_chunks=missing_chunks,
+                    spec_fn=lambda: item_axis_vals,
+                )
+                _log_chunk(context, "run", chunk_key, chunk_size)
+                if outputs is not None:
+                    outputs.append(chunk_output)
+                cursor += chunk_size
+
+    merged: Any = None
+    if outputs is not None:
+        final_collate_fn = collate_fn if collate_fn is not None else context.collate_fn
+        merged = _merge_outputs(
+            context,
+            outputs,
+            diagnostics,
+            collate_fn=final_collate_fn,
+        )
+        if not merged and item_list:
+            merged = exec_outputs if missing_items else []
+    # print_chunk_summary(diagnostics, context.verbose)
+    return merged, diagnostics
+
+
+def _build_items_from_axis_values(
+    axis_values: Mapping[str, Sequence[Any]],
+    axis_order: Sequence[str] | None,
+) -> list[dict[str, Any]]:
+    resolved_order = tuple(axis_order or tuple(axis_values))
+    axis_lists: list[list[Any]] = []
+    for axis in resolved_order:
+        values = axis_values.get(axis, [])
+        if isinstance(values, (list, tuple)):
+            axis_lists.append(list(values))
+        elif isinstance(values, Sequence):
+            axis_lists.append(list(values))
+        else:
+            axis_lists.append([values])
+    return [
+        dict(zip(resolved_order, values)) for values in itertools.product(*axis_lists)
+    ]
+
+
+def run_parallel(
+    cache: Any,
+    exec_fn: Callable[..., Any],
+    *,
+    map_fn: Callable[..., Iterable[Any]] | None = None,
+    map_fn_kwargs: Mapping[str, Any] | None = None,
+    collate_fn: Callable[[list[Any]], Any] | None = None,
+    flush_on_chunk: bool = False,
+    return_output: bool = True,
+    extend_cache: bool = False,
+    params: dict[str, Any] | None = None,
+    axis_values_override: Mapping[str, Sequence[Any]] | None = None,
+    allow_superset: bool = False,
+    # Manual cache methods (optional overrides)
+    write_metadata: WriteMetadataFn | None = None,
+    chunk_hash: ChunkHashFn | None = None,
+    resolve_cache_path: ResolveCachePathFn | None = None,
+    load_payload: LoadPayloadFn | None = None,
+    write_chunk_payload: WriteChunkPayloadFn | None = None,
+    update_chunk_index: UpdateChunkIndexFn | None = None,
+    load_chunk_index: LoadChunkIndexFn | None = None,
+    build_item_maps_from_axis_values: BuildItemMapsFromAxisValuesFn | None = None,
+    build_item_maps_from_chunk_output: BuildItemMapsFromChunkOutputFn | None = None,
+    reconstruct_output_from_items: ReconstructOutputFromItemsFn | None = None,
+    collect_chunk_data: CollectChunkDataFn | None = None,
+    item_hash: ItemHashFn | None = None,
+    context: RunnerContext | None = None,
+) -> tuple[Any, Diagnostics]:
+    """Execute the full cache product in parallel.
+
+    This mirrors runners.run by expanding the cache axis values into an
+    iterator and delegating to run_parallel_over_iterator.
+    """
+    resolved_cache = resolve_cache_for_run(
+        cache,
+        params=params,
+        axis_values_override=axis_values_override,
+        extend_cache=extend_cache,
+        allow_superset=allow_superset,
+    )
+    cache_status = resolved_cache.cache_status(
+        axis_values_override=axis_values_override,
+    )
+    axis_values = cache_status.get("axis_values", {})
+    axis_order = cache_status.get("axis_order")
+    if not isinstance(axis_values, Mapping):
+        raise ValueError("cache_status must include axis_values")
+    items = _build_items_from_axis_values(axis_values, axis_order)
+    return run_parallel_over_iterator(
+        items,
+        cache=resolved_cache,
+        exec_fn=exec_fn,
+        map_fn=map_fn,
+        map_fn_kwargs=map_fn_kwargs,
+        collate_fn=collate_fn,
+        flush_on_chunk=flush_on_chunk,
+        return_output=return_output,
+        extend_cache=extend_cache,
+        params=None,
+        axis_values_override=axis_values_override,
+        allow_superset=allow_superset,
+        write_metadata=write_metadata,
+        chunk_hash=chunk_hash,
+        resolve_cache_path=resolve_cache_path,
+        load_payload=load_payload,
+        write_chunk_payload=write_chunk_payload,
+        update_chunk_index=update_chunk_index,
+        load_chunk_index=load_chunk_index,
+        build_item_maps_from_axis_values=build_item_maps_from_axis_values,
+        build_item_maps_from_chunk_output=build_item_maps_from_chunk_output,
+        reconstruct_output_from_items=reconstruct_output_from_items,
+        collect_chunk_data=collect_chunk_data,
+        item_hash=item_hash,
+        context=context,
+    )

@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="139.83385mm"
+   height="35.740536mm"
+   viewBox="0 0 139.83385 35.740536"
+   version="1.1"
+   id="svg1"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <g
+     id="layer1"
+     transform="translate(-11.805972,-12.249263)">
+    <rect
+       style="fill:#ffeeaa;stroke:#000000;stroke-width:0.388056"
+       id="rect3-3"
+       width="16"
+       height="15.999999"
+       x="12.000001"
+       y="31"
+       ry="1.9999995"
+       rx="0" />
+    <rect
+       style="fill:#ffeeaa;stroke:#000000;stroke-width:0.388056"
+       id="rect3"
+       width="16"
+       height="15.999999"
+       x="12"
+       y="13"
+       ry="1.9999995"
+       rx="0" />
+    <ellipse
+       style="fill:#ff0000;stroke:#000000;stroke-width:0.388056"
+       id="path2"
+       ry="2.4999998"
+       rx="2.5"
+       cy="17.305971"
+       cx="16.305973" />
+    <ellipse
+       style="fill:#ff0000;stroke:#000000;stroke-width:0.388056"
+       id="path3"
+       cx="23.694029"
+       cy="17.305971"
+       rx="2.5"
+       ry="2.4999998" />
+    <ellipse
+       style="fill:#ff0000;stroke:#000000;stroke-width:0.388056"
+       id="path2-3"
+       cx="16.305973"
+       cy="24.694027"
+       rx="2.5"
+       ry="2.4999998" />
+    <ellipse
+       style="fill:#ff0000;stroke:#000000;stroke-width:0.388056"
+       id="path3-5"
+       cx="23.694029"
+       cy="24.694027"
+       rx="2.5"
+       ry="2.4999998" />
+    <ellipse
+       style="fill:#6f917c;stroke:#000000;stroke-width:0.388056"
+       id="path2-2"
+       ry="2.4999998"
+       rx="2.5"
+       cy="35.305973"
+       cx="16.305971" />
+    <ellipse
+       style="fill:#6f917c;stroke:#000000;stroke-width:0.388056"
+       id="path3-7"
+       cx="23.694027"
+       cy="35.305973"
+       rx="2.5"
+       ry="2.4999998" />
+    <ellipse
+       style="fill:#6f917c;stroke:#000000;stroke-width:0.388056"
+       id="path2-3-0"
+       cx="16.305971"
+       cy="42.694027"
+       rx="2.5"
+       ry="2.4999998" />
+    <ellipse
+       style="fill:#6f917c;stroke:#000000;stroke-width:0.388056"
+       id="path3-5-9"
+       cx="23.694027"
+       cy="42.694027"
+       rx="2.5"
+       ry="2.4999998" />
+    <text
+       xml:space="preserve"
+       style="font-size:4.23333px;font-family:'Liberation Sans';-inkscape-font-specification:'Liberation Sans';writing-mode:lr-tb;direction:ltr;white-space:pre;inline-size:120;display:inline;fill:#ffeeaa;stroke:#000000;stroke-width:0.388056"
+       x="35"
+       y="32.13229"
+       id="text3"
+       transform="translate(2.5135421,-16.801047)"><tspan
+         x="35"
+         y="32.13229"
+         id="tspan5"><tspan
+           style="font-weight:900;font-family:'Arial MT Black';-inkscape-font-specification:'Arial MT Black,  Heavy';fill:#000000;stroke:none"
+           id="tspan3">chunk-memo</tspan><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan4"> provides chunked memoization for grid-style </tspan></tspan><tspan
+         x="35"
+         y="37.441628"
+         id="tspan7"><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan6">parameter sweeps. You define a parameter grid (axis values) </tspan></tspan><tspan
+         x="35"
+         y="42.733288"
+         id="tspan9"><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan8">and a partitioning of this grid into chunks for disk read/write </tspan></tspan><tspan
+         x="35"
+         y="48.024952"
+         id="tspan11"><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan10">efficiency. Cached chunk outputs are reused on subsequent </tspan></tspan><tspan
+         x="35"
+         y="53.316616"
+         id="tspan13"><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan12">runs (memoization). Parallel runners are provided that allow </tspan></tspan><tspan
+         x="35"
+         y="58.60828"
+         id="tspan15"><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan14">you to pass your own map function (such as </tspan></tspan><tspan
+         x="35"
+         y="63.899944"
+         id="tspan18"><tspan
+           style="font-family:Arial;-inkscape-font-specification:Arial;fill:#000000;stroke:none"
+           id="tspan17">ProcessPoolExecutor.map).</tspan></tspan></text>
+  </g>
+</svg>
